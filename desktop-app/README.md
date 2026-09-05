@@ -78,7 +78,7 @@ desktop-app/
 |---|---|
 | App dies instantly from the menu icon | Use the terminal launcher `axis5-robot-control`, then check `~/.axis5/last-run.log` |
 | `The SUID sandbox helper…` / `zygote_host_impl_linux.cc Check failed` | The deb wrapper already passes `--no-sandbox`. For the **AppImage**, run it with `--no-sandbox` too |
-| `failed to execvp: /opt/AXIS…` | Fixed in v1.0.4 — the install path no longer contains spaces. Upgrade the .deb |
+| `failed to execvp: /opt/AXIS…` | Fixed in v1.0.5 — the install path no longer contains spaces. Upgrade the .deb |
 | Garbled/blank window in a VM | Run `AXIS5_SAFE=1 axis5-robot-control` (disables GPU accel) |
 | Serial port missing | `sudo usermod -aG dialout $USER` then log out/in |
 
