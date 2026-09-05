@@ -22,7 +22,22 @@ npm install
 npm start
 ```
 
-## 📦 Build installers
+## ⬇ Download ready-made installers
+
+Prebuilt installers are published automatically by GitHub Actions to the repo's **Releases** page:
+
+**https://github.com/Draxx143/arduinoarm_robot/releases/latest**
+
+| File | Platform | How to install |
+|---|---|---|
+| `AXIS5-Robot-Control-Setup-1.0.0.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.0.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.0-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.0-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.0-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+
+Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
+
+## 📦 Build installers yourself (optional)
 
 | OS | Command | Output |
 |---|---|---|
