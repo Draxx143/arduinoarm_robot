@@ -1,0 +1,65 @@
+{
+  "name": "axis5-robot-control",
+  "productName": "AXIS-5 Robot Control",
+  "version": "1.0.0",
+  "description": "Industrial desktop control panel for the 5-DOF Arduino Mega 2560 robot arm (RobotArm_Firmware.ino)",
+  "main": "main.js",
+  "author": "Draxx143",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never",
+    "dist:win": "electron-builder --win nsis portable --publish never",
+    "dist:linux": "electron-builder --linux AppImage deb --publish never",
+    "dist:win-dir": "electron-builder --win dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.draxx143.axis5robotcontrol",
+    "productName": "AXIS-5 Robot Control",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "renderer/assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AXIS-5 Robot Control",
+      "artifactName": "AXIS5-Robot-Control-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "AXIS5-Robot-Control-Portable-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "renderer/assets/icon.png",
+      "category": "Utility",
+      "artifactName": "AXIS5-Robot-Control-${version}-${arch}.${ext}"
+    },
+    "deb": {
+      "packageCategory": "utils",
+      "maintainer": "Draxx143"
+    }
+  }
+}

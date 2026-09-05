@@ -1,15 +1,25 @@
 # 5 DOF Robot Arm Firmware for Arduino Mega2560
 
-## 🖥️ GUI Control Panel (جدید)
+## 🖥️ Desktop App — AXIS-5 Robot Control (new)
 
-A complete dedicated GUI for this firmware is available in the [`gui/`](gui/) folder — **no installation needed**.
+A native **desktop application** (Electron) for Windows & Linux lives in [`desktop-app/`](desktop-app/):
+fully in **English**, with an industrial "Steel & Amber" HMI theme.
 
-- Open `gui/index.html` in **Chrome or Edge** → it connects directly to the Mega2560 over **Web Serial** (115200 baud)
-- Full coverage of every firmware command: homing, jog, moveall, demo, position store (10 slots), teach & playback, timers, speed profiles, IK/FK, energy manager, on-board logger and a full serial console
-- Live 2D visualizer (side + top view), status polling & parsing, one-click **E-STOP**
-- Includes a **built-in firmware simulator** so you can test the whole panel without hardware
+```bash
+cd desktop-app
+npm install          # first run downloads the Electron runtime
+npm start            # run the app
+npm run dist:win     # build .exe installer + portable (Windows)
+npm run dist:linux   # build .AppImage + .deb (Linux)
+```
 
-See [`gui/README-GUI.md`](gui/README-GUI.md) for the full guide (فارسی).
+One-click builders: `build-windows.bat` (Windows) / `build-linux.sh` (Linux).
+See [`desktop-app/README.md`](desktop-app/README.md).
+
+## 🌐 GUI Control Panel (browser version)
+
+A zero-install web version of the same panel is available in the [`gui/`](gui/) folder (Persian, RTL).
+Open `gui/index.html` in **Chrome or Edge** — it connects directly to the Mega2560 over **Web Serial**.
 
 ## Overview
 
