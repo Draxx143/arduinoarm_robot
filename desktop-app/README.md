@@ -4,9 +4,13 @@ Industrial English-language **desktop application** (Electron) for the 5-DOF Ard
 
 ## ✨ Features
 
+- **Drag-to-pose canvas** — grab any joint (side view) or the base ring (top view) and drag to pose the arm; enable “Send on slider release” to move the real arm as you drop
+- **Program Sequencer** — build a step list of poses with dwell times, run it end-to-end (moveall → wait for motion → dwell → next), reorder/delete steps, export/import as JSON
+- **Live telemetry** — per-axis speed (°/s) computed from firmware status polling
+- **Keyboard jog** — press 1–5 to pick a joint, ←/→ to jog (Shift = ×3)
 - **Real serial link** to the board (Web Serial inside Electron, 115200 8N1) with an in-app COM-port chooser
 - **Full command coverage**: home/status/enable/disable/estop/reset, demo, `moveall`/`deg`/`move`, position store (10 slots), teach & playback, timers, speed profiles, IK/FK, sleep/wake/autosleep, on-board logger
-- **Live 2D visualizer** (side + top view), motion trail, ghost target arm, joint-limit bars
+- **Live 2D visualizer** (side + top view) with metallic links, angle-arc indicators, limit sectors, shadows, target crosshair and motion trail
 - **Built-in firmware simulator** — test everything without hardware
 - **PLC-style status lamps**, industrial “Steel & Amber” HMI theme
 - Serial console with history, quick-command chips and log export
@@ -74,7 +78,7 @@ desktop-app/
 |---|---|
 | App dies instantly from the menu icon | Use the terminal launcher `axis5-robot-control`, then check `~/.axis5/last-run.log` |
 | `The SUID sandbox helper…` / `zygote_host_impl_linux.cc Check failed` | The deb wrapper already passes `--no-sandbox`. For the **AppImage**, run it with `--no-sandbox` too |
-| `failed to execvp: /opt/AXIS…` | Fixed in v1.0.3 — the install path no longer contains spaces. Upgrade the .deb |
+| `failed to execvp: /opt/AXIS…` | Fixed in v1.0.4 — the install path no longer contains spaces. Upgrade the .deb |
 | Garbled/blank window in a VM | Run `AXIS5_SAFE=1 axis5-robot-control` (disables GPU accel) |
 | Serial port missing | `sudo usermod -aG dialout $USER` then log out/in |
 

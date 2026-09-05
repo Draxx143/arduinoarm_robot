@@ -571,3 +571,28 @@ kbd {
   .joint-row { grid-template-columns: 100px minmax(0,1fr) 70px; }
   .joint-row .btn.small, .joint-row .jval { display: none; }
 }
+
+/* ================= Sequencer ================= */
+.seq-item {
+  display: grid;
+  grid-template-columns: 34px minmax(90px, 160px) minmax(0, 1fr) 96px auto;
+  gap: 8px; align-items: center;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 6px 9px;
+}
+.seq-item.active { border-color: var(--amber); box-shadow: 0 0 12px rgba(255, 176, 32, 0.25); }
+.seq-item .seq-n { font-family: var(--mono); font-weight: 800; color: var(--amber2); font-size: 12px; }
+.seq-item .seq-label {
+  background: transparent; border: 1px solid transparent; color: var(--txt);
+  font-family: var(--sans); font-size: 12px; font-weight: 700; padding: 3px 6px; border-radius: 3px;
+}
+.seq-item .seq-label:hover, .seq-item .seq-label:focus { border-color: var(--line2); background: #10151d; outline: none; }
+.seq-item code { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seq-item .seq-dwell { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--faint); }
+.seq-item .seq-dwell input { width: 56px; padding: 3px 5px; font-size: 11px; }
+#seqProgress { font-size: 12px; min-width: 64px; text-align: center; }
+
+/* joint row selection (keyboard jog) */
+.joint-row.sel { background: rgba(0, 194, 209, 0.05); border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(0, 194, 209, 0.35); }

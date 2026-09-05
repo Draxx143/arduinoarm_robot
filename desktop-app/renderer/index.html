@@ -237,6 +237,25 @@
           </div>
         </div>
 
+        <div class="card">
+          <h3>Program Sequencer<span class="en">RUN A LIST OF POSES AUTOMATICALLY</span></h3>
+          <div class="card-body">
+            <div class="row" id="seqToolbar">
+              <button class="btn teal" id="btnSeqAdd">＋ Add current pose</button>
+              <button class="btn green big" id="btnSeqPlay">▶ Run program</button>
+              <button class="btn big" id="btnSeqStop">■ Stop</button>
+              <span class="code" id="seqProgress">idle</span>
+              <span style="flex:1"></span>
+              <button class="btn small" id="btnSeqExport" title="Save program as JSON">⤓ Export</button>
+              <button class="btn small" id="btnSeqImport" title="Load program from JSON">⤒ Import</button>
+              <input type="file" id="seqFile" accept=".json,application/json" style="display:none">
+              <button class="btn small red" id="btnSeqClear">🗑 Clear</button>
+            </div>
+            <div id="seqList" class="stack" style="gap:6px;margin-top:10px"></div>
+            <p class="tiny" style="margin-top:8px">Runs pose-by-pose on the real arm or the simulator: moveall &rarr; wait for motion to finish &rarr; dwell &rarr; next step. Export/Import saves programs as JSON files. Works great with the teach feature and the drag-to-pose canvas.</p>
+          </div>
+        </div>
+
         <div class="grid2">
           <div class="card">
             <h3>Teach &amp; Playback<span class="en">UP TO 30 STEPS</span></h3>
@@ -414,6 +433,7 @@
     <div class="card">
       <h3>Live Visualizer<span class="en">KINEMATIC PREVIEW</span></h3>
       <canvas id="vizCanvas"></canvas>
+      <p class="tiny" style="padding:8px 12px 0">✥ Tip: grab the joints directly on the canvas to pose the arm, then send it.</p>
       <div class="hud">
         <span class="chip-hud" id="hudX">X —</span>
         <span class="chip-hud" id="hudY">Y —</span>

@@ -50,6 +50,20 @@ const S = {
 const AXC = ["#00c2d1", "#ffb020", "#ff7a1a", "#3fb950", "#9e86ff"];
 const viz = new ArmViz($("vizCanvas"));
 viz.setTargets(S.targets);
+viz.onTargetDrag = (t) => { S.targets = t.slice(); syncJointInputs(); };
+viz.onDragEnd = () => { if ($("swLive") && $("swLive").checked) goMoveAll(S.targets.slice()); };
+
+/* keep slider/number inputs in sync with (possibly dragged) targets */
+function syncJointInputs() {
+  for (let i = 0; i < 5; i++) {
+    const s = $("jSlider" + i), n = $("jNum" + i);
+    if (!s || !n) continue;
+    const v = S.degMode ? S.targets[i] : Kin.degToSteps(i, S.targets[i]);
+    s.value = v; n.value = S.degMode ? v.toFixed(1) : Math.round(v);
+    const pct = ((v - s.min) / (s.max - s.min)) * 100;
+    s.style.setProperty("--val", pct + "%");
+  }
+}
 
 /* ============================================================
  * Console / feed / toasts / modal
@@ -208,6 +222,16 @@ function rxLine(line) {
     case "axis": {
       const a = S.axes[ev.axis];
       if (!a) break;
+      /* live speed telemetry (deg/s, smoothed) */
+      const now = Date.now();
+      if (a._lt && ev.deg !== a._ld) {
+        const dt = (now - a._lt) / 1000;
+        if (dt > 0.05) {
+          const inst = Math.abs(ev.deg - a._ld) / dt;
+          a.vel = (a.vel || 0) * 0.45 + inst * 0.55;
+        }
+      }
+      a._lt = now; a._ld = ev.deg;
       a.steps = ev.steps; a.deg = ev.deg; a.homed = ev.homed;
       a.enabled = ev.enabled; a.moving = ev.moving; a.endstop = ev.endstop;
       renderAxisCard(ev.axis);
@@ -432,9 +456,10 @@ function renderAxisCard(i) {
   const pct = Math.max(0, Math.min(100, ((a.deg - ax.min) / (ax.max - ax.min)) * 100));
   $("axBar" + i).style.width = pct + "%";
   const fl = (txt, ok) => `<span class="flag ${ok ? "y" : "n"}">${txt}</span>`;
+  const spd = (a.moving && a.vel && a.vel > 1) ? `<span class="flag info">▲ ${a.vel.toFixed(0)}°/s</span>` : "";
   $("axFlags" + i).innerHTML =
     fl("HOME", a.homed) + fl("PWR", a.enabled) +
-    (a.moving ? `<span class="flag info">MOVING</span>` : "") +
+    (spd || (a.moving ? `<span class="flag info">MOVING</span>` : "")) +
     `<span class="flag ${a.endstop === "Open" ? "" : "n"}">ES:${a.endstop === "Open" ? "OK" : "TRIG"}</span>`;
   $("axisCard" + i).classList.toggle("moving", a.moving);
   renderStats();
@@ -550,11 +575,126 @@ function readMoveAll() {
   return vals;
 }
 
-function goMoveAll(vals) {
+function goMoveAll(vals, silent) {
   send(Cmd.moveAll(vals));
   S.targets = vals.slice();
   viz.setTargets(S.targets);
-  toast("moveall sent → " + vals.map((v) => v + "°").join(" "), "info");
+  syncJointInputs();
+  if (!silent) toast("moveall sent → " + vals.map((v) => v + "°").join(" "), "info");
+}
+
+/* ============================================================
+ * Program Sequencer — run a list of poses step by step
+ * ============================================================ */
+S.seq = { items: [], playing: false, idx: 0 };
+
+function addCurrentPoseToSeq() {
+  if (S.seq.items.length >= 50) { toast("Program is full (50 steps)", "warn"); return; }
+  const pose = currentDegs();
+  S.seq.items.push({ label: "Step " + (S.seq.items.length + 1), pose, dwell: 800 });
+  renderSeqList();
+  toast("Pose added: [" + pose.join(", ") + "]", "ok");
+}
+
+function renderSeqList() {
+  const box = $("seqList");
+  if (!box) return;
+  box.innerHTML = "";
+  S.seq.items.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.className = "seq-item" + (S.seq.playing && S.seq.idx === i ? " active" : "");
+    d.innerHTML = `
+      <span class="seq-n">${String(i + 1).padStart(2, "0")}</span>
+      <input type="text" class="seq-label" value="${it.label.replace(/"/g, "&quot;")}">
+      <code>[${it.pose.map((v) => v.toFixed(0)).join(", ")}]</code>
+      <label class="seq-dwell"><input type="number" value="${it.dwell}" min="0" step="100">ms</label>
+      <button class="btn small teal" title="Run this step now">▶</button>
+      <button class="btn small" title="Move up">↑</button>
+      <button class="btn small" title="Move down">↓</button>
+      <button class="btn small red" title="Delete">✕</button>`;
+    const [bRun, bUp, bDown, bDel] = d.querySelectorAll("button");
+    bRun.onclick = () => { goMoveAll(it.pose.slice()); };
+    bUp.onclick = () => { if (i > 0) { [S.seq.items[i - 1], S.seq.items[i]] = [S.seq.items[i], S.seq.items[i - 1]]; renderSeqList(); } };
+    bDown.onclick = () => { if (i < S.seq.items.length - 1) { [S.seq.items[i + 1], S.seq.items[i]] = [S.seq.items[i], S.seq.items[i + 1]]; renderSeqList(); } };
+    bDel.onclick = () => { S.seq.items.splice(i, 1); renderSeqList(); };
+    d.querySelector(".seq-label").addEventListener("change", (e) => { it.label = e.target.value; });
+    d.querySelector(".seq-dwell input").addEventListener("change", (e) => { it.dwell = Math.max(0, parseInt(e.target.value, 10) || 0); });
+    box.appendChild(d);
+  });
+  if (!S.seq.items.length) {
+    box.innerHTML = `<p class="tiny" style="text-align:center;padding:14px">Empty program — pose the arm (drag the joints!) then press "Add current pose".</p>`;
+  }
+}
+
+function seqPlay() {
+  if (!S.seq.items.length) { toast("Program is empty — add poses first", "warn"); return; }
+  S.seq.playing = true;
+  seqRunFrom(0);
+}
+
+function seqStop() {
+  S.seq.playing = false;
+  const p = $("seqProgress");
+  if (p) p.textContent = "idle";
+}
+
+function seqRunFrom(i) {
+  if (!S.seq.playing) return;
+  if (i >= S.seq.items.length) {
+    S.seq.playing = false;
+    $("seqProgress").textContent = "✓ done";
+    toast("Program finished ✓", "ok");
+    renderSeqList();
+    return;
+  }
+  S.seq.idx = i;
+  const it = S.seq.items[i];
+  $("seqProgress").textContent = `▶ ${i + 1}/${S.seq.items.length}`;
+  renderSeqList();
+  goMoveAll(it.pose.slice(), true);
+  /* wait until the arm reports all axes stopped, then dwell, then next */
+  setTimeout(() => {
+    let waited = 0;
+    const iv = setInterval(() => {
+      if (!S.seq.playing) { clearInterval(iv); return; }
+      send(Cmd.status());
+      waited += 400;
+      const still = S.axes.some((a) => a.moving);
+      if ((!still && waited > 800) || waited > 30000) {
+        clearInterval(iv);
+        setTimeout(() => seqRunFrom(i + 1), Math.max(0, it.dwell || 800));
+      }
+    }, 400);
+  }, 150);
+}
+
+function seqExport() {
+  const blob = new Blob([JSON.stringify({ app: "AXIS-5", type: "program", items: S.seq.items }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "axis5-program.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function seqImport(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const data = JSON.parse(rd.result);
+      if (!Array.isArray(data.items)) throw new Error("bad format");
+      S.seq.items = data.items
+        .filter((it) => Array.isArray(it.pose) && it.pose.length === 5)
+        .map((it) => ({
+          label: String(it.label || "Step"),
+          pose: it.pose.map((v, i) => Kin.clampDeg(i, parseFloat(v) || 0)),
+          dwell: Math.max(0, parseInt(it.dwell, 10) || 800),
+        }));
+      renderSeqList();
+      toast(`Imported ${S.seq.items.length} steps`, "ok");
+    } catch (e) { toast("Invalid program file", "err"); }
+  };
+  rd.readAsText(file);
 }
 
 /* ---------- profile ---------- */
@@ -855,6 +995,23 @@ function bindActions() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("modalBack").classList.contains("show")) $("btnEstop").click();
     if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); $("cmdInput").focus(); }
+    /* ---- keyboard jog (ignored while typing in a field) ---- */
+    const tag = (e.target && e.target.tagName) || "";
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+    if (["1", "2", "3", "4", "5"].includes(e.key)) {
+      S.selJoint = parseInt(e.key, 10) - 1;
+      document.querySelectorAll(".joint-row").forEach((r) => r.classList.remove("sel"));
+      const sl = $("jSlider" + S.selJoint);
+      if (sl) sl.closest(".joint-row").classList.add("sel");
+      toast(`Jog target: J${S.selJoint + 1} ${FW.AXES[S.selJoint].name} — use ← / →`, "info", 1600);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (S.selJoint === null || S.selJoint === undefined) return;
+      e.preventDefault();
+      const j = S.selJoint, delta = (e.key === "ArrowRight" ? 2 : -2) * (e.shiftKey ? 3 : 1);
+      const v = Math.max(FW.AXES[j].min, Math.min(FW.AXES[j].max, S.axes[j].deg + delta));
+      send(Cmd.deg(j + 1, v));
+      S.targets[j] = v; viz.setTargets(S.targets); syncJointInputs();
+    }
   });
   $("btnResetEstop").onclick = () => send(Cmd.reset());
 
@@ -895,6 +1052,17 @@ function bindActions() {
   $("btnFKFromCurrent").onclick = () => {
     currentDegs().forEach((d, i) => ($("fkA" + i).value = d));
     calcFKLocal();
+  };
+
+  /* sequencer */
+  $("btnSeqAdd").onclick = addCurrentPoseToSeq;
+  $("btnSeqPlay").onclick = seqPlay;
+  $("btnSeqStop").onclick = seqStop;
+  $("btnSeqExport").onclick = seqExport;
+  $("btnSeqImport").onclick = () => $("seqFile").click();
+  $("seqFile").addEventListener("change", (e) => { if (e.target.files[0]) seqImport(e.target.files[0]); e.target.value = ""; });
+  $("btnSeqClear").onclick = async () => {
+    if (await confirmModal("Clear program", "Remove all steps from the program?")) { S.seq.items = []; renderSeqList(); }
   };
 
   /* memory */
@@ -999,6 +1167,7 @@ function init() {
   renderEnergy();
   renderSlots();
   renderTimersLocal();
+  renderSeqList();
   FW.AXES.forEach((_, i) => renderAxisCard(i));
 
   const inElectron = !!(window.electronAPI && window.electronAPI.isElectron);
