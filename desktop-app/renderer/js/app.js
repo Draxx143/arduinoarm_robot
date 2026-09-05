@@ -48,10 +48,8 @@ const S = {
 };
 
 const AXC = ["#00c2d1", "#ffb020", "#ff7a1a", "#3fb950", "#9e86ff"];
-const viz = new ArmViz($("vizCanvas"));
+const viz = new ArmViz("telePanel");
 viz.setTargets(S.targets);
-viz.onTargetDrag = (t) => { S.targets = t.slice(); syncJointInputs(); };
-viz.onDragEnd = () => { if ($("swLive") && $("swLive").checked) goMoveAll(S.targets.slice()); };
 
 /* keep slider/number inputs in sync with (possibly dragged) targets */
 function syncJointInputs() {
@@ -83,13 +81,39 @@ function addConsole(cls, text) {
   if (near) box.scrollTop = box.scrollHeight;
 }
 
+const Feed = {
+  paused: false,
+  lastText: null,
+  lastEl: null,
+  count: 1,
+  total: 0,
+};
+const FEED_ICONS = { tx: "▸", "rx-ok": "✓", "rx-err": "✗", warn: "⚠" };
+
 function addFeed(cls, text) {
+  Feed.total++;
+  $("feedStat").textContent = Feed.total + " events";
+  if (Feed.paused) return;
   const box = $("feedBox");
+
+  /* aggregate repeats (e.g. polling spam) into one line with a ×N badge */
+  if (text === Feed.lastText && Feed.lastEl && Feed.lastEl.isConnected) {
+    Feed.count++;
+    Feed.lastEl.querySelector(".fx").textContent = "×" + Feed.count;
+    return;
+  }
+  Feed.lastText = text;
+  Feed.count = 1;
+
   const div = document.createElement("div");
   div.className = "f-line " + cls;
-  div.textContent = text;
+  const icon = FEED_ICONS[cls] || "·";
+  div.innerHTML = `<span class="f-i">${icon}</span><span class="f-x"></span><span class="f-t"></span><span class="fx"></span>`;
+  div.querySelector(".f-x").textContent = text.replace(/^» /, "");
+  div.querySelector(".f-t").textContent = Fmt.time(Date.now());
   box.prepend(div);
-  while (box.children.length > 26) box.removeChild(box.lastChild);
+  Feed.lastEl = div;
+  while (box.children.length > 80) box.removeChild(box.lastChild);
 }
 
 function toast(msg, type = "info", ms = 3200) {
@@ -183,7 +207,7 @@ function send(text) {
     return false;
   }
   addConsole("tx", "» " + text);
-  addFeed("tx", "» " + text);
+  if (text !== "status") addFeed("tx", "» " + text);
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
       addConsole("err", "!! send error: " + e.message);
@@ -1052,6 +1076,19 @@ function bindActions() {
   $("btnFKFromCurrent").onclick = () => {
     currentDegs().forEach((d, i) => ($("fkA" + i).value = d));
     calcFKLocal();
+  };
+
+  /* event feed */
+  $("btnFeedPause").onclick = () => {
+    Feed.paused = !Feed.paused;
+    $("btnFeedPause").textContent = Feed.paused ? "▶ Resume" : "⏸ Pause";
+    $("btnFeedPause").classList.toggle("amber", Feed.paused);
+    $("feedStat").textContent = Feed.paused ? "paused" : Feed.total + " events";
+  };
+  $("btnFeedClear").onclick = () => {
+    $("feedBox").innerHTML = "";
+    Feed.lastText = null; Feed.lastEl = null; Feed.count = 1; Feed.total = 0;
+    $("feedStat").textContent = "0 events";
   };
 
   /* sequencer */

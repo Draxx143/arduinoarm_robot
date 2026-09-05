@@ -431,15 +431,8 @@
   <!-- ═══════════ Sidebar ═══════════ -->
   <aside class="sidebar">
     <div class="card">
-      <h3>Live Visualizer<span class="en">KINEMATIC PREVIEW</span></h3>
-      <canvas id="vizCanvas"></canvas>
-      <p class="tiny" style="padding:8px 12px 0">✥ Tip: grab the joints directly on the canvas to pose the arm, then send it.</p>
-      <div class="hud">
-        <span class="chip-hud" id="hudX">X —</span>
-        <span class="chip-hud" id="hudY">Y —</span>
-        <span class="chip-hud" id="hudZ">Z —</span>
-        <span class="chip-hud" id="hudReach">R —</span>
-      </div>
+      <h3>Telemetry<span class="en">LIVE JOINT READOUT</span></h3>
+      <div id="telePanel"></div>
     </div>
 
     <div class="card">
@@ -455,6 +448,11 @@
 
     <div class="card">
       <h3>Event Feed<span class="en">LIVE LOG</span></h3>
+      <div class="feed-tools">
+        <button class="btn small" id="btnFeedPause" title="Freeze / resume the feed">⏸ Pause</button>
+        <button class="btn small" id="btnFeedClear" title="Clear the feed">✕ Clear</button>
+        <span class="tiny" id="feedStat" style="margin-left:auto">0 events</span>
+      </div>
       <div class="feed" id="feedBox"></div>
     </div>
   </aside>
