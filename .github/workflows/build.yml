@@ -53,13 +53,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd out
+          NOTES="Installers for the AXIS-5 Robot Control desktop app. Windows: Setup/Portable exe - Ubuntu/Debian: deb - Any Linux: AppImage."
           if gh release view latest -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload latest ./* -R "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create latest ./* -R "$GITHUB_REPOSITORY" --title "AXIS-5 Robot Control Installers" --notes "Installers for the AXIS-5 Robot Control desktop app (companion panel for the 5-DOF Arduino Mega 2560 robot arm firmware).
-
-- Windows installer: AXIS5-Robot-Control-Setup-*.exe
-- Windows portable: AXIS5-Robot-Control-Portable-*.exe
-- Ubuntu/Debian: axis5-robot-control_*.deb (sudo apt install ./file.deb)
-- Any Linux: AXIS5-Robot-Control-*.AppImage (chmod +x, then run)"
+            gh release create latest ./* -R "$GITHUB_REPOSITORY" --title "AXIS-5 Robot Control Installers" --notes "$NOTES"
           fi
