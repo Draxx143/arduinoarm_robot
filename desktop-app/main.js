@@ -19,14 +19,14 @@ process.on("uncaughtException", (err) => {
   } catch (e) { /* ignore */ }
 });
 
-/* Launch robustly on modern Ubuntu (23.10+/24.04 AppArmor user-namespace
- * restrictions break the Chrome SUID sandbox). This panel talks to local
- * hardware and never renders untrusted web content, so disabling the
- * browser sandbox is the pragmatic choice for an industrial kiosk app. */
+/* NOTE: command-line flags that must exist at process start (like
+ * --no-sandbox on Ubuntu 23.10+ with AppArmor user-namespace
+ * restrictions) are passed by the deb wrapper launcher. These
+ * app.commandLine switches are a second line of defense. */
 app.commandLine.appendSwitch("no-sandbox");
-app.commandLine.appendSwitch("disable-dev-shm-usage");
 app.commandLine.appendSwitch("disable-gpu-sandbox");
-/* Safe video mode: AXIS5_SAFE=1 ./axis5-robot-control  (for VMs / broken GPU drivers) */
+app.commandLine.appendSwitch("disable-dev-shm-usage");
+/* Safe video mode: AXIS5_SAFE=1 axis5-robot-control  (for VMs / broken GPU drivers) */
 if (process.env.AXIS5_SAFE === "1") {
   app.commandLine.appendSwitch("disable-gpu");
 }
