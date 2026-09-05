@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
@@ -30,10 +31,30 @@ jobs:
         run: npm install
 
       - name: Build Windows installers
-        run: npm run dist:win
+        run: |
+          set -o pipefail
+          npm run dist:win 2>&1 | tee build-win.log
 
       - name: Build Linux packages
-        run: npm run dist:linux
+        run: |
+          set -o pipefail
+          npm run dist:linux 2>&1 | tee build-linux.log
+
+      - name: Report failure log
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo "## CI build failure log (tail)"
+            echo '```'
+            tail -n 120 build-win.log 2>/dev/null || echo "(no win log)"
+            echo '```'
+            echo '```'
+            tail -n 60 build-linux.log 2>/dev/null || echo "(no linux log)"
+            echo '```'
+          } > ci-comment.md
+          gh issue create -R "$GITHUB_REPOSITORY" -t "CI log report - run $GITHUB_RUN_ID" -F ci-comment.md > /dev/null 2>&1 || true
 
       - name: Collect artifacts
         run: |
