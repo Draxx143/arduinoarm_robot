@@ -1,5 +1,16 @@
 # 5 DOF Robot Arm Firmware for Arduino Mega2560
 
+## 🖥️ GUI Control Panel (جدید)
+
+A complete dedicated GUI for this firmware is available in the [`gui/`](gui/) folder — **no installation needed**.
+
+- Open `gui/index.html` in **Chrome or Edge** → it connects directly to the Mega2560 over **Web Serial** (115200 baud)
+- Full coverage of every firmware command: homing, jog, moveall, demo, position store (10 slots), teach & playback, timers, speed profiles, IK/FK, energy manager, on-board logger and a full serial console
+- Live 2D visualizer (side + top view), status polling & parsing, one-click **E-STOP**
+- Includes a **built-in firmware simulator** so you can test the whole panel without hardware
+
+See [`gui/README-GUI.md`](gui/README-GUI.md) for the full guide (فارسی).
+
 ## Overview
 
 This is a complete firmware for a 5-DOF robot arm controlled by an Arduino Mega2560 with ROS integration via rosserial. The firmware handles real-time motor control while ROS handles high-level tasks like inverse kinematics and trajectory planning.
