@@ -1,7 +1,7 @@
 {
   "name": "axis5-robot-control",
   "productName": "AXIS-5 Robot Control",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Industrial desktop control panel for the 5-DOF Arduino Mega 2560 robot arm (RobotArm_Firmware.ino)",
   "main": "main.js",
   "homepage": "https://github.com/Draxx143/arduinoarm_robot",
@@ -58,6 +58,7 @@
       "category": "Utility",
       "artifactName": "AXIS5-Robot-Control-${version}-${arch}.${ext}",
       "desktop": {
+        "Exec": "axis5-robot-control",
         "StartupWMClass": "axis5-robot-control",
         "Categories": "Development;Engineering;Electronics;"
       }
@@ -65,7 +66,21 @@
     "deb": {
       "packageCategory": "utils",
       "maintainer": "Draxx143",
-      "afterInstall": "build/after-install.sh"
+      "afterInstall": "build/after-install.sh",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2",
+        "libxkbcommon0",
+        "libdrm2"
+      ]
     }
   }
 }

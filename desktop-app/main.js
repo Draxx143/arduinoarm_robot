@@ -10,12 +10,26 @@ const path = require("path");
 let win = null;
 let pendingPortCallback = null;
 
+/* Show a visible dialog instead of dying silently when something
+ * fails at startup (the app may be launched from the menu icon). */
+process.on("uncaughtException", (err) => {
+  try {
+    const { dialog } = require("electron");
+    dialog.showErrorBox("AXIS-5 Robot Control — startup error", String((err && err.stack) || err));
+  } catch (e) { /* ignore */ }
+});
+
 /* Launch robustly on modern Ubuntu (23.10+/24.04 AppArmor user-namespace
  * restrictions break the Chrome SUID sandbox). This panel talks to local
  * hardware and never renders untrusted web content, so disabling the
  * browser sandbox is the pragmatic choice for an industrial kiosk app. */
 app.commandLine.appendSwitch("no-sandbox");
 app.commandLine.appendSwitch("disable-dev-shm-usage");
+app.commandLine.appendSwitch("disable-gpu-sandbox");
+/* Safe video mode: AXIS5_SAFE=1 ./axis5-robot-control  (for VMs / broken GPU drivers) */
+if (process.env.AXIS5_SAFE === "1") {
+  app.commandLine.appendSwitch("disable-gpu");
+}
 
 function createWindow() {
   win = new BrowserWindow({
