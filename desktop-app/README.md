@@ -30,10 +30,10 @@ Prebuilt installers are published automatically by GitHub Actions to the repo's 
 
 | File | Platform | How to install |
 |---|---|---|
-| `AXIS5-Robot-Control-Setup-1.0.0.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
-| `AXIS5-Robot-Control-Portable-1.0.0.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
-| `AXIS5-Robot-Control-1.0.0-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.0-amd64.deb` |
-| `AXIS5-Robot-Control-1.0.0-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+| `AXIS5-Robot-Control-Setup-1.0.1.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.1.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.1-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.1-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.1-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
 
 Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
 
@@ -41,8 +41,8 @@ Every push to the app also rebuilds the installers (see `.github/workflows/build
 
 | OS | Command | Output |
 |---|---|---|
-| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.0.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.0.exe` (portable) |
-| Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.0-x64.AppImage` + `.deb` |
+| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.1.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.1.exe` (portable) |
+| Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.1-x64.AppImage` + `.deb` |
 
 Build both from Linux/macOS: `npm run dist` (Windows builds cross-compile fine from Linux).
 

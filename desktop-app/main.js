@@ -10,6 +10,13 @@ const path = require("path");
 let win = null;
 let pendingPortCallback = null;
 
+/* Launch robustly on modern Ubuntu (23.10+/24.04 AppArmor user-namespace
+ * restrictions break the Chrome SUID sandbox). This panel talks to local
+ * hardware and never renders untrusted web content, so disabling the
+ * browser sandbox is the pragmatic choice for an industrial kiosk app. */
+app.commandLine.appendSwitch("no-sandbox");
+app.commandLine.appendSwitch("disable-dev-shm-usage");
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1600,
