@@ -48,8 +48,6 @@ const S = {
 };
 
 const AXC = ["#00c2d1", "#ffb020", "#ff7a1a", "#3fb950", "#9e86ff"];
-const viz = new ArmViz("telePanel");
-viz.setTargets(S.targets);
 
 /* keep slider/number inputs in sync with (possibly dragged) targets */
 function syncJointInputs() {
@@ -259,7 +257,6 @@ function rxLine(line) {
       a.steps = ev.steps; a.deg = ev.deg; a.homed = ev.homed;
       a.enabled = ev.enabled; a.moving = ev.moving; a.endstop = ev.endstop;
       renderAxisCard(ev.axis);
-      viz.setAngles(S.axes.map((x) => x.deg));
       break;
     }
     case "state": setStateUI(ev.key); break;
@@ -359,7 +356,6 @@ function setStateUI(key) {
   badge.style.borderColor = st.color + "88";
   badge.style.color = st.color;
   badge.classList.toggle("estop", key === "ESTOP");
-  viz.setState(key);
   $("lampRun").classList.toggle("on", key === "READY" || key === "MOVING");
   $("lampErr").classList.toggle("on", key === "ESTOP" || key === "ERROR");
   renderStats();
@@ -538,7 +534,6 @@ function buildJoints() {
       if (fromSlider) num.value = S.degMode ? (+v).toFixed(1) : Math.round(v);
       else slider.value = v;
       S.targets[i] = S.degMode ? +v : Kin.stepsToDeg(i, v);
-      viz.setTargets(S.targets);
       return v;
     };
     slider.addEventListener("input", () => sync(+slider.value, true));
@@ -566,7 +561,6 @@ function sendJoint(i, v) {
   } else {
     send(Cmd.move(i + 1, Math.round(v)));
   }
-  viz.setTargets(S.targets);
 }
 
 /* ---------- moveall ---------- */
@@ -607,7 +601,6 @@ function readMoveAll() {
 function goMoveAll(vals, silent) {
   send(Cmd.moveAll(vals));
   S.targets = vals.slice();
-  viz.setTargets(S.targets);
   syncJointInputs();
   if (!silent) toast("moveall sent → " + vals.map((v) => v + "°").join(" "), "info");
 }
@@ -764,7 +757,6 @@ function calcIKLocal(move) {
   box.textContent = "IK ⇒ " + res.map((a) => a.toFixed(1) + "°").join(" | ");
   if (move) {
     S.targets = res.slice();
-    viz.setTargets(S.targets);
   }
   return res;
 }
@@ -776,7 +768,6 @@ function calcFKLocal() {
   $("fkResult").style.color = "#ffcd69";
   $("fkResult").textContent = `FK ⇒ X=${p.x.toFixed(1)}  Y=${p.y.toFixed(1)}  Z=${p.z.toFixed(1)} (mm) — reach ${Math.round(p.reach)} mm`;
   S.targets = angles.slice();
-  viz.setTargets(S.targets);
   return p;
 }
 
@@ -1062,7 +1053,7 @@ function bindActions() {
       const j = S.selJoint, delta = (e.key === "ArrowRight" ? 2 : -2) * (e.shiftKey ? 3 : 1);
       const v = Math.max(FW.AXES[j].min, Math.min(FW.AXES[j].max, S.axes[j].deg + delta));
       send(Cmd.deg(j + 1, v));
-      S.targets[j] = v; viz.setTargets(S.targets); syncJointInputs();
+      S.targets[j] = v; syncJointInputs();
     }
   });
   $("btnResetEstop").onclick = () => send(Cmd.reset());
@@ -1209,7 +1200,6 @@ function mainLoop(t) {
   const dt = Math.min(100, t - _lastT);
   _lastT = t;
   if (S.sim) S.sim.tick();
-  viz.frame(dt);
   requestAnimationFrame(mainLoop);
 }
 

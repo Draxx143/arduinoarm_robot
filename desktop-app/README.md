@@ -2,7 +2,7 @@
 
 Industrial English-language **desktop application** (Electron) for the 5-DOF Arduino Mega 2560 robot arm firmware (`RobotArm_Firmware.ino`).
 
-## 🆕 What's new in v1.0.7 (firmware audit + GUI fixes)
+## 🆕 What's new in v1.0.8 (firmware audit + GUI fixes)
 
 **Firmware (`RobotArm_Firmware.ino` + modules):**
 - **Homing no longer freezes the board** — `processHoming()` ran `delay(10)` + a blocking back-off loop (up to ~5 s for axis X) *inside the 1 kHz timer ISR*, starving the serial link and the main loop. It is now fully non-blocking (phase-based: seek → back-off at 1 kHz → zero).
@@ -16,14 +16,17 @@ Industrial English-language **desktop application** (Electron) for the 5-DOF Ard
 - **Quick chips rebuilt** — only high-use, complete commands; enable/disable appear once; every chip string is verified against the parser (zero "Unknown command" chips).
 - **J2/J3 slider fill fixed** — the colored fill bar appeared half-filled at 0 on first open; fills are now painted correctly at build time.
 
+## 🆕 What's new in v1.0.8
+
+- **Telemetry panel removed** (by request) — the sidebar now hosts Link Status and the Event Feed; joint positions live on the Motion-tab axis cards, FK readouts in the Kinematics box.
+- Repo restructured: firmware moved to `firmware/RobotArm_Firmware/`, full Persian install/uninstall guide (Ubuntu + Windows) in the root `README.md`.
+
 ## ✨ Features
 
 - **Program Sequencer** — build a step list of poses with dwell times, run it end-to-end (moveall → wait for motion → dwell → next), reorder/delete steps, export/import as JSON
-- **Live telemetry** — per-axis speed (°/s) computed from firmware status polling
 - **Keyboard jog** — press 1–5 to pick a joint, ←/→ to jog (Shift = ×3)
 - **Real serial link** to the board (Web Serial inside Electron, 115200 8N1) with an in-app COM-port chooser
 - **Full command coverage**: home/status/enable/disable/estop/reset, demo, `moveall`/`deg`/`move`, position store (10 slots), teach & playback, timers, speed profiles, IK/FK, sleep/wake/autosleep, on-board logger
-- **Compact telemetry panel** — per-joint digital readouts with position scales, target markers, live deg/s speeds and the FK tool position (X/Y/Z/R). No gimmick drawings, just data
 - **Built-in firmware simulator** — test everything without hardware
 - **PLC-style status lamps**, industrial “Steel & Amber” HMI theme
 - **Smart event feed** — duplicate events collapse into ×N badges, pause & clear controls, status-poll spam filtered out
@@ -48,10 +51,10 @@ Prebuilt installers are published automatically by GitHub Actions to the repo's 
 
 | File | Platform | How to install |
 |---|---|---|
-| `AXIS5-Robot-Control-Setup-1.0.7.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
-| `AXIS5-Robot-Control-Portable-1.0.7.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
-| `AXIS5-Robot-Control-1.0.7-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.7-amd64.deb` |
-| `AXIS5-Robot-Control-1.0.7-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+| `AXIS5-Robot-Control-Setup-1.0.8.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.8.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.8-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.8-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.8-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
 
 Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
 
@@ -59,7 +62,7 @@ Every push to the app also rebuilds the installers (see `.github/workflows/build
 
 | OS | Command | Output |
 |---|---|---|
-| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.7.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.7.exe` (portable) |
+| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.8.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.8.exe` (portable) |
 | Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.1-x64.AppImage` + `.deb` |
 
 Build both from Linux/macOS: `npm run dist` (Windows builds cross-compile fine from Linux).
@@ -81,7 +84,6 @@ desktop-app/
         ├── core.js    firmware mirror: constants, parser, command builder, kinematics
         ├── serial.js  Web Serial transport + Electron chooser bridge
         ├── sim.js     in-app firmware simulator
-        ├── viz.js     canvas visualizer (side + top views)
         └── app.js     UI logic
 ```
 
