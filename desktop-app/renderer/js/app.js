@@ -526,6 +526,11 @@ function buildJoints() {
     list.appendChild(row);
 
     const slider = $("jSlider" + i), num = $("jNum" + i);
+    /* FIX: نوار اسلایدر در بار اول با درصد درست رنگ شود
+       (قبلاً پیش‌فرض CSS یعنی ۵۰٪ می‌ماند — برای J2/J3 که صفرشان
+       ابتدای محدوده است، نیمه‌رنگ دیده می‌شد) */
+    const initV = S.degMode ? deg : Kin.degToSteps(i, deg);
+    slider.style.setProperty("--val", (((initV - lo) / (hi - lo)) * 100) + "%");
     const sync = (v, fromSlider) => {
       v = Math.max(+slider.min, Math.min(+slider.max, v));
       const pct = ((v - slider.min) / (slider.max - slider.min)) * 100;
@@ -898,16 +903,39 @@ function renderTimersLocal() {
 function buildChips() {
   const box = $("chipsBox");
   box.innerHTML = "";
-  const extra = [
-    "profile slow", "profile normal", "profile fast",
-    "autosleep on", "autosleep off",
-    "home 1", "home 2", "home 3", "home 4", "home 5",
-    "ik 150 0 80", "fk 0 45 30 0 0",
+  /* فقط دستورات پرکاربرد و «کامل» — هر رشته اینجا عیناً توسط پارسر
+     فریم‌ور پذیرفته می‌شود (بدون آرگومان الزامی، بدون تکرار). */
+  const QUICK_CMDS = [
+    { cmd: "home", cls: "" },
+    { cmd: "status", cls: "" },
+    { cmd: "estop", cls: "danger" },
+    { cmd: "reset", cls: "" },
+    { cmd: "enable", cls: "" },
+    { cmd: "disable", cls: "" },
+    { cmd: "demo", cls: "" },
+    { cmd: "stopdemo", cls: "" },
+    { cmd: "stop", cls: "" },
+    { cmd: "teach", cls: "" },
+    { cmd: "teach step", cls: "" },
+    { cmd: "teach stop", cls: "" },
+    { cmd: "play", cls: "" },
+    { cmd: "play stop", cls: "" },
+    { cmd: "listpos", cls: "" },
+    { cmd: "timers", cls: "" },
+    { cmd: "cleartimers", cls: "" },
+    { cmd: "profile slow", cls: "warn" },
+    { cmd: "profile normal", cls: "warn" },
+    { cmd: "profile fast", cls: "warn" },
+    { cmd: "log on", cls: "" },
+    { cmd: "log off", cls: "" },
+    { cmd: "log show", cls: "" },
+    { cmd: "log clear", cls: "" },
+    { cmd: "sleep", cls: "" },
+    { cmd: "wake", cls: "" },
+    { cmd: "autosleep on", cls: "" },
+    { cmd: "autosleep off", cls: "" },
   ];
-  const items = [];
-  COMMAND_REF.forEach((c) => items.push({ cmd: c.cmd, cls: c.cat === "Safety" ? "danger" : "" }));
-  extra.forEach((e) => items.push({ cmd: e, cls: "warn" }));
-  items.forEach((it) => {
+  QUICK_CMDS.forEach((it) => {
     const b = document.createElement("button");
     b.className = "chip " + it.cls;
     b.textContent = it.cmd;

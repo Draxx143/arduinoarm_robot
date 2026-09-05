@@ -46,7 +46,7 @@ const FW = {
       min: 0, max: 100,
       stepsPerDeg: 53.33, stepsPerRev: 200, microstep: 16, gear: "1:6",
       maxSpeed: 2000, accel: 1000, backoff: 300,
-      soft: { min: 0, max: 8889 },
+      soft: { min: 0, max: 5333 }, /* 100° x 53.33 — matches fixed Config.h */
       pins: { step: "A6", dir: "A7", enable: "A2", endstop: "14" },
     },
     {
@@ -131,13 +131,15 @@ const Kin = {
     angles[0] = Math.atan2(y, x) / this.D2R;
     const r = Math.hypot(x, y);
     const L = Math.hypot(r, z);
-    if (L > L1 + L2 + L3 || L < Math.abs(L1 - L2 - L3)) return null;
-    let cosElbow = (L1 * L1 + L2 * L2 - L * L) / (2 * L1 * L2);
+    // FIX: ساعد مؤثر L2+L3 — عین مدل اصلاح‌شده‌ی IK.cpp فریم‌ور
+    const L2e = L2 + L3;
+    if (L > L1 + L2e || L < Math.abs(L1 - L2e)) return null;
+    let cosElbow = (L1 * L1 + L2e * L2e - L * L) / (2 * L1 * L2e);
     cosElbow = Math.max(-1, Math.min(1, cosElbow));
     const elbow = Math.acos(cosElbow);
     angles[2] = 180 - elbow / this.D2R;
     const alpha = Math.atan2(z, r);
-    const cosBeta = (L1 * L1 + L * L - L2 * L2) / (2 * L1 * L);
+    const cosBeta = (L1 * L1 + L * L - L2e * L2e) / (2 * L1 * L);
     const beta = Math.acos(Math.max(-1, Math.min(1, cosBeta)));
     angles[1] = (alpha + beta) / this.D2R;
     angles[3] = 0;

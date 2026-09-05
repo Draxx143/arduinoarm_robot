@@ -114,8 +114,7 @@
 #define AXIS_X_SOFT_MAX      4888    // +110°
 
 #define AXIS_Y_SOFT_MIN      0       // 0° (محور 2: فقط +100)
-#define AXIS_Y_SOFT_MAX      8889  
-  // 100° × 88.89
+#define AXIS_Y_SOFT_MAX      5333    // FIX: 100° × 53.33 steps/deg — مقدار قبلی (8889) تا 166 درجه مجاز می‌کرد!
 #define AXIS_Z_SOFT_MIN      0       // 0° (محور 3: فقط +55)
 #define AXIS_Z_SOFT_MAX      3911    // +55°
 

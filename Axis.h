@@ -91,6 +91,7 @@ private:
     volatile bool _enabled;
     volatile bool _emergencyStop;
     volatile bool _endstopTriggered;
+    volatile int32_t _backoffDone;  // FIX: شمارنده عقب‌نشینی غیرمسدودساز
     
     // Motion control
     volatile uint32_t _stepInterval;

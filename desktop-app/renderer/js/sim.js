@@ -472,6 +472,13 @@ class SimFirmware {
         const x = parseFloat(parts[0]), y = parseFloat(parts[1]), z = parseFloat(parts[2]);
         const angles = Kin.ik(x, y, z);
         if (angles) {
+          /* FIX: clamp به محدوده مفصلی — عین رفتار جدید فریم‌ور */
+          let clamped = false;
+          for (let i = 0; i < 5; i++) {
+            const c = Math.max(FW.AXES[i].min, Math.min(FW.AXES[i].max, angles[i]));
+            if (c !== angles[i]) { angles[i] = c; clamped = true; }
+          }
+          if (clamped) this.emit(">> Angles clamped to joint limits");
           this.emit(">> IK solution: " + angles.map((a) => a.toFixed(1) + "°").join(", "));
           this.moveAll(angles.map((a, i) => this.degToSteps(i, a)));
         } else this.emit("!! Position out of reach");

@@ -9,7 +9,7 @@
  *   move/deg/moveall  -> حرکت
  *   demo              -> حرکت نمایشی
  *   savepos/loadpos   -> ذخیره/بازیابی موقعیت
- *   timer             -> تایمر خودکار
+ *   timer <ms> <axis> -> تایمر خودکار (هدف = موقعیت لحظه‌ی ثبت)
  *   teach/teach stop/play -> حالت آموزش
  *   log               -> لاگ‌گیری
  *   profile           -> پروفایل سرعت
@@ -128,6 +128,9 @@ void setup() {
     motorController->init();
     motorController->startControlLoop();
 
+    // FIX: اتصال callback تایمر به حرکت واقعی موتور
+    timerManager.onFire(onTimerFire);
+
     positionStore.begin();
     
     // تنظیم callback های EnergyManager
@@ -136,6 +139,17 @@ void setup() {
     systemState = STATE_INIT;
     Serial.println("System initialized.");
     Serial.println("======================================");
+}
+
+// FIX: اجرای واقعی تایمر — قبلاً TimerManager فقط پیام چاپ می‌کرد
+void onTimerFire(uint8_t axis, int32_t target) {
+    if (axis >= NUM_AXES) return;
+    if (systemState != STATE_READY && systemState != STATE_MOVING) return;
+    motorController->moveTo(axis, target);
+    Serial.print(">> Moving axis ");
+    Serial.print(axis + 1);
+    Serial.print(" to ");
+    Serial.println(target);
 }
 
 void loop() {
@@ -458,6 +472,18 @@ void handleSerialCommands() {
                     }
                     Serial.println();
                     
+                    // FIX: محدودسازی زوایا به محدوده مجاز هر محور
+                    // (قبلاً زاویه خارج از محدوده مستقیم می‌رفت و moveAllAxes
+                    // آن محور را رد می‌کرد → حرکت ناقص و ناهماهنگ)
+                    bool clamped = false;
+                    for (int i = 0; i < NUM_AXES; i++) {
+                        float c = constrain(angles[i], AXIS_MIN_DEG[i], AXIS_MAX_DEG[i]);
+                        if (c != angles[i]) { angles[i] = c; clamped = true; }
+                    }
+                    if (clamped) {
+                        Serial.println(">> Angles clamped to joint limits");
+                    }
+                    
                     // تبدیل به steps و حرکت
                     int32_t steps[NUM_AXES];
                     for (int i = 0; i < NUM_AXES; i++) {
@@ -738,10 +764,6 @@ void executeDemo() {
     }
 }
 
-#if defined(EMERGENCY_STOP_PIN)
-void emergencyStopISR() {
-    motorController->emergencyStop();
-    systemState = STATE_ESTOP;
-    demoRunning = false;
-}
-#endif
+// FIX: پین ۲۲ روی Mega2560 وقفه‌ی خارجی ندارد (فقط پین‌های 2,3,18,19,20,21)
+// و این ISR هرگز attach نمی‌شد (کد مرده). پین E-STOP از قبل داخل
+// MotorController::update() با نرخ 1kHz poll می‌شود — همین کافی است.

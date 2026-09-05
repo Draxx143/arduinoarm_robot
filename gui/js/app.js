@@ -429,6 +429,9 @@ function buildJoints() {
     list.appendChild(row);
 
     const slider = $("jSlider" + i), num = $("jNum" + i);
+    /* FIX: نوار اسلایدر در بار اول با درصد درست رنگ شود */
+    const initV = S.degMode ? deg : Kin.degToSteps(i, deg);
+    slider.style.setProperty("--val", (((initV - lo) / (hi - lo)) * 100) + "%");
     const sync = (v, fromSlider) => {
       v = Math.max(+slider.min, Math.min(+slider.max, v));
       const pct = ((v - slider.min) / (slider.max - slider.min)) * 100;
@@ -695,16 +698,38 @@ function renderTimersLocal() {
 function buildChips() {
   const box = $("chipsBox");
   box.innerHTML = "";
-  const extra = [
-    { cmd: "profile slow", cls: "" }, { cmd: "profile normal", cls: "" }, { cmd: "profile fast", cls: "" },
-    { cmd: "autosleep on", cls: "" }, { cmd: "autosleep off", cls: "" },
-    { cmd: "home 1", cls: "" }, { cmd: "home 2", cls: "" }, { cmd: "home 3", cls: "" }, { cmd: "home 4", cls: "" }, { cmd: "home 5", cls: "" },
-    { cmd: "ik 150 0 80", cls: "" }, { cmd: "fk 0 45 30 0 0", cls: "" },
+  /* فقط دستورات پرکاربرد و «کامل» — هر رشته عیناً توسط پارسر فریم‌ور پذیرفته می‌شود */
+  const QUICK_CMDS = [
+    { cmd: "home", cls: "" },
+    { cmd: "status", cls: "" },
+    { cmd: "estop", cls: "danger" },
+    { cmd: "reset", cls: "" },
+    { cmd: "enable", cls: "" },
+    { cmd: "disable", cls: "" },
+    { cmd: "demo", cls: "" },
+    { cmd: "stopdemo", cls: "" },
+    { cmd: "stop", cls: "" },
+    { cmd: "teach", cls: "" },
+    { cmd: "teach step", cls: "" },
+    { cmd: "teach stop", cls: "" },
+    { cmd: "play", cls: "" },
+    { cmd: "play stop", cls: "" },
+    { cmd: "listpos", cls: "" },
+    { cmd: "timers", cls: "" },
+    { cmd: "cleartimers", cls: "" },
+    { cmd: "profile slow", cls: "warn" },
+    { cmd: "profile normal", cls: "warn" },
+    { cmd: "profile fast", cls: "warn" },
+    { cmd: "log on", cls: "" },
+    { cmd: "log off", cls: "" },
+    { cmd: "log show", cls: "" },
+    { cmd: "log clear", cls: "" },
+    { cmd: "sleep", cls: "" },
+    { cmd: "wake", cls: "" },
+    { cmd: "autosleep on", cls: "" },
+    { cmd: "autosleep off", cls: "" },
   ];
-  const items = [];
-  COMMAND_REF.forEach((c) => { if (c.chip) items.push({ cmd: c.cmd, cls: c.cat === "ایمنی" ? "danger" : "" }); });
-  extra.forEach((e) => items.push(e));
-  items.forEach((it) => {
+  QUICK_CMDS.forEach((it) => {
     const b = document.createElement("button");
     b.className = "chip " + it.cls;
     b.textContent = it.cmd;

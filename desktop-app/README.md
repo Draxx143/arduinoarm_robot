@@ -2,6 +2,20 @@
 
 Industrial English-language **desktop application** (Electron) for the 5-DOF Arduino Mega 2560 robot arm firmware (`RobotArm_Firmware.ino`).
 
+## 🆕 What's new in v1.0.7 (firmware audit + GUI fixes)
+
+**Firmware (`RobotArm_Firmware.ino` + modules):**
+- **Homing no longer freezes the board** — `processHoming()` ran `delay(10)` + a blocking back-off loop (up to ~5 s for axis X) *inside the 1 kHz timer ISR*, starving the serial link and the main loop. It is now fully non-blocking (phase-based: seek → back-off at 1 kHz → zero).
+- **`timer` command actually moves** — `TimerManager` fired and only printed a message; the motion call was a stub. It now drives `motorController->moveTo()` through a proper callback wired in `setup()`.
+- **IK/FK consistency** — `solveIK` targeted the end of L2 while checking reachability against L1+L2+L3, and `solveFK` ignored L3 entirely. Both now model the effective forearm L2+L3 (wrist collinear at J4=J5=0) — FK is now the exact inverse of IK, and the GUI preview matches the board.
+- **`ik` clamps to joint limits** before moving (no more partial/rejected multi-axis moves); sim mirrors this.
+- **Y soft-limit fixed** — `AXIS_Y_SOFT_MAX` was 8889 steps (≈166°) instead of 5333 (100°).
+- Dead `emergencyStopISR()` (never attached — pin 22 is not an external-int pin on the Mega) replaced with a comment; E-STOP pin is polled at 1 kHz as before.
+
+**Desktop app:**
+- **Quick chips rebuilt** — only high-use, complete commands; enable/disable appear once; every chip string is verified against the parser (zero "Unknown command" chips).
+- **J2/J3 slider fill fixed** — the colored fill bar appeared half-filled at 0 on first open; fills are now painted correctly at build time.
+
 ## ✨ Features
 
 - **Program Sequencer** — build a step list of poses with dwell times, run it end-to-end (moveall → wait for motion → dwell → next), reorder/delete steps, export/import as JSON
@@ -34,10 +48,10 @@ Prebuilt installers are published automatically by GitHub Actions to the repo's 
 
 | File | Platform | How to install |
 |---|---|---|
-| `AXIS5-Robot-Control-Setup-1.0.1.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
-| `AXIS5-Robot-Control-Portable-1.0.1.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
-| `AXIS5-Robot-Control-1.0.1-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.1-amd64.deb` |
-| `AXIS5-Robot-Control-1.0.1-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+| `AXIS5-Robot-Control-Setup-1.0.7.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.7.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.7-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.7-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.7-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
 
 Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
 
@@ -45,7 +59,7 @@ Every push to the app also rebuilds the installers (see `.github/workflows/build
 
 | OS | Command | Output |
 |---|---|---|
-| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.1.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.1.exe` (portable) |
+| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.7.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.7.exe` (portable) |
 | Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.1-x64.AppImage` + `.deb` |
 
 Build both from Linux/macOS: `npm run dist` (Windows builds cross-compile fine from Linux).

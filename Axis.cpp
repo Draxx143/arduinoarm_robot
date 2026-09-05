@@ -41,6 +41,7 @@ Axis::Axis(uint8_t stepPin, uint8_t dirPin, uint8_t enablePin,
     _accelerationPhase = false;
     _decelerationPhase = false;
     _cruisePhase = false;
+    _backoffDone = 0;
 }
 
 void Axis::init() {
@@ -158,6 +159,7 @@ bool Axis::startHoming() {
     _homing = true;
     _homed = false;
     _endstopTriggered = false;
+    _backoffDone = 0;
     
     setDirection(_currentPosition - 1);
     
@@ -172,40 +174,52 @@ bool Axis::startHoming() {
 void Axis::processHoming() {
     if (!_homing) return;
     
-    if (digitalRead(_endstopPin) == LOW) {
-        _endstopTriggered = true;
-        _moving = false;
-        _homing = false;
-        
-        delay(10);
-        
-        setDirection(_currentPosition + 1);
-        
-        for (int32_t i = 0; i < _backoff; i++) {
-            digitalWrite(_stepPin, HIGH);
-            delayMicroseconds(500);
-            digitalWrite(_stepPin, LOW);
-            delayMicroseconds(500);
-            _currentPosition++;
+    // FIX مهم: این تابع داخل وقفه‌ی 1kHz تایمر Timer1 اجرا می‌شود.
+    // delay(10) و حلقه‌ی blocking قبلی (تا ۵ ثانیه برای محور X!) کل
+    // برد را فریز می‌کرد. حالا کاملاً غیرمسدودسازی و گام‌به‌گام است.
+    
+    // ---- فاز ۱: جستجو تا برخورد با endstop (فقط قبل از تریگر) ----
+    if (!_endstopTriggered) {
+        if (digitalRead(_endstopPin) == LOW) {
+            _endstopTriggered = true;
+            _backoffDone = 0;
+            _lastStepTime = micros();
+            return;
         }
-        
-        _currentPosition = 0;
-        _targetPosition = 0;
-        _homed = true;
+        if (_moving) {
+            uint32_t currentMicros = micros();
+            if (_stepInterval > 0 && currentMicros - _lastStepTime >= _stepInterval) {
+                digitalWrite(_stepPin, HIGH);
+                delayMicroseconds(10);
+                digitalWrite(_stepPin, LOW);
+                
+                _currentPosition--;
+                _lastStepTime = currentMicros;
+            }
+        }
         return;
     }
     
-    if (_moving) {
-        uint32_t currentMicros = micros();
-        if (_stepInterval > 0 && currentMicros - _lastStepTime >= _stepInterval) {
+    // ---- فاز ۲: عقب‌نشینی تا آزاد شدن endstop یا سقف backoff ----
+    if (_backoffDone < _backoff && digitalRead(_endstopPin) == LOW) {
+        if (micros() - _lastStepTime >= 1000) {  // استپ عقب‌نشینی با نرخ 1kHz
+            _lastStepTime = micros();
+            setDirection(_currentPosition + 1);
             digitalWrite(_stepPin, HIGH);
-            delayMicroseconds(10);
+            delayMicroseconds(3);
             digitalWrite(_stepPin, LOW);
-            
-            _currentPosition--;
-            _lastStepTime = currentMicros;
+            _currentPosition++;
+            _backoffDone++;
         }
+        return;
     }
+    
+    // ---- فاز ۳: پایان — مرجع‌سازی صفر ----
+    _moving = false;
+    _homing = false;
+    _currentPosition = 0;
+    _targetPosition = 0;
+    _homed = true;
 }
 
 bool Axis::isHoming() const {
