@@ -52,8 +52,9 @@ arduinoarm_robot/
 # ۱) دانلود آخرین نسخه
 wget -c https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.8-amd64.deb
 
-# ۲) (اختیاری اما توصیه‌شده) بررسی سلامت فایل
-echo "369ce54d1381fe6596079a160d3036a95e9196f857756fb45c9597ee6eafcac7  AXIS5-Robot-Control-1.0.8-amd64.deb" | sha256sum -c
+# ۲) (اختیاری اما توصیه‌شده) بررسی سلامت فایل — خروجی این دستور باید
+#    با SHA256 نمایش‌داده‌شده کنار فایل در صفحه‌ی Releases یکی باشد
+sha256sum AXIS5-Robot-Control-1.0.8-amd64.deb
 
 # ۳) نصب
 sudo apt install ./AXIS5-Robot-Control-1.0.8-amd64.deb
