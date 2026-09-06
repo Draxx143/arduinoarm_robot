@@ -219,12 +219,23 @@ const PORT_TROUBLE_HTML =
    <br>&bull; terminal check: <code>lsusb | grep -i 2341</code> and <code>ls /dev/ttyACM* /dev/ttyUSB*</code>
    <br>&bull; permission fix: <code>sudo usermod -aG dialout $USER</code> then <b>log out &amp; back in</b>
    <br>&bull; if dmesg mentions <i>brltty</i>: <code>sudo apt purge brltty</code> and replug</div>`;
-function connErrorHint(e) {
+const BUSY_TROUBLE_HTML =
+  `<div style="line-height:1.8">&bull; <b>close the Arduino IDE</b> (especially its Serial Monitor) and any other serial monitor
+   <br>&bull; close a second copy of this app: <code>pkill -f axis5</code> then reopen
+   <br>&bull; see who holds the port: <code>sudo fuser -v /dev/ttyUSB0</code> (use your port path)
+   <br>&bull; if nothing shows: <code>sudo systemctl stop ModemManager</code> and connect again</div>`;
+function connErrorHint(e, portPath) {
   const m = e && e.message ? e.message : String(e);
-  if (/Permission|Access denie|Unauthorized|cannot open/i.test(m))
-    return "Linux refused the port — run `sudo usermod -aG dialout $USER`, LOG OUT & BACK IN, then connect again.";
-  if (/No such device|disconnected|not configured|unplugged|break/i.test(m))
-    return "The board dropped out — replug the USB cable and scan again.";
+  const pp = portPath ? " (" + portPath + ")" : "";
+  if (/busy|lock|EBUSY|resource temporarily|device is/i.test(m))
+    return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>`,
+             plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app), then retry." };
+  if (/Permission|Access denie|Unauthorized/i.test(m))
+    return { html: `<b>Permission denied</b>${pp} &mdash; run <code>sudo usermod -aG dialout $USER</code>, then <b>log out &amp; back in</b> (a reboot counts) and connect again.`,
+             plain: "Permission denied" + pp + " — dialout group + logout/login required." };
+  if (/No such file|No such device|disconnected|not configured|unplugged|break/i.test(m))
+    return { html: `<b>The board dropped out</b>${pp} &mdash; replug the USB cable and scan again.`,
+             plain: "Board disappeared" + pp + " — replug the USB cable." };
   return null;
 }
 S._scanActive = false;
@@ -414,12 +425,12 @@ async function connectDirect(port, label) {
     addConsole("sys", `[SYS] opening ${label || "port"} @ ${baud} baud…`);
     await S.serial.connectPort(port, baud, label || null);
   } catch (e) {
-    const hint = connErrorHint(e);
-    const msg = hint || "Connection failed: " + (e && e.message);
+    const hint = connErrorHint(e, label);
+    const msg = hint ? hint.plain : "Connection failed: " + (e && e.message);
     addConsole("err", "!! " + msg);
-    $("portHint").textContent = msg;
+    await renderConnCard();
+    $("portHint").innerHTML = hint ? hint.html : "Connection failed: " + escH(e && e.message);
     toast(msg, "err", 6000);
-    renderConnCard();
   }
 }
 
@@ -459,11 +470,13 @@ async function connectSystemPort(name) {
       await link.connectVia(name, baud);
       Store.set("prefer_hw", "1");
     } catch (e) {
-      const msg = connErrorHint(e) || "Connection failed: " + e.message;
-      addConsole("err", "!! " + msg);
-      $("portHint").textContent = msg;
-      toast(msg, "err", 6000);
-      renderConnCard();
+      const hint = connErrorHint(e, name);
+      addConsole("err", "!! " + (hint ? hint.plain : "Connection failed: " + e.message));
+      await renderConnCard();          /* repaint first… */
+      $("portHint").innerHTML = hint   /* …then the error, so it sticks */
+        ? hint.html + `<span class="tiny">raw: ${escH(e.message)}</span>`
+        : "Connection failed: " + escH(e.message);
+      toast(hint ? hint.plain : "Connection failed: " + e.message, "err", 7000);
     }
     return;
   }
@@ -482,13 +495,14 @@ async function connectSystemPort(name) {
     ]);
     Store.set("prefer_hw", "1");
   } catch (e) {
+    const hint = e.message === "chooser-timeout" ? null : connErrorHint(e, name);
     const msg = e.message === "chooser-timeout"
       ? "The port chooser did not respond — try the ⚡ Connect Arduino button once, then report this."
-      : (connErrorHint(e) || "Connection failed: " + e.message);
+      : (hint ? hint.plain : "Connection failed: " + e.message);
     addConsole("err", "!! " + msg);
-    $("portHint").textContent = msg;
+    await renderConnCard();
+    $("portHint").innerHTML = hint ? hint.html : msg;
     toast(msg, "err", 6000);
-    renderConnCard();
   } finally {
     if (tmr) clearTimeout(tmr);
   }
