@@ -147,6 +147,8 @@ function confirmModal(title, body) {
 let _portChooserDone = null;
 window.addEventListener("arm-choose-serial-port", (e) => {
   const ports = e.detail || [];
+  /* Connection-card scan mode: render into the card instead of the modal */
+  if (S._scanActive) { renderScanRows(ports); return; }
   const list = $("portList");
   list.innerHTML = "";
   list.style.display = "flex";
@@ -189,6 +191,172 @@ window.addEventListener("arm-choose-serial-port", (e) => {
   };
   _portChooserDone = () => { $("modalOk").style.display = ""; $("modalCancel").onclick = null; };
 });
+
+/* ============================================================
+ * Connection card — pick / scan / auto-connect the serial port
+ * ============================================================ */
+const hex4 = (v) => (v || 0).toString(16).padStart(4, "0");
+const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+S._scanActive = false;
+S._portNames = {};   /* vid:pid -> human-readable port name from the last scan */
+
+function portKeyFromInfo(info) {
+  if (!info) return "";
+  return hex4(info.usbVendorId) + ":" + hex4(info.usbProductId);
+}
+function portLabelFor(info) {
+  return S._portNames[portKeyFromInfo(info)] ||
+    (info && info.usbVendorId ? "USB device " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "Serial port");
+}
+
+/* rows shown while the chooser reports the system port list */
+function renderScanRows(ports) {
+  const rows = $("portRows");
+  if (!rows) return;
+  rows.innerHTML = "";
+  if (!ports) {
+    rows.innerHTML = `<div class="p-none">&#128269; Searching for serial devices&hellip;</div>`;
+    return;
+  }
+  ports.forEach((p) => {
+    S._portNames[portKeyFromInfo(p)] = p.portName || p.displayName || p.portId;
+  });
+  if (!ports.length) {
+    rows.innerHTML = `<div class="p-none">No serial devices found &mdash; plug the Arduino in and scan again.</div>`;
+  } else {
+    ports.forEach((p) => {
+      const vid = p.usbVendorId ? hex4(p.usbVendorId) : null;
+      const pid = p.usbProductId ? hex4(p.usbProductId) : null;
+      const row = document.createElement("div");
+      row.className = "port-row";
+      row.innerHTML = `<span class="p-dot"></span>
+        <div class="p-info"><span class="p-name">${escH(p.portName || p.portId)}</span>
+        <span class="p-meta">${escH(p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>`;
+      const b = document.createElement("button");
+      b.className = "btn small";
+      b.textContent = "Connect";
+      b.onclick = () => { if (window.electronAPI) window.electronAPI.choosePort(p.portId); };
+      row.appendChild(b);
+      rows.appendChild(row);
+    });
+  }
+  const cancel = document.createElement("button");
+  cancel.className = "btn small";
+  cancel.textContent = "Cancel scan";
+  cancel.onclick = () => { if (window.electronAPI) window.electronAPI.cancelChoose(); };
+  const wrap = document.createElement("div");
+  wrap.className = "conn-tools";
+  wrap.style.marginTop = "0";
+  wrap.appendChild(cancel);
+  rows.appendChild(wrap);
+}
+
+/* idle / connected view of the Connection card */
+async function renderConnCard() {
+  const rows = $("portRows");
+  if (!rows) return;
+  const scan = $("btnScanPorts"), disc = $("btnDiscPort"), chk = $("chkAutoPort");
+  if (!scan) return;
+  const supported = SerialLink.supported;
+  chk.checked = Store.get("auto_port", "0") === "1";
+  disc.style.display = S.mode === "serial" ? "" : "none";
+  scan.style.display = S.mode === "serial" ? "none" : "";
+  scan.disabled = !supported;
+
+  if (!supported) {
+    rows.innerHTML = `<div class="p-none">Web Serial is not available in this environment.</div>`;
+    $("portHint").textContent = S.mode === "sim"
+      ? "Simulator active — no real port needed."
+      : "Use the simulator, or run in Chrome / Edge / Electron.";
+    return;
+  }
+
+  if (S.mode === "serial") {
+    const info = S.serial.activeInfo || {};
+    const name = S.serial.activeLabel || portLabelFor(info);
+    rows.innerHTML = `<div class="port-row on"><span class="p-dot"></span>
+      <div class="p-info"><span class="p-name">${escH(name)}</span>
+      <span class="p-meta">connected @ ${S.serial.baud} baud</span></div>
+      <span class="p-badge">CONNECTED</span></div>`;
+    $("portHint").textContent = "Board is linked — commands go to the real firmware.";
+    return;
+  }
+
+  let granted = [];
+  try { granted = await navigator.serial.getPorts(); } catch (e) {}
+  rows.innerHTML = "";
+  if (!granted.length) {
+    rows.innerHTML = `<div class="p-none">No known ports yet &mdash; click <b>Scan Ports</b> with the Arduino plugged in.</div>`;
+  } else {
+    granted.forEach((port) => {
+      const info = SerialLink._safeInfo(port);
+      const label = portLabelFor(info);
+      const last = Store.get("last_port", "") === portKeyFromInfo(info);
+      const row = document.createElement("div");
+      row.className = "port-row";
+      row.innerHTML = `<span class="p-dot"></span>
+        <div class="p-info"><span class="p-name">${escH(label)}</span>
+        <span class="p-meta">ready${info.usbVendorId ? " &middot; USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " &middot; <b>last used</b>" : ""}</span></div>`;
+      const b = document.createElement("button");
+      b.className = "btn small";
+      b.textContent = "Connect";
+      b.onclick = () => connectDirect(port, label);
+      row.appendChild(b);
+      rows.appendChild(row);
+    });
+  }
+  $("portHint").textContent = S.mode === "sim"
+    ? "Simulator active — scan to switch to the real board."
+    : "Pick a port, or Scan to discover new devices.";
+}
+
+async function connectDirect(port, label) {
+  if (S.mode === "serial" || !SerialLink.supported) return;
+  stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+  try {
+    addConsole("sys", `[SYS] opening ${label || "port"} @ ${baud} baud…`);
+    await S.serial.connectPort(port, baud, label || null);
+  } catch (e) {
+    const msg = "Connection failed: " + e.message;
+    addConsole("err", "!! " + msg);
+    toast(msg, "err");
+    renderConnCard();
+  }
+}
+
+/* scan from the Connection card: full system list rendered in the card */
+async function scanPorts() {
+  if (!SerialLink.supported) {
+    toast("Web Serial is not available in this environment", "err", 5000);
+    return;
+  }
+  if (S.mode === "serial") return;
+  if (!(window.electronAPI && window.electronAPI.isElectron)) {
+    /* plain browser: the native chooser does the picking */
+    toggleSerial();
+    return;
+  }
+  S._scanActive = true;
+  renderScanRows(null);
+  const baud = parseInt($("selBaud").value, 10);
+  stopSim();
+  try {
+    addConsole("sys", `[SYS] scanning serial ports @ ${baud}…`);
+    await S.serial.connect(baud);
+    Store.set("prefer_hw", "1");
+  } catch (e) {
+    const msg = e.message === "PORT_CANCELLED"
+      ? "Scan finished — no port picked"
+      : "Scan failed: " + e.message;
+    addConsole("sys", "[SYS] " + msg);
+    $("portHint").textContent = msg + ".";
+  } finally {
+    S._scanActive = false;
+    renderConnCard();
+  }
+}
 
 /* ============================================================
  * Send / receive
@@ -366,6 +534,7 @@ function setStateUI(key) {
  * ============================================================ */
 function setMode(mode) {
   S.mode = mode;
+  renderConnCard();
   const led = $("led");
   led.className = "led" + (mode === "serial" ? " on" : mode === "sim" ? " sim" : "");
   $("connText").textContent = mode === "serial" ? "LINKED" : mode === "sim" ? "SIMULATING" : "OFFLINE";
@@ -428,11 +597,14 @@ S.serial.onConnect = (baud) => {
   addFeed("rx-ok", "Linked @" + baud);
   toast("Connected to the Arduino ✓", "ok");
   setStateUI("INIT");
+  try { Store.set("last_port", portKeyFromInfo(S.serial.activeInfo || {})); } catch (e) {}
+  renderConnCard();
   setTimeout(() => send(Cmd.status()), 600);
 };
 S.serial.onDisconnect = () => {
   if (S.mode === "serial") setMode("off");
   addConsole("sys", "[SYS] link closed");
+  renderConnCard();
 };
 S.serial.onLine = (l) => rxLine(l);
 S.serial.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
@@ -1233,8 +1405,35 @@ function init() {
     $("btnConnect").disabled = !inElectron;
   } else {
     $("serialHint").textContent = inElectron
-      ? "Click “Connect Arduino” and pick the COM port in the in-app chooser."
-      : "Click “Connect Arduino” and pick the COM port in the browser chooser.";
+      ? "Pick the port in the Connection card (sidebar), or click “Connect Arduino”."
+      : "Pick the port in the Connection card — the browser chooser opens.";
+  }
+
+  /* ---------- Connection card wiring ---------- */
+  $("btnScanPorts").onclick = scanPorts;
+  $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };
+  $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
+  if (window.electronAPI && window.electronAPI.onPortAdded) {
+    window.electronAPI.onPortAdded(() => {
+      if (S.mode === "off" && !S._scanActive) $("portHint").textContent = "New device detected — click Scan Ports.";
+    });
+  }
+  renderConnCard();
+
+  /* auto-connect the remembered granted port on start */
+  if (Store.get("auto_port", "0") === "1" && Store.get("last_port", "")) {
+    setTimeout(async () => {
+      if (S.mode !== "off" || !SerialLink.supported) return;
+      try {
+        const ports = await navigator.serial.getPorts();
+        const hit = ports.find((p) => portKeyFromInfo(SerialLink._safeInfo(p)) === Store.get("last_port", ""));
+        if (hit) {
+          const label = portLabelFor(SerialLink._safeInfo(hit));
+          addConsole("sys", "[SYS] auto-connecting last port…");
+          connectDirect(hit, label);
+        }
+      } catch (e) {}
+    }, 900);
   }
 
   /* auto-start the simulator for an instant experience */

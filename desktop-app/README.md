@@ -2,7 +2,7 @@
 
 Industrial English-language **desktop application** (Electron) for the 5-DOF Arduino Mega 2560 robot arm firmware (`RobotArm_Firmware.ino`).
 
-## 🆕 What's new in v1.0.8 (firmware audit + GUI fixes)
+## 🆕 What's new in v1.0.9 (firmware audit + GUI fixes)
 
 **Firmware (`RobotArm_Firmware.ino` + modules):**
 - **Homing no longer freezes the board** — `processHoming()` ran `delay(10)` + a blocking back-off loop (up to ~5 s for axis X) *inside the 1 kHz timer ISR*, starving the serial link and the main loop. It is now fully non-blocking (phase-based: seek → back-off at 1 kHz → zero).
@@ -15,6 +15,10 @@ Industrial English-language **desktop application** (Electron) for the 5-DOF Ard
 **Desktop app:**
 - **Quick chips rebuilt** — only high-use, complete commands; enable/disable appear once; every chip string is verified against the parser (zero "Unknown command" chips).
 - **J2/J3 slider fill fixed** — the colored fill bar appeared half-filled at 0 on first open; fills are now painted correctly at build time.
+
+## 🆕 What's new in v1.0.9
+
+- **Connection card (PORT SELECT)** — a dedicated sidebar section: scans every serial device on the machine, one-click connect per port, live link badge (name + baud), Disconnect button, optional **auto-connect on start** (remembers your last port), and a "New device detected" nudge when you plug the Arduino in later.
 
 ## 🆕 What's new in v1.0.8
 
@@ -30,6 +34,7 @@ Industrial English-language **desktop application** (Electron) for the 5-DOF Ard
 - **Built-in firmware simulator** — test everything without hardware
 - **PLC-style status lamps**, industrial “Steel & Amber” HMI theme
 - **Smart event feed** — duplicate events collapse into ×N badges, pause & clear controls, status-poll spam filtered out
+- **Connection card** — scan/select the Arduino's port with one click, auto-connect on start, live link badge
 - Serial console with history, quick-command chips and log export
 - `Esc` = E-STOP, `Ctrl+K` = console focus
 
@@ -51,10 +56,10 @@ Prebuilt installers are published automatically by GitHub Actions to the repo's 
 
 | File | Platform | How to install |
 |---|---|---|
-| `AXIS5-Robot-Control-Setup-1.0.8.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
-| `AXIS5-Robot-Control-Portable-1.0.8.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
-| `AXIS5-Robot-Control-1.0.8-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.8-amd64.deb` |
-| `AXIS5-Robot-Control-1.0.8-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+| `AXIS5-Robot-Control-Setup-1.0.9.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.9.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.9-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.9-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.9-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
 
 Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
 
@@ -62,7 +67,7 @@ Every push to the app also rebuilds the installers (see `.github/workflows/build
 
 | OS | Command | Output |
 |---|---|---|
-| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.8.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.8.exe` (portable) |
+| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.9.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.9.exe` (portable) |
 | Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.1-x64.AppImage` + `.deb` |
 
 Build both from Linux/macOS: `npm run dist` (Windows builds cross-compile fine from Linux).

@@ -431,6 +431,19 @@
   <!-- ═══════════ Sidebar ═══════════ -->
   <aside class="sidebar">
     <div class="card">
+      <h3>Connection<span class="en">PORT SELECT</span></h3>
+      <div class="card-body">
+        <div id="portRows"></div>
+        <div class="conn-tools">
+          <button class="btn small" id="btnScanPorts" title="List every serial device connected to this machine">&#128269; Scan Ports</button>
+          <button class="btn small red" id="btnDiscPort" style="display:none" title="Close the serial link">&#10005; Disconnect</button>
+          <label class="chk"><input type="checkbox" id="chkAutoPort"> auto-connect on start</label>
+        </div>
+        <p class="tiny" id="portHint" style="margin-top:8px">Pick the port your Arduino is connected to.</p>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Link Status<span class="en">COMMS</span></h3>
       <div class="card-body">
         <div class="kv"><span>State</span><b id="connText">OFFLINE</b></div>

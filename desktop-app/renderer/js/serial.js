@@ -20,7 +20,12 @@ class SerialLink {
     this.rxCount = 0;
     this._buff = "";
     this._electronPortHandler = null;
+    this._activeLabel = null;
+    this._activeInfo = {};
   }
+
+  get activeLabel() { return this._activeLabel; }
+  get activeInfo() { return this._activeInfo; }
 
   static get supported() {
     return typeof navigator !== "undefined" && !!navigator.serial;
@@ -50,9 +55,30 @@ class SerialLink {
       throw e;
     }
     this._removeElectronHandler();
+    this._activeLabel = null;
+    this._activeInfo = SerialLink._safeInfo(port);
+    await this._openPort(port, this.baud);
+  }
 
+  /* Directly open an already-granted port (Connection card / auto-connect) */
+  async connectPort(port, baud, label) {
+    if (!SerialLink.supported) {
+      throw new Error("This environment has no Web Serial support");
+    }
+    if (this.connected) throw new Error("Already connected");
+    this.baud = baud || FW.BAUD;
+    this._activeLabel = label || null;
+    this._activeInfo = SerialLink._safeInfo(port);
+    await this._openPort(port, this.baud);
+  }
+
+  static _safeInfo(port) {
+    try { return (port && port.getInfo()) || {}; } catch (e) { return {}; }
+  }
+
+  async _openPort(port, baud) {
     await port.open({
-      baudRate: this.baud,
+      baudRate: baud,
       dataBits: 8,
       stopBits: 1,
       parity: "none",
