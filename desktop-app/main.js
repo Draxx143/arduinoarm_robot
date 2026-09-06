@@ -8,6 +8,13 @@ const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const { execFile } = require("child_process");
 const path = require("path");
 
+/* OS-level serial driver (N-API — loads inside Electron without rebuild).
+ * Used when Chromium's Web Serial enumeration comes back empty. */
+let SerialPortC = null;
+try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC = null; }
+const openSerialPorts = new Map();
+let serialSeq = 0;
+
 let win = null;
 let pendingPortCallback = null;
 let expectedPortName = null; /* renderer picked a system port — auto-resolve the chooser */
@@ -103,7 +110,8 @@ function createWindow() {
     const want = expectedPortName;
     expectedPortName = null;
     if (want) {
-      const hit = (portList || []).find((p) => p && p.portName === want);
+      const norm = (x) => String(x || "").replace(/^\/dev\//, "").toLowerCase();
+      const hit = (portList || []).find((p) => p && (p.portName === want || norm(p.portName) === norm(want)));
       if (hit) { callback(hit.portId); return; }
     }
     pendingPortCallback = callback;
@@ -129,6 +137,52 @@ function createWindow() {
   /* OS-level port enumeration for the Connection card */
   ipcMain.handle("serial:list-system-ports", () => listSystemPorts());
   ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
+
+  /* ---- Main-process serial backend (bypasses Chromium Web Serial) ---- */
+  ipcMain.handle("serialport:available", () => !!SerialPortC);
+  ipcMain.handle("serialport:list", async () => {
+    if (!SerialPortC) return { err: "driver unavailable" };
+    try {
+      const list = await SerialPortC.list();
+      return { ports: list.map((p) => ({
+        path: p.path,
+        friendly: p.friendlyName || p.manufacturer || "",
+        vid: p.vendorId || "", pid: p.productId || "",
+      })) };
+    } catch (e) { return { err: String(e.message || e) }; }
+  });
+  ipcMain.handle("serialport:open", (e, portPath, baud) => new Promise((resolve) => {
+    if (!SerialPortC) return resolve({ err: "driver unavailable" });
+    let sp;
+    try { sp = new SerialPortC({ path: String(portPath), baudRate: Number(baud) || 115200, autoOpen: false }); }
+    catch (er) { return resolve({ err: String(er.message || er) }); }
+    sp.open((err) => {
+      if (err) return resolve({ err: String(err.message || err) });
+      const id = ++serialSeq;
+      openSerialPorts.set(id, sp);
+      sp.on("data", (buf) => {
+        if (win && !win.isDestroyed()) win.webContents.send("serialport:data", buf.toString("base64"));
+      });
+      sp.on("close", () => {
+        openSerialPorts.delete(id);
+        if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id);
+      });
+      sp.on("error", (er) => {
+        if (win && !win.isDestroyed()) win.webContents.send("serialport:error", String(er.message || er));
+      });
+      resolve({ id });
+    });
+  }));
+  ipcMain.handle("serialport:write", (e, id, text) => {
+    const sp = openSerialPorts.get(Number(id));
+    if (!sp) return Promise.resolve({ err: "port not open" });
+    return new Promise((resolve) => sp.write(String(text), (err) => resolve(err ? { err: String(err.message || err) } : {})));
+  });
+  ipcMain.handle("serialport:close", (e, id) => {
+    const sp = openSerialPorts.get(Number(id));
+    if (!sp) return Promise.resolve({});
+    return new Promise((resolve) => sp.close((err) => resolve(err ? { err: String(err.message || err) } : {})));
+  });
 
   ipcMain.on("serial:cancel-choose", () => {
     if (pendingPortCallback) {

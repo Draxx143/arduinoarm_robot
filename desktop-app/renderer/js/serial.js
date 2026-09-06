@@ -158,3 +158,114 @@ class SerialLink {
     }
   }
 }
+
+/* ============================================================
+ * IpcSerialLink — main-process serial transport.
+ * Opens the port via node-serialport in the Electron main
+ * process, completely bypassing Chromium's Web Serial stack
+ * (which can fail to enumerate devices on some Linux setups).
+ * Same surface as SerialLink: connectVia/write/disconnect +
+ * onConnect/onLine/onDisconnect/onError/txCount/rxCount/baud.
+ * ============================================================ */
+class IpcSerialLink {
+  constructor() {
+    this.bridge = (typeof window !== "undefined" && window.electronAPI && window.electronAPI.ipcSerial) || null;
+    this.id = null;
+    this.connected = false;
+    this.baud = FW.BAUD;
+    this.onLine = null;
+    this.onConnect = null;
+    this.onDisconnect = null;
+    this.onError = null;
+    this.txCount = 0;
+    this.rxCount = 0;
+    this._pend = new Uint8Array(0);
+    this._bound = false;
+    this._activeLabel = null;
+    this.transport = "system";
+  }
+
+  static get supported() {
+    return typeof window !== "undefined" && !!(window.electronAPI && window.electronAPI.ipcSerial);
+  }
+
+  get activeLabel() { return this._activeLabel; }
+  get activeInfo() { return {}; }
+
+  async list() {
+    if (!this.bridge) throw new Error("system serial bridge unavailable");
+    const res = await this.bridge.list();
+    if (res && res.err) throw new Error(res.err);
+    return (res && res.ports) || [];
+  }
+
+  async connectVia(portPath, baud) {
+    if (!IpcSerialLink.supported) throw new Error("system serial bridge unavailable");
+    if (this.connected) throw new Error("Already connected");
+    this.baud = baud || FW.BAUD;
+    const res = await this.bridge.open(String(portPath), this.baud);
+    if (res && res.err) throw new Error(res.err);
+    this.id = res.id;
+    this.connected = true;
+    this._activeLabel = String(portPath);
+    this._pend = new Uint8Array(0);
+    this._bind();
+    if (this.onConnect) this.onConnect(this.baud);
+  }
+
+  _bind() {
+    if (this._bound) return;
+    this._bound = true;
+    this.bridge.onData((b64) => { if (this.connected) this._feed(b64); });
+    this.bridge.onClosed(() => {
+      if (this.connected) {
+        this.connected = false;
+        this.id = null;
+        if (this.onDisconnect) this.onDisconnect();
+      }
+    });
+    this.bridge.onError((m) => { if (this.connected && this.onError) this.onError(m); });
+  }
+
+  _feed(b64) {
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      this.rxCount += bytes.length;
+      const buf = new Uint8Array(this._pend.length + bytes.length);
+      buf.set(this._pend);
+      buf.set(bytes, this._pend.length);
+      let start = 0;
+      for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 10 || buf[i] === 13) {
+          if (i > start) {
+            const line = new TextDecoder("utf-8").decode(buf.subarray(start, i));
+            if (line.trim() && this.onLine) this.onLine(line);
+          }
+          start = i + 1;
+        }
+      }
+      this._pend = buf.slice(start);
+    } catch (e) {
+      if (this.onError) this.onError("decode: " + e.message);
+    }
+  }
+
+  async write(text) {
+    if (!this.connected || this.id == null) throw new Error("Port is not open");
+    const data = text + "\n";
+    this.txCount += data.length;
+    const res = await this.bridge.write(this.id, data);
+    if (res && res.err) throw new Error(res.err);
+  }
+
+  async disconnect() {
+    if (this.id != null) {
+      try { await this.bridge.close(this.id); } catch (e) {}
+    }
+    this.connected = false;
+    this.id = null;
+    if (this.onDisconnect) this.onDisconnect();
+  }
+}

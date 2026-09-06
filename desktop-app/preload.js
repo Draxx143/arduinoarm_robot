@@ -8,6 +8,15 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   appVersion: ipcRenderer.sendSync("app:get-version") || "",
+  ipcSerial: {
+    list: () => ipcRenderer.invoke("serialport:list"),
+    open: (portPath, baud) => ipcRenderer.invoke("serialport:open", portPath, baud),
+    write: (id, text) => ipcRenderer.invoke("serialport:write", id, text),
+    close: (id) => ipcRenderer.invoke("serialport:close", id),
+    onData: (cb) => { ipcRenderer.removeAllListeners("serialport:data"); ipcRenderer.on("serialport:data", (e, b64) => cb(b64)); },
+    onClosed: (cb) => { ipcRenderer.removeAllListeners("serialport:closed"); ipcRenderer.on("serialport:closed", (e, id) => cb(id)); },
+    onError: (cb) => { ipcRenderer.removeAllListeners("serialport:error"); ipcRenderer.on("serialport:error", (e, m) => cb(m)); },
+  },
   listSystemPorts: () => ipcRenderer.invoke("serial:list-system-ports"),
   expectPort: (name) => ipcRenderer.send("serial:expect-port", name),
   onPortList: (cb) => {

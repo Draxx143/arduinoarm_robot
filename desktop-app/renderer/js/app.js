@@ -298,14 +298,15 @@ async function renderConnCard() {
   if (!rows) return;
   const scan = $("btnScanPorts"), disc = $("btnDiscPort"), chk = $("chkAutoPort");
   if (!scan) return;
-  const supported = SerialLink.supported;
+  /* the main-process driver counts as a transport even without Web Serial */
+  const supported = SerialLink.supported || IpcSerialLink.supported;
   chk.checked = Store.get("auto_port", "0") === "1";
   disc.style.display = S.mode === "serial" ? "" : "none";
   scan.style.display = S.mode === "serial" ? "none" : "";
   scan.disabled = !supported;
 
   if (!supported) {
-    rows.innerHTML = `<div class="p-none">Web Serial is not available in this environment.</div>`;
+    rows.innerHTML = `<div class="p-none">No serial transport available in this environment.</div>`;
     $("portHint").textContent = S.mode === "sim"
       ? "Simulator active — no real port needed."
       : "Use the simulator, or run in Chrome / Edge / Electron.";
@@ -347,12 +348,25 @@ async function renderConnCard() {
       rows.appendChild(row);
     });
   }
-  /* --- OS-level devices (Electron): always mirrors what the OS sees --- */
-  if (window.electronAPI && window.electronAPI.listSystemPorts) {
+  /* --- OS-level devices (Electron): mirrors exactly what the OS sees --- */
+  const useDriver = IpcSerialLink.supported;
+  const osListFn = useDriver
+    ? async () => {
+        const res = await window.electronAPI.ipcSerial.list();
+        if (res && res.err) throw new Error(res.err);
+        return (res.ports || []).map((p) => ({
+          name: p.path,
+          meta: [p.friendly, p.vid ? "USB " + String(p.vid) + ":" + String(p.pid) : ""].filter(Boolean).join(" · "),
+        }));
+      }
+    : (window.electronAPI && window.electronAPI.listSystemPorts
+        ? async () => (await window.electronAPI.listSystemPorts()).map((n) => ({ name: n, meta: "OS serial device" }))
+        : null);
+  if (osListFn) {
     let sysPorts = null, sysErr = null;
     try {
       if (S._sysPorts && Date.now() - S._sysPorts.t < 10000) sysPorts = S._sysPorts.ports;
-      else sysPorts = await window.electronAPI.listSystemPorts();
+      else sysPorts = await osListFn();
       S._sysPorts = { t: Date.now(), ports: sysPorts };
     } catch (e) { sysErr = e; }
     const sec = document.createElement("div");
@@ -361,19 +375,19 @@ async function renderConnCard() {
     } else if (!sysPorts.length) {
       sec.innerHTML = `<div class="p-none"><b>No OS serial devices</b> (checked /dev/ttyUSB* /dev/ttyACM*)</div>` + PORT_TROUBLE_HTML;
     } else {
-      sec.innerHTML = `<div class="p-none"><b>System devices</b> (${sysPorts.length})</div>`;
-      sysPorts.forEach((name) => {
+      sec.innerHTML = `<div class="p-none"><b>System devices</b> (${sysPorts.length})${useDriver ? " — driver: node-serialport" : ""}</div>`;
+      sysPorts.forEach((p) => {
         const row = document.createElement("div");
         row.className = "port-row";
-        const best = /ttyUSB|ttyACM|COM\d/i.test(name);
+        const best = /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.name + " " + (p.meta || ""));
         row.innerHTML = `<span class="p-dot"></span>
-          <div class="p-info"><span class="p-name">${escH(name)}</span>
-          <span class="p-meta">OS serial device${S._lastChooserCount != null ? " &middot; chooser last saw " + S._lastChooserCount : ""}</span></div>
+          <div class="p-info"><span class="p-name">${escH(p.name)}</span>
+          <span class="p-meta">${escH(p.meta || "OS serial device")}</span></div>
           ${best ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
         const b = document.createElement("button");
         b.className = "btn small";
         b.textContent = "Connect";
-        b.onclick = () => connectSystemPort(name);
+        b.onclick = () => connectSystemPort(p.name);
         row.appendChild(b);
         sec.appendChild(row);
       });
@@ -383,7 +397,7 @@ async function renderConnCard() {
     const diag = document.createElement("div");
     diag.className = "p-none";
     diag.style.marginTop = "6px";
-    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; OS list: ${sysPorts.length}`;
+    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; driver ${useDriver ? "system ✓" : "web-only"} &middot; OS list: ${sysPorts.length}`;
     rows.appendChild(diag);
   }
 
@@ -414,8 +428,8 @@ async function connectDirect(port, label) {
  * always matches what the OS/Arduino IDE sees, unlike Chromium's scan.
  * Browser: open the native chooser. */
 async function scanPorts() {
-  if (!SerialLink.supported) {
-    toast("Web Serial is not available in this environment", "err", 5000);
+  if (!SerialLink.supported && !IpcSerialLink.supported) {
+    toast("No serial transport available in this environment", "err", 5000);
     return;
   }
   if (S.mode === "serial") return;
@@ -429,11 +443,35 @@ async function scanPorts() {
 }
 
 /* connect to an OS-level device path (e.g. /dev/ttyUSB0, COM3).
- * The chooser is auto-resolved in main.js by matching the port name. */
+ * Preferred: node-serialport driver in the main process (always works).
+ * Fallback: Web Serial chooser auto-resolved by port name in main.js. */
 async function connectSystemPort(name) {
-  if (S.mode === "serial" || !SerialLink.supported) return;
+  if (S.mode === "serial") return;
   stopSim();
   const baud = parseInt($("selBaud").value, 10);
+
+  if (IpcSerialLink.supported) {
+    const link = new IpcSerialLink();
+    bindLinkEvents(link);
+    S.serial = link;
+    addConsole("sys", `[SYS] opening ${name} @ ${baud} (system driver)…`);
+    try {
+      await link.connectVia(name, baud);
+      Store.set("prefer_hw", "1");
+    } catch (e) {
+      const msg = connErrorHint(e) || "Connection failed: " + e.message;
+      addConsole("err", "!! " + msg);
+      $("portHint").textContent = msg;
+      toast(msg, "err", 6000);
+      renderConnCard();
+    }
+    return;
+  }
+
+  if (!SerialLink.supported) {
+    toast("No serial transport available in this environment", "err", 5000);
+    return;
+  }
   window.electronAPI.expectPort(name);
   addConsole("sys", `[SYS] opening ${name} @ ${baud}…`);
   let tmr = null;
@@ -636,7 +674,8 @@ function setMode(mode) {
   const led = $("led");
   led.className = "led" + (mode === "serial" ? " on" : mode === "sim" ? " sim" : "");
   $("connText").textContent = mode === "serial" ? "LINKED" : mode === "sim" ? "SIMULATING" : "OFFLINE";
-  $("connMode").textContent = mode === "serial" ? "Web Serial @ " + S.serial.baud
+  $("connMode").textContent = mode === "serial"
+    ? (S.serial.transport === "system" ? "System driver @ " + S.serial.baud : "Web Serial @ " + S.serial.baud)
     : mode === "sim" ? "Firmware simulator" : "—";
   $("lampCom").classList.toggle("on", mode === "serial" || mode === "sim");
   $("simBanner").classList.toggle("show", mode === "sim");
@@ -689,23 +728,26 @@ async function toggleSerial() {
   }
 }
 
-S.serial.onConnect = (baud) => {
-  setMode("serial");
-  addConsole("sys", `[SYS] linked @ ${baud} — waiting for board…`);
-  addFeed("rx-ok", "Linked @" + baud);
-  toast("Connected to the Arduino ✓", "ok");
-  setStateUI("INIT");
-  try { Store.set("last_port", portKeyFromInfo(S.serial.activeInfo || {})); } catch (e) {}
-  renderConnCard();
-  setTimeout(() => send(Cmd.status()), 600);
-};
-S.serial.onDisconnect = () => {
-  if (S.mode === "serial") setMode("off");
-  addConsole("sys", "[SYS] link closed");
-  renderConnCard();
-};
-S.serial.onLine = (l) => rxLine(l);
-S.serial.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
+function bindLinkEvents(link) {
+  link.onConnect = (baud) => {
+    setMode("serial");
+    addConsole("sys", `[SYS] linked @ ${baud} — waiting for board…`);
+    addFeed("rx-ok", "Linked @" + baud);
+    toast("Connected to the Arduino ✓", "ok");
+    setStateUI("INIT");
+    try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
+    renderConnCard();
+    setTimeout(() => send(Cmd.status()), 600);
+  };
+  link.onDisconnect = () => {
+    if (S.mode === "serial") setMode("off");
+    addConsole("sys", "[SYS] link closed");
+    renderConnCard();
+  };
+  link.onLine = (l) => rxLine(l);
+  link.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
+}
+bindLinkEvents(S.serial);
 
 /* ============================================================
  * Polling
@@ -1497,9 +1539,10 @@ function init() {
 
   const inElectron = !!(window.electronAPI && window.electronAPI.isElectron);
   if (!SerialLink.supported) {
-    $("serialHint").textContent = inElectron
-      ? "Serial support missing in this build."
-      : "This browser has no Web Serial. Use the simulator, or Chrome/Edge.";
+    $("serialHint").textContent = IpcSerialLink.supported
+      ? "Web Serial missing — the Connection card uses the system serial driver instead."
+      : (inElectron ? "Serial support missing in this build."
+                    : "This browser has no Web Serial. Use the simulator, or Chrome/Edge.");
     $("btnConnect").disabled = !inElectron;
   } else {
     $("serialHint").textContent = inElectron
