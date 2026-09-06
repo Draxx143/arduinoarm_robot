@@ -5,10 +5,36 @@
 "use strict";
 
 const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { execFile } = require("child_process");
 const path = require("path");
 
 let win = null;
 let pendingPortCallback = null;
+let expectedPortName = null; /* renderer picked a system port — auto-resolve the chooser */
+
+/* Enumerate serial ports at OS level (bypasses Chromium's udev scan,
+ * which can come back empty on some Linux setups while the OS sees
+ * the device fine — e.g. Arduino IDE shows /dev/ttyUSB0). */
+function listSystemPorts() {
+  return new Promise((resolve) => {
+    let cmd, args;
+    if (process.platform === "win32") {
+      cmd = "powershell.exe";
+      args = ["-NoProfile", "-Command",
+        "(Get-CimInstance Win32_SerialPort | Select-Object -ExpandProperty DeviceID) -join ','"];
+    } else if (process.platform === "darwin") {
+      cmd = "/bin/sh";
+      args = ["-c", "ls -1 /dev/tty.usbmodem* /dev/tty.usbserial* 2>/dev/null || true"];
+    } else {
+      cmd = "/bin/sh";
+      args = ["-c", "ls -1 /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true"];
+    }
+    execFile(cmd, args, { timeout: 4000 }, (err, stdout) => {
+      const ports = String(stdout || "").split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean);
+      resolve(ports);
+    });
+  });
+}
 
 /* Show a visible dialog instead of dying silently when something
  * fails at startup (the app may be launched from the menu icon). */
@@ -73,6 +99,13 @@ function createWindow() {
    * to the renderer, which shows its own dialog, then resolves. */
   win.webContents.on("select-serial-port", (event, portList, webContents, callback) => {
     event.preventDefault();
+    /* If the renderer picked an OS-level port name, resolve silently */
+    const want = expectedPortName;
+    expectedPortName = null;
+    if (want) {
+      const hit = (portList || []).find((p) => p && p.portName === want);
+      if (hit) { callback(hit.portId); return; }
+    }
     pendingPortCallback = callback;
     win.webContents.send("serial:port-list", portList);
   });
@@ -92,6 +125,10 @@ function createWindow() {
   });
   /* Renderer reads the packaged app version for the footer badge */
   ipcMain.on("app:get-version", (e) => { e.returnValue = app.getVersion(); });
+
+  /* OS-level port enumeration for the Connection card */
+  ipcMain.handle("serial:list-system-ports", () => listSystemPorts());
+  ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
 
   ipcMain.on("serial:cancel-choose", () => {
     if (pendingPortCallback) {

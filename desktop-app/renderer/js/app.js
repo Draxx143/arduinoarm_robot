@@ -256,6 +256,7 @@ function renderScanRows(ports) {
     }, 12000);
     return;
   }
+  S._lastChooserCount = ports.length;
   ports.forEach((p) => {
     S._portNames[portKeyFromInfo(p)] = p.portName || p.displayName || p.portId;
   });
@@ -346,6 +347,46 @@ async function renderConnCard() {
       rows.appendChild(row);
     });
   }
+  /* --- OS-level devices (Electron): always mirrors what the OS sees --- */
+  if (window.electronAPI && window.electronAPI.listSystemPorts) {
+    let sysPorts = null, sysErr = null;
+    try {
+      if (S._sysPorts && Date.now() - S._sysPorts.t < 10000) sysPorts = S._sysPorts.ports;
+      else sysPorts = await window.electronAPI.listSystemPorts();
+      S._sysPorts = { t: Date.now(), ports: sysPorts };
+    } catch (e) { sysErr = e; }
+    const sec = document.createElement("div");
+    if (sysErr) {
+      sec.innerHTML = `<div class="p-none">system scan failed: ${escH(sysErr.message)}</div>`;
+    } else if (!sysPorts.length) {
+      sec.innerHTML = `<div class="p-none"><b>No OS serial devices</b> (checked /dev/ttyUSB* /dev/ttyACM*)</div>` + PORT_TROUBLE_HTML;
+    } else {
+      sec.innerHTML = `<div class="p-none"><b>System devices</b> (${sysPorts.length})</div>`;
+      sysPorts.forEach((name) => {
+        const row = document.createElement("div");
+        row.className = "port-row";
+        const best = /ttyUSB|ttyACM|COM\d/i.test(name);
+        row.innerHTML = `<span class="p-dot"></span>
+          <div class="p-info"><span class="p-name">${escH(name)}</span>
+          <span class="p-meta">OS serial device${S._lastChooserCount != null ? " &middot; chooser last saw " + S._lastChooserCount : ""}</span></div>
+          ${best ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
+        const b = document.createElement("button");
+        b.className = "btn small";
+        b.textContent = "Connect";
+        b.onclick = () => connectSystemPort(name);
+        row.appendChild(b);
+        sec.appendChild(row);
+      });
+    }
+    rows.appendChild(sec);
+    const ev = (window.electronAPI && window.electronAPI.versions && window.electronAPI.versions.electron) || "?";
+    const diag = document.createElement("div");
+    diag.className = "p-none";
+    diag.style.marginTop = "6px";
+    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; OS list: ${sysPorts.length}`;
+    rows.appendChild(diag);
+  }
+
   $("portHint").textContent = S.mode === "sim"
     ? "Simulator active — scan to switch to the real board."
     : "Pick a port, or Scan to discover new devices.";
@@ -368,7 +409,10 @@ async function connectDirect(port, label) {
   }
 }
 
-/* scan from the Connection card: full system list rendered in the card */
+/* scan from the Connection card.
+ * Electron: enumerate at OS level (ls /dev/ttyUSB* /dev/ttyACM*) — this
+ * always matches what the OS/Arduino IDE sees, unlike Chromium's scan.
+ * Browser: open the native chooser. */
 async function scanPorts() {
   if (!SerialLink.supported) {
     toast("Web Serial is not available in this environment", "err", 5000);
@@ -376,33 +420,39 @@ async function scanPorts() {
   }
   if (S.mode === "serial") return;
   if (!(window.electronAPI && window.electronAPI.isElectron)) {
-    /* plain browser: the native chooser does the picking */
-    toggleSerial();
+    toggleSerial(); /* plain browser: the native chooser does the picking */
     return;
   }
-  S._scanActive = true;
-  renderScanRows(null);
-  const baud = parseInt($("selBaud").value, 10);
+  addConsole("sys", "[SYS] scanning serial ports (system)…");
+  S._sysPorts = null; /* force a fresh OS-level scan */
+  await renderConnCard();
+}
+
+/* connect to an OS-level device path (e.g. /dev/ttyUSB0, COM3).
+ * The chooser is auto-resolved in main.js by matching the port name. */
+async function connectSystemPort(name) {
+  if (S.mode === "serial" || !SerialLink.supported) return;
   stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+  window.electronAPI.expectPort(name);
+  addConsole("sys", `[SYS] opening ${name} @ ${baud}…`);
+  let tmr = null;
   try {
-    addConsole("sys", `[SYS] scanning serial ports @ ${baud}…`);
-    await S.serial.connect(baud);
+    await Promise.race([
+      S.serial.connect(baud),
+      new Promise((_, rej) => { tmr = setTimeout(() => rej(new Error("chooser-timeout")), 10000); }),
+    ]);
     Store.set("prefer_hw", "1");
   } catch (e) {
-    if (e.message === "PORT_CANCELLED") {
-      addConsole("sys", "[SYS] Scan finished — no port picked");
-      $("portHint").textContent = "Scan finished — no port picked. If the list was empty, follow the checklist above.";
-    } else {
-      const hint = connErrorHint(e);
-      const msg = hint || "Scan failed: " + e.message;
-      addConsole("err", "!! " + msg);
-      $("portHint").textContent = msg;
-      toast(msg, "err", 6000);
-    }
-  } finally {
-    S._scanActive = false;
-    if (_scanWatchdog) { clearTimeout(_scanWatchdog); _scanWatchdog = null; }
+    const msg = e.message === "chooser-timeout"
+      ? "The port chooser did not respond — try the ⚡ Connect Arduino button once, then report this."
+      : (connErrorHint(e) || "Connection failed: " + e.message);
+    addConsole("err", "!! " + msg);
+    $("portHint").textContent = msg;
+    toast(msg, "err", 6000);
     renderConnCard();
+  } finally {
+    if (tmr) clearTimeout(tmr);
   }
 }
 

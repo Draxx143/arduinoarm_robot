@@ -2,21 +2,27 @@
 
 Industrial English-language **desktop application** (Electron) for the 5-DOF Arduino Mega 2560 robot arm firmware (`RobotArm_Firmware.ino`).
 
-## 🆕 What's new in v1.0.12
+## 🆕 What's new in v1.0.13
+
+- **OS-level port enumeration** — Scan Ports now lists devices straight from the operating system (`/dev/ttyUSB*`, `/dev/ttyACM*`, `COMx`), so it always matches what the OS and the Arduino IDE see. Fixes the case where Chromium's internal scan returned nothing even though the board was plugged in.
+- **Silent auto-pick** — clicking a system port resolves the permission chooser automatically (no modal); a 10 s watchdog reports if the chooser ever fails to respond.
+- A small `diag:` line in the card shows Electron version, webSerial status and how many devices the OS scan found — perfect for remote debugging.
+
+## 🆕 What's new in v1.0.13
 
 - **BEST MATCH badge** on the recommended port row (Arduino Mega / CH340 / CP210x / FTDI) in both apps
 - 12-second scan watchdog: if the system port list never arrives, the fix-it checklist appears automatically
 
-## 🆕 What's new in v1.0.12
+## 🆕 What's new in v1.0.13
 
 - **Port diagnostics** — the Connection card now names common boards/chips (Arduino Mega 2560, CH340, CP210x, FTDI…) instead of raw USB IDs, shows a fix-it checklist when no device is found (data cable, dialout group, brltty hijack), and turns "Permission denied" into the exact command to run.
 
-## 🆕 What's new in v1.0.12
+## 🆕 What's new in v1.0.13
 
 - **Port-select card added to the Persian web panel too** (`gui/`) — scan/select/auto-connect works in the browser panel exactly like the desktop app.
 - **Version badge** in the footer of both apps, so you can always confirm which build is running.
 
-## 🆕 What's new in v1.0.12 (firmware audit + GUI fixes)
+## 🆕 What's new in v1.0.13 (firmware audit + GUI fixes)
 
 **Firmware (`RobotArm_Firmware.ino` + modules):**
 - **Homing no longer freezes the board** — `processHoming()` ran `delay(10)` + a blocking back-off loop (up to ~5 s for axis X) *inside the 1 kHz timer ISR*, starving the serial link and the main loop. It is now fully non-blocking (phase-based: seek → back-off at 1 kHz → zero).
@@ -30,7 +36,7 @@ Industrial English-language **desktop application** (Electron) for the 5-DOF Ard
 - **Quick chips rebuilt** — only high-use, complete commands; enable/disable appear once; every chip string is verified against the parser (zero "Unknown command" chips).
 - **J2/J3 slider fill fixed** — the colored fill bar appeared half-filled at 0 on first open; fills are now painted correctly at build time.
 
-## 🆕 What's new in v1.0.12
+## 🆕 What's new in v1.0.13
 
 - **Connection card (PORT SELECT)** — a dedicated sidebar section: scans every serial device on the machine, one-click connect per port, live link badge (name + baud), Disconnect button, optional **auto-connect on start** (remembers your last port), and a "New device detected" nudge when you plug the Arduino in later.
 
@@ -70,10 +76,10 @@ Prebuilt installers are published automatically by GitHub Actions to the repo's 
 
 | File | Platform | How to install |
 |---|---|---|
-| `AXIS5-Robot-Control-Setup-1.0.12.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
-| `AXIS5-Robot-Control-Portable-1.0.12.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
-| `AXIS5-Robot-Control-1.0.12-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.12-amd64.deb` |
-| `AXIS5-Robot-Control-1.0.12-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
+| `AXIS5-Robot-Control-Setup-1.0.13.exe` | Windows 10/11 x64 | Run the installer (desktop + start-menu shortcuts) |
+| `AXIS5-Robot-Control-Portable-1.0.13.exe` | Windows 10/11 x64 | Single file — just run it, no installation |
+| `AXIS5-Robot-Control-1.0.13-amd64.deb` | Ubuntu / Debian | `sudo apt install ./AXIS5-Robot-Control-1.0.13-amd64.deb` |
+| `AXIS5-Robot-Control-1.0.13-x86_64.AppImage` | Any Linux x64 | `chmod +x *.AppImage` then run |
 
 Every push to the app also rebuilds the installers (see `.github/workflows/build.yml`).
 
@@ -81,7 +87,7 @@ Every push to the app also rebuilds the installers (see `.github/workflows/build
 
 | OS | Command | Output |
 |---|---|---|
-| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.12.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.12.exe` (portable) |
+| Windows | `npm run dist:win` | `dist/AXIS5-Robot-Control-Setup-1.0.13.exe` (installer) + `AXIS5-Robot-Control-Portable-1.0.13.exe` (portable) |
 | Linux | `npm run dist:linux` | `dist/AXIS5-Robot-Control-1.0.1-x64.AppImage` + `.deb` |
 
 Build both from Linux/macOS: `npm run dist` (Windows builds cross-compile fine from Linux).
