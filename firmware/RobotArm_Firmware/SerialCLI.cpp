@@ -29,8 +29,9 @@ void SerialCLI::poll() {
         }
     }
     /* مانیتورهایی که فقط CR می‌فرستند یا بدون Line Ending هستند:
-       اگر بافر پر شده و ۵۰ms سکوت شد، همان را اجرا کن */
-    if (_buf.length() > 0 && millis() - _lastCharMs > 50) {
+       بعد از ۱۵۰ms سکوت اجرا کن — آستانه‌ی بالاتر یعنی بایت‌هایی که USB
+       با فاصله می‌رساند وسط خط اسپلیت نمی‌شوند (ریشه‌ی «Unknown command») */
+    if (_buf.length() > 0 && millis() - _lastCharMs > 150) {
         _finishLine();
     }
 }
@@ -45,9 +46,16 @@ void SerialCLI::_finishLine() {
         return;
     }
     if (_buf.length() == 0) return;
+    /* تکه‌های بسیار کوتاه (مثل «de» از یک خط اسپلیت‌شده) هرگز اجرا نمی‌شوند —
+       هیچ دستوری در پروتکل کوتاه‌تر از ۳ کاراکتر ندارد */
+    if (_buf.length() < 3) {
+        _buf = "";
+        return;
+    }
     _execute(_buf);
     _buf = "";
 }
+
 
 void SerialCLI::_execute(const String& raw) {
     String cmd = raw;

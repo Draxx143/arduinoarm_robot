@@ -909,16 +909,20 @@ function buildJoints() {
  * board reports as "Unknown command" / bogus angles. */
 const _jtPending = {};
 function sendJointLive(i, v) {
-  const p = _jtPending[i] || (_jtPending[i] = { t: null, last: 0, fired: false });
+  const p = _jtPending[i] || (_jtPending[i] = { t: null, last: 0, fired: false, sent: null });
   p.last = v;
   if (p.fired) return;            /* a leading send already went out for this burst */
   p.fired = true;
+  p.sent = v;
   sendJoint(i, v);                /* leading: first change is sent immediately */
   p.t = setTimeout(() => {
     const val = p.last;
-    p.t = null; p.fired = false; p.last = 0;
+    const sent = p.sent;
+    p.t = null; p.fired = false; p.last = 0; p.sent = null;
     _jtPending[i] = null;
-    sendJoint(i, val);            /* trailing: the final value after the burst */
+    /* FIX: a single slider release must send exactly ONCE — the trailing
+     * send only fires when the value moved on after the leading one */
+    if (val !== sent) sendJoint(i, val);
   }, 160);
 }
 
