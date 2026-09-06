@@ -1,4 +1,5 @@
 #include "TimerManager.h"
+#include "SerialCLI.h"
 
 TimerManager::TimerManager() {
     _fireFn = nullptr;
@@ -12,10 +13,10 @@ void TimerManager::update() {
     
     for (int i = 0; i < MAX_TIMERS; i++) {
         if (_timers[i].active && currentTime >= _timers[i].triggerTime) {
-            Serial.print(">> Timer fired: axis ");
-            Serial.print(_timers[i].axis + 1);
-            Serial.print(" to ");
-            Serial.println(_timers[i].target);
+            C_PRINT(">> Timer fired: axis ");
+            C_PRINT(_timers[i].axis + 1);
+            C_PRINT(" to ");
+            C_PRINTLN(_timers[i].target);
             
             // FIX: اجرای واقعی حرکت از طریق callback متصل‌شده
             // (قبلاً فقط پیام چاپ می‌شد و هیچ حرکتی انجام نمی‌شد!)

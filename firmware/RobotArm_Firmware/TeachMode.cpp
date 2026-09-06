@@ -1,4 +1,5 @@
 #include "TeachMode.h"
+#include "SerialCLI.h"
 
 TeachMode::TeachMode() {
     _recording = false;
@@ -10,16 +11,16 @@ TeachMode::TeachMode() {
 void TeachMode::startRecording() {
     _recording = true;
     _stepCount = 0;
-    Serial.println(">> Teach mode: RECORDING started");
-    Serial.println("   Use 'teach step' to record current position");
-    Serial.println("   Use 'teach stop' to stop recording");
+    C_PRINTLN(">> Teach mode: RECORDING started");
+    C_PRINTLN("   Use 'teach step' to record current position");
+    C_PRINTLN("   Use 'teach stop' to stop recording");
 }
 
 void TeachMode::stopRecording() {
     _recording = false;
-    Serial.print(">> Teach mode: RECORDING stopped. ");
-    Serial.print(_stepCount);
-    Serial.println(" steps recorded.");
+    C_PRINT(">> Teach mode: RECORDING stopped. ");
+    C_PRINT(_stepCount);
+    C_PRINTLN(" steps recorded.");
 }
 
 bool TeachMode::isRecording() {
@@ -29,7 +30,7 @@ bool TeachMode::isRecording() {
 bool TeachMode::recordStep(const int32_t positions[], unsigned long delayMs) {
     if (!_recording) return false;
     if (_stepCount >= MAX_TEACH_STEPS) {
-        Serial.println("!! Max teach steps reached");
+        C_PRINTLN("!! Max teach steps reached");
         return false;
     }
     
@@ -39,16 +40,16 @@ bool TeachMode::recordStep(const int32_t positions[], unsigned long delayMs) {
     _steps[_stepCount].delayAfter = delayMs;
     _stepCount++;
     
-    Serial.print(">> Step ");
-    Serial.print(_stepCount);
-    Serial.println(" recorded");
+    C_PRINT(">> Step ");
+    C_PRINT(_stepCount);
+    C_PRINTLN(" recorded");
     
     return true;
 }
 
 void TeachMode::startPlayback(void (*moveCallback)(const int32_t[])) {
     if (_stepCount == 0) {
-        Serial.println("!! No steps recorded");
+        C_PRINTLN("!! No steps recorded");
         return;
     }
     
@@ -56,14 +57,14 @@ void TeachMode::startPlayback(void (*moveCallback)(const int32_t[])) {
     _playing = true;
     _currentStep = 0;
     _lastStepTime = 0;
-    Serial.print(">> Playing back ");
-    Serial.print(_stepCount);
-    Serial.println(" steps");
+    C_PRINT(">> Playing back ");
+    C_PRINT(_stepCount);
+    C_PRINTLN(" steps");
 }
 
 void TeachMode::stopPlayback() {
     _playing = false;
-    Serial.println(">> Playback stopped");
+    C_PRINTLN(">> Playback stopped");
 }
 
 bool TeachMode::isPlaying() {
@@ -77,7 +78,7 @@ void TeachMode::update() {
     
     if (_currentStep >= _stepCount) {
         _playing = false;
-        Serial.println(">> Playback complete");
+        C_PRINTLN(">> Playback complete");
         return;
     }
     
@@ -89,10 +90,10 @@ void TeachMode::update() {
     // اجرای step
     if (_moveCallback != nullptr) {
         _moveCallback(_steps[_currentStep].positions);
-        Serial.print(">> Step ");
-        Serial.print(_currentStep + 1);
-        Serial.print("/");
-        Serial.println(_stepCount);
+        C_PRINT(">> Step ");
+        C_PRINT(_currentStep + 1);
+        C_PRINT("/");
+        C_PRINTLN(_stepCount);
     }
     
     _currentStep++;

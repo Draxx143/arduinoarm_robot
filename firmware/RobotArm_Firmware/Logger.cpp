@@ -1,4 +1,5 @@
 #include "Logger.h"
+#include "SerialCLI.h"
 
 Logger::Logger() {
     _enabled = false;
@@ -8,12 +9,12 @@ Logger::Logger() {
 
 void Logger::enable() {
     _enabled = true;
-    Serial.println(">> Logging ENABLED");
+    C_PRINTLN(">> Logging ENABLED");
 }
 
 void Logger::disable() {
     _enabled = false;
-    Serial.println(">> Logging DISABLED");
+    C_PRINTLN(">> Logging DISABLED");
 }
 
 bool Logger::isEnabled() {
@@ -32,26 +33,26 @@ void Logger::log(const char* message) {
 }
 
 void Logger::show() {
-    Serial.println(">> Log entries:");
+    C_PRINTLN(">> Log entries:");
     if (_count == 0) {
-        Serial.println("  (no entries)");
+        C_PRINTLN("  (no entries)");
         return;
     }
     
     int start = (_count < MAX_LOGS) ? 0 : _index;
     for (int i = 0; i < _count; i++) {
         int idx = (start + i) % MAX_LOGS;
-        Serial.print("  [");
-        Serial.print(_logs[idx].time);
-        Serial.print("ms] ");
-        Serial.println(_logs[idx].message);
+        C_PRINT("  [");
+        C_PRINT(_logs[idx].time);
+        C_PRINT("ms] ");
+        C_PRINTLN(_logs[idx].message);
     }
 }
 
 void Logger::clear() {
     _count = 0;
     _index = 0;
-    Serial.println(">> Log cleared");
+    C_PRINTLN(">> Log cleared");
 }
 
 int Logger::getCount() {

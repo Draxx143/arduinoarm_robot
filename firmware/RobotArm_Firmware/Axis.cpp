@@ -1,4 +1,5 @@
 #include "Axis.h"
+#include "SerialCLI.h"
 #include <Arduino.h>
 #include <math.h>
 
@@ -77,13 +78,13 @@ void Axis::moveTo(int32_t targetPosition) {
     
     // FIX: اگه خارج از محدوده بود، رد کن و اخطار بده
     if (targetPosition < _softMin || targetPosition > _softMax) {
-        Serial.print("!! ERROR: Target position ");
-        Serial.print(targetPosition);
-        Serial.print(" is OUT OF RANGE. Soft limits: ");
-        Serial.print(_softMin);
-        Serial.print(" to ");
-        Serial.print(_softMax);
-        Serial.println(" steps. Command REJECTED.");
+        C_PRINT("!! ERROR: Target position ");
+        C_PRINT(targetPosition);
+        C_PRINT(" is OUT OF RANGE. Soft limits: ");
+        C_PRINT(_softMin);
+        C_PRINT(" to ");
+        C_PRINT(_softMax);
+        C_PRINTLN(" steps. Command REJECTED.");
         return;
     }
     
@@ -421,8 +422,8 @@ void Axis::backoffFromEndstop() {
     }
     
     if (backoffCount >= MAX_BACKOFF_STEPS) {
-        Serial.print("!! Axis (pin ");
-        Serial.print(_stepPin);
-        Serial.println("): backoff timeout");
+        C_PRINT("!! Axis (pin ");
+        C_PRINT(_stepPin);
+        C_PRINTLN("): backoff timeout");
     }
 }

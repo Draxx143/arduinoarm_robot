@@ -101,29 +101,29 @@ void setup() {
     cli.begin(115200, handleCommand);          // کنسول سریال جدید (بدون تایم‌اوت، غیرمسدود)
     cli.setLogFn([](const char* c) { logger.log(c); });
     delay(500);
-    Serial.println("======================================");
-    Serial.println("5 DOF Robot Arm - TEST MODE (No ROS)");
-    Serial.println("======================================");
-    Serial.println("Basic Commands:");
-    Serial.println("  home, home <1-5>     - Smart homing");
-    Serial.println("  status               - Show status");
-    Serial.println("  enable/disable       - Motor control");
-    Serial.println("  move/deg/moveall     - Movement");
-    Serial.println("  demo                 - Demo loop");
-    Serial.println("Advanced Commands:");
-    Serial.println("  savepos <slot>       - Save current position");
-    Serial.println("  loadpos <slot>       - Load saved position");
-    Serial.println("  listpos              - List saved positions");
-    Serial.println("  timer <ms> <axis> <target>");
-    Serial.println("  teach / teach stop / play");
-    Serial.println("  log on/off/show/clear");
-    Serial.println("  ack on/off       (per-command confirmations)");
-    Serial.println("  profile slow/normal/fast");
-    Serial.println("  traj line/circle");
-    Serial.println("  ik <x> <y> <z>");
-    Serial.println("  fk <a1> <a2> <a3>");
-    Serial.println("  sleep / wake / autosleep on/off");
-    Serial.println("======================================");
+    C_PRINTLN("======================================");
+    C_PRINTLN("5 DOF Robot Arm - TEST MODE (No ROS)");
+    C_PRINTLN("======================================");
+    C_PRINTLN("Basic Commands:");
+    C_PRINTLN("  home, home <1-5>     - Smart homing");
+    C_PRINTLN("  status               - Show status");
+    C_PRINTLN("  enable/disable       - Motor control");
+    C_PRINTLN("  move/deg/moveall     - Movement");
+    C_PRINTLN("  demo                 - Demo loop");
+    C_PRINTLN("Advanced Commands:");
+    C_PRINTLN("  savepos <slot>       - Save current position");
+    C_PRINTLN("  loadpos <slot>       - Load saved position");
+    C_PRINTLN("  listpos              - List saved positions");
+    C_PRINTLN("  timer <ms> <axis> <target>");
+    C_PRINTLN("  teach / teach stop / play");
+    C_PRINTLN("  log on/off/show/clear");
+    C_PRINTLN("  ack on/off       (per-command confirmations)");
+    C_PRINTLN("  profile slow/normal/fast");
+    C_PRINTLN("  traj line/circle");
+    C_PRINTLN("  ik <x> <y> <z>");
+    C_PRINTLN("  fk <a1> <a2> <a3>");
+    C_PRINTLN("  sleep / wake / autosleep on/off");
+    C_PRINTLN("======================================");
 
     pinMode(STATUS_LED_PIN, OUTPUT);
     digitalWrite(STATUS_LED_PIN, HIGH);
@@ -141,8 +141,8 @@ void setup() {
     // (اختیاری - می‌تونی بعداً اضافه کنی)
 
     systemState = STATE_INIT;
-    Serial.println("System initialized.");
-    Serial.println("======================================");
+    C_PRINTLN("System initialized.");
+    C_PRINTLN("======================================");
 }
 
 // FIX: اجرای واقعی تایمر — قبلاً TimerManager فقط پیام چاپ می‌کرد
@@ -150,10 +150,10 @@ void onTimerFire(uint8_t axis, int32_t target) {
     if (axis >= NUM_AXES) return;
     if (systemState != STATE_READY && systemState != STATE_MOVING) return;
     motorController->moveTo(axis, target);
-    Serial.print(">> Moving axis ");
-    Serial.print(axis + 1);
-    Serial.print(" to ");
-    Serial.println(target);
+    C_PRINT(">> Moving axis ");
+    C_PRINT(axis + 1);
+    C_PRINT(" to ");
+    C_PRINTLN(target);
 }
 
 void loop() {
@@ -214,7 +214,7 @@ void updateSystemState() {
             motorController->processHoming();
             if (motorController->allHomed()) {
                 systemState = STATE_READY;
-                Serial.println(">> System ready!");
+                C_PRINTLN(">> System ready!");
             }
             break;
         case STATE_READY:
@@ -235,7 +235,7 @@ void updateSystemState() {
             }
             if (allStopped) {
                 systemState = STATE_READY;
-                Serial.println(">> Move complete.");
+                C_PRINTLN(">> Move complete.");
             }
             break;
         case STATE_ERROR:
@@ -259,7 +259,7 @@ void updateHeartbeat() {
 bool handleCommand(const String& command) {
         // ==================== Basic Commands ====================
         if (command == "home") {
-            Serial.println("Starting smart homing...");
+            C_PRINTLN("Starting smart homing...");
             motorController->smartHoming();
             systemState = STATE_HOMING;
         }
@@ -269,7 +269,7 @@ bool handleCommand(const String& command) {
                 motorController->smartHomingAxis(axis);
                 systemState = STATE_HOMING;
             } else {
-                Serial.println("Invalid axis");
+                C_PRINTLN("Invalid axis");
             }
         }
         else if (command == "status") {
@@ -277,51 +277,51 @@ bool handleCommand(const String& command) {
         }
         else if (command == "enable") {
             motorController->enableAllMotors();
-            Serial.println("All motors enabled");
+            C_PRINTLN("All motors enabled");
         }
         else if (command.startsWith("enable ")) {
             int axis = command.substring(7).toInt() - 1;
             if (axis >= 0 && axis < NUM_AXES) motorController->enableAxis(axis);
-            else Serial.println("Invalid axis");
+            else C_PRINTLN("Invalid axis");
         }
         else if (command == "disable") {
             motorController->disableAllMotors();
-            Serial.println("All motors disabled");
+            C_PRINTLN("All motors disabled");
         }
         else if (command.startsWith("disable ")) {
             int axis = command.substring(8).toInt() - 1;
             if (axis >= 0 && axis < NUM_AXES) motorController->disableAxis(axis);
-            else Serial.println("Invalid axis");
+            else C_PRINTLN("Invalid axis");
         }
         else if (command == "estop") {
             motorController->emergencyStop();
             systemState = STATE_ESTOP;
             demoRunning = false;
-            Serial.println("EMERGENCY STOP!");
+            C_PRINTLN("EMERGENCY STOP!");
         }
         else if (command == "reset") {
             motorController->clearEmergencyStop();
             systemState = STATE_READY;
-            Serial.println("Emergency stop cleared");
+            C_PRINTLN("Emergency stop cleared");
         }
         else if (command == "demo") {
             startDemo();
         }
         else if (command == "stopdemo") {
             demoRunning = false;
-            Serial.println(">> Demo stopped");
+            C_PRINTLN(">> Demo stopped");
         }
         else if (command == "stop") {
             demoRunning = false;
             motorController->disableAllMotors();
-            Serial.println(">> Stopped");
+            C_PRINTLN(">> Stopped");
         }
         else if (command.startsWith("moveall ")) {
             demoRunning = false;
             handleMoveAllCommand(command);
         }
         else if (command == "moveall") {
-            Serial.println("Format: moveall <d1> <d2> <d3> <d4> <d5>");
+            C_PRINTLN("Format: moveall <d1> <d2> <d3> <d4> <d5>");
         }
         else if (command.startsWith("deg ")) {
             demoRunning = false;
@@ -345,7 +345,7 @@ bool handleCommand(const String& command) {
             int32_t positions[NUM_AXES];
             if (positionStore.load(slot, positions)) {
                 motorController->moveAllAxes(positions);
-                Serial.println(">> Moving to saved position");
+                C_PRINTLN(">> Moving to saved position");
             }
         }
         else if (command == "listpos") {
@@ -354,9 +354,9 @@ bool handleCommand(const String& command) {
         else if (command.startsWith("clearpos ")) {
             int slot = command.substring(9).toInt();
             positionStore.clear(slot);
-            Serial.print(">> Position slot ");
-            Serial.print(slot);
-            Serial.println(" cleared");
+            C_PRINT(">> Position slot ");
+            C_PRINT(slot);
+            C_PRINTLN(" cleared");
         }
         // ==================== Timer ====================
         else if (command.startsWith("timer ")) {
@@ -373,21 +373,21 @@ bool handleCommand(const String& command) {
                 if (axis >= 0 && axis < NUM_AXES) {
                     int32_t currentPos = motorController->getAxis(axis)->getCurrentPosition();
                     timerManager.addTimer(delayMs, axis, currentPos);
-                    Serial.print(">> Timer set: axis ");
-                    Serial.print(axis + 1);
-                    Serial.print(" in ");
-                    Serial.print(delayMs);
-                    Serial.println(" ms");
+                    C_PRINT(">> Timer set: axis ");
+                    C_PRINT(axis + 1);
+                    C_PRINT(" in ");
+                    C_PRINT(delayMs);
+                    C_PRINTLN(" ms");
                 }
             }
         }
         else if (command == "timers") {
-            Serial.print(">> Active timers: ");
-            Serial.println(timerManager.getActiveCount());
+            C_PRINT(">> Active timers: ");
+            C_PRINTLN(timerManager.getActiveCount());
         }
         else if (command == "cleartimers") {
             timerManager.clear();
-            Serial.println(">> All timers cleared");
+            C_PRINTLN(">> All timers cleared");
         }
         // ==================== Teach Mode ====================
         else if (command == "teach") {
@@ -410,8 +410,8 @@ bool handleCommand(const String& command) {
             teachMode.stopPlayback();
         }
         else if (command == "teach count") {
-            Serial.print(">> Recorded steps: ");
-            Serial.println(teachMode.getStepCount());
+            C_PRINT(">> Recorded steps: ");
+            C_PRINTLN(teachMode.getStepCount());
         }
         // ==================== Logger ====================
         else if (command == "log on") {
@@ -433,17 +433,17 @@ bool handleCommand(const String& command) {
             if (prof == "slow") speedProfile.setProfile(PROFILE_SLOW);
             else if (prof == "normal") speedProfile.setProfile(PROFILE_NORMAL);
             else if (prof == "fast") speedProfile.setProfile(PROFILE_FAST);
-            else Serial.println("Use: profile slow/normal/fast");
+            else C_PRINTLN("Use: profile slow/normal/fast");
         }
         else if (command == "profile") {
-            Serial.print(">> Current profile: ");
-            Serial.println(speedProfile.getProfileName());
+            C_PRINT(">> Current profile: ");
+            C_PRINTLN(speedProfile.getProfileName());
         }
         // ==================== Trajectory ====================
         else if (command.startsWith("traj line ")) {
             // traj line <d1> <d2> <d3> <d4> <d5> <ms>
             // فعلاً ساده: فقط می‌گه که فعال شده
-            Serial.println(">> Trajectory line set (not fully implemented)");
+            C_PRINTLN(">> Trajectory line set (not fully implemented)");
         }
         else if (command == "traj stop") {
             trajectory.stop();
@@ -470,15 +470,15 @@ bool handleCommand(const String& command) {
                         if (c != angles[i]) { angles[i] = c; clamped = true; }
                     }
                     
-                    Serial.print(">> IK solution: ");
+                    C_PRINT(">> IK solution: ");
                     for (int i = 0; i < NUM_AXES; i++) {
-                        Serial.print(angles[i], 1);
-                        Serial.print("°");
-                        if (i < NUM_AXES - 1) Serial.print(", ");
+                        C_PRINT(angles[i], 1);
+                        C_PRINT("°");
+                        if (i < NUM_AXES - 1) C_PRINT(", ");
                     }
-                    Serial.println();
+                    C_PRINTLN();
                     if (clamped) {
-                        Serial.println(">> NOTE: angles clamped to joint limits - real tool position is offset");
+                        C_PRINTLN(">> NOTE: angles clamped to joint limits - real tool position is offset");
                     }
                     
                     // تبدیل به steps و حرکت
@@ -488,10 +488,10 @@ bool handleCommand(const String& command) {
                     }
                     motorController->moveAllAxes(steps);
                 } else {
-                    Serial.println("!! Position out of reach");
+                    C_PRINTLN("!! Position out of reach");
                 }
             } else {
-                Serial.println("Format: ik <x> <y> <z>");
+                C_PRINTLN("Format: ik <x> <y> <z>");
             }
         }
         else if (command.startsWith("fk ")) {
@@ -518,12 +518,12 @@ bool handleCommand(const String& command) {
             
             float x, y, z;
             if (kinematics.solveFK(angles, x, y, z)) {
-                Serial.print(">> FK result: X=");
-                Serial.print(x, 1);
-                Serial.print(", Y=");
-                Serial.print(y, 1);
-                Serial.print(", Z=");
-                Serial.println(z, 1);
+                C_PRINT(">> FK result: X=");
+                C_PRINT(x, 1);
+                C_PRINT(", Y=");
+                C_PRINT(y, 1);
+                C_PRINT(", Z=");
+                C_PRINTLN(z, 1);
             }
         }
         // ==================== Energy Manager ====================
@@ -548,7 +548,7 @@ bool handleCommand(const String& command) {
 
 void startDemo() {
     if (demoRunning) {
-        Serial.println("!! Demo already running");
+        C_PRINTLN("!! Demo already running");
         return;
     }
     bool allHomed = true;
@@ -559,41 +559,41 @@ void startDemo() {
         }
     }
     if (!allHomed) {
-        Serial.println("!! Not all axes are homed");
+        C_PRINTLN("!! Not all axes are homed");
         return;
     }
     demoRunning = true;
     demoStep = 0;
     demoRepeat = 0;
     lastDemoMove = 0;
-    Serial.println(">> Starting demo");
+    C_PRINTLN(">> Starting demo");
 }
 
 void printStatus() {
-    Serial.println("=== System Status ===");
-    Serial.print("State: ");
+    C_PRINTLN("=== System Status ===");
+    C_PRINT("State: ");
     switch (systemState) {
-        case STATE_INIT:   Serial.println("Initializing"); break;
-        case STATE_HOMING: Serial.println("Homing"); break;
-        case STATE_READY:  Serial.println("Ready"); break;
-        case STATE_MOVING: Serial.println("Moving"); break;
-        case STATE_ERROR:  Serial.println("Error"); break;
-        case STATE_ESTOP:  Serial.println("Emergency Stop"); break;
+        case STATE_INIT:   C_PRINTLN("Initializing"); break;
+        case STATE_HOMING: C_PRINTLN("Homing"); break;
+        case STATE_READY:  C_PRINTLN("Ready"); break;
+        case STATE_MOVING: C_PRINTLN("Moving"); break;
+        case STATE_ERROR:  C_PRINTLN("Error"); break;
+        case STATE_ESTOP:  C_PRINTLN("Emergency Stop"); break;
     }
     
     if (demoRunning) {
-        Serial.print("Demo: RUNNING (");
-        Serial.print(demoStep + 1);
-        Serial.print("/");
-        Serial.print(DEMO_MOVE_COUNT);
-        Serial.println(")");
+        C_PRINT("Demo: RUNNING (");
+        C_PRINT(demoStep + 1);
+        C_PRINT("/");
+        C_PRINT(DEMO_MOVE_COUNT);
+        C_PRINTLN(")");
     }
     
-    Serial.print("Profile: ");
-    Serial.println(speedProfile.getProfileName());
+    C_PRINT("Profile: ");
+    C_PRINTLN(speedProfile.getProfileName());
     
     if (energyManager.isSleeping()) {
-        Serial.println("Status: SLEEPING");
+        C_PRINTLN("Status: SLEEPING");
     }
 
     for (int i = 0; i < NUM_AXES; i++) {
@@ -601,34 +601,34 @@ void printStatus() {
         int32_t pos = axis->getCurrentPosition();
         float degrees = (float)pos / DEG_TO_STEPS[i];
         
-        Serial.print("Axis "); Serial.print(i + 1);
-        Serial.print(": "); Serial.print(pos);
-        Serial.print(" ("); Serial.print(degrees, 1); Serial.print("°)");
-        Serial.print(", Homed="); Serial.print(axis->isHomed() ? "Y" : "N");
-        Serial.print(", En="); Serial.print(axis->isEnabled() ? "Y" : "N");
-        Serial.print(", Mov="); Serial.print(axis->isMoving() ? "Y" : "N");
-        Serial.print(", ES="); Serial.println(axis->getEndstopState() ? "Open" : "Trig");
+        C_PRINT("Axis "); C_PRINT(i + 1);
+        C_PRINT(": "); C_PRINT(pos);
+        C_PRINT(" ("); C_PRINT(degrees, 1); C_PRINT("°)");
+        C_PRINT(", Homed="); C_PRINT(axis->isHomed() ? "Y" : "N");
+        C_PRINT(", En="); C_PRINT(axis->isEnabled() ? "Y" : "N");
+        C_PRINT(", Mov="); C_PRINT(axis->isMoving() ? "Y" : "N");
+        C_PRINT(", ES="); C_PRINTLN(axis->getEndstopState() ? "Open" : "Trig");
     }
-    Serial.println("======================");
+    C_PRINTLN("======================");
 }
 
 void handleMoveCommand(String command) {
     int firstSpace = command.indexOf(' ');
     int secondSpace = command.indexOf(' ', firstSpace + 1);
     if (secondSpace == -1) {
-        Serial.println("Format: move <axis> <steps>");
+        C_PRINTLN("Format: move <axis> <steps>");
         return;
     }
     int axis = command.substring(firstSpace + 1, secondSpace).toInt() - 1;
     int32_t steps = command.substring(secondSpace + 1).toInt();
     if (axis >= 0 && axis < NUM_AXES) {
         if (!motorController->getAxis(axis)->isEnabled()) {
-            Serial.print("!! Axis "); Serial.print(axis + 1);
-            Serial.println(" is DISABLED — send 'enable' or run 'home' first");
+            C_PRINT("!! Axis "); C_PRINT(axis + 1);
+            C_PRINTLN(" is DISABLED — send 'enable' or run 'home' first");
         }
         motorController->moveTo(axis, steps);
-        Serial.print("Moving axis "); Serial.print(axis + 1);
-        Serial.print(" to "); Serial.print(steps); Serial.println(" steps");
+        C_PRINT("Moving axis "); C_PRINT(axis + 1);
+        C_PRINT(" to "); C_PRINT(steps); C_PRINTLN(" steps");
     }
 }
 
@@ -636,37 +636,37 @@ void handleDegCommand(String command) {
     int firstSpace = command.indexOf(' ');
     int secondSpace = command.indexOf(' ', firstSpace + 1);
     if (secondSpace == -1) {
-        Serial.println("Format: deg <axis> <degrees>");
+        C_PRINTLN("Format: deg <axis> <degrees>");
         return;
     }
     int axis = command.substring(firstSpace + 1, secondSpace).toInt() - 1;
     float degrees = command.substring(secondSpace + 1).toFloat();
     
     if (axis < 0 || axis >= NUM_AXES) {
-        Serial.println("Invalid axis");
+        C_PRINTLN("Invalid axis");
         return;
     }
     if (degrees < AXIS_MIN_DEG[axis] || degrees > AXIS_MAX_DEG[axis]) {
-        Serial.print("!! Axis "); Serial.print(axis + 1);
-        Serial.print(" out of range (");
-        Serial.print(AXIS_MIN_DEG[axis], 1);
-        Serial.print("° to ");
-        Serial.print(AXIS_MAX_DEG[axis], 1);
-        Serial.println("°)");
+        C_PRINT("!! Axis "); C_PRINT(axis + 1);
+        C_PRINT(" out of range (");
+        C_PRINT(AXIS_MIN_DEG[axis], 1);
+        C_PRINT("° to ");
+        C_PRINT(AXIS_MAX_DEG[axis], 1);
+        C_PRINTLN("°)");
         return;
     }
     
     // FIX: قبلاً محورِ غیرفعال بی‌صدا رد می‌شد — حالا صریح می‌گوییم
     if (!motorController->getAxis(axis)->isEnabled()) {
-        Serial.print("!! Axis "); Serial.print(axis + 1);
-        Serial.println(" is DISABLED — send 'enable' or run 'home' first");
+        C_PRINT("!! Axis "); C_PRINT(axis + 1);
+        C_PRINTLN(" is DISABLED — send 'enable' or run 'home' first");
     }
     
     int32_t steps = (int32_t)(degrees * DEG_TO_STEPS[axis]);
     motorController->moveTo(axis, steps);
-    Serial.print("Moving axis "); Serial.print(axis + 1);
-    Serial.print(" to "); Serial.print(degrees, 1);
-    Serial.print("° ("); Serial.print(steps); Serial.println(" steps)");
+    C_PRINT("Moving axis "); C_PRINT(axis + 1);
+    C_PRINT(" to "); C_PRINT(degrees, 1);
+    C_PRINT("° ("); C_PRINT(steps); C_PRINTLN(" steps)");
 }
 
 void handleMoveAllCommand(String command) {
@@ -686,14 +686,14 @@ void handleMoveAllCommand(String command) {
         degStr.trim();
         
         if (degStr.length() == 0) {
-            Serial.print("!! Missing degree for axis "); Serial.println(i + 1);
+            C_PRINT("!! Missing degree for axis "); C_PRINTLN(i + 1);
             return;
         }
         
         float degrees = degStr.toFloat();
         if (degrees < AXIS_MIN_DEG[i] || degrees > AXIS_MAX_DEG[i]) {
-            Serial.print("!! Axis "); Serial.print(i + 1);
-            Serial.print(" out of range");
+            C_PRINT("!! Axis "); C_PRINT(i + 1);
+            C_PRINT(" out of range");
             return;
         }
         
@@ -710,16 +710,16 @@ void handleMoveAllCommand(String command) {
         if (motorController->getAxis(i)->isEnabled()) { anyEnabled = true; break; }
     }
     if (!anyEnabled) {
-        Serial.println("!! All motors DISABLED — send 'enable' or run 'home' first");
+        C_PRINTLN("!! All motors DISABLED — send 'enable' or run 'home' first");
     }
     
     motorController->moveAllAxes(steps);
-    Serial.print("Moving all: ");
+    C_PRINT("Moving all: ");
     for (int i = 0; i < NUM_AXES; i++) {
-        Serial.print(steps[i]);
-        if (i < NUM_AXES - 1) Serial.print(", ");
+        C_PRINT(steps[i]);
+        if (i < NUM_AXES - 1) C_PRINT(", ");
     }
-    Serial.println(" steps");
+    C_PRINTLN(" steps");
 }
 
 void executeDemo() {
@@ -747,7 +747,7 @@ void executeDemo() {
                 if (demoRepeat >= DEMO_MAX_REPEATS) {
                     demoRunning = false;
                     demoRepeat = 0;
-                    Serial.println(">> Demo complete!");
+                    C_PRINTLN(">> Demo complete!");
                 }
             }
             lastDemoMove = currentTime;
@@ -761,10 +761,10 @@ void executeDemo() {
     }
     
     motorController->moveAllAxes(steps);
-    Serial.print(">> Demo step ");
-    Serial.print(demoStep + 1);
-    Serial.print("/");
-    Serial.println(DEMO_MOVE_COUNT);
+    C_PRINT(">> Demo step ");
+    C_PRINT(demoStep + 1);
+    C_PRINT("/");
+    C_PRINTLN(DEMO_MOVE_COUNT);
     
     lastDemoMove = currentTime;
     demoStep++;
@@ -775,7 +775,7 @@ void executeDemo() {
         if (demoRepeat >= DEMO_MAX_REPEATS) {
             demoRunning = false;
             demoRepeat = 0;
-            Serial.println(">> Demo complete!");
+            C_PRINTLN(">> Demo complete!");
         }
     }
 }

@@ -1391,8 +1391,22 @@ function updateLinkStats() {
     if (S.serial.rxCount === 0 && S._connAt && Date.now() - S._connAt > 6000 && !S._rxWarned) {
       S._rxWarned = true;
       const hint = $("portHint");
-      if (hint) hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B after 6 s) &mdash; close any other Serial Monitor holding the port, check baud 115200, then Disconnect &amp; Connect again.";
-      addConsole("warn", "!! no RX data 6 s after connect — is another serial monitor holding the port?");
+      if (hint) hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B after 6 s) &mdash; checking who else holds the port…";
+      addConsole("warn", "!! no RX data 6 s after connect — checking port holders…");
+      const label = S.serial.activeLabel || "";
+      if (window.electronAPI && window.electronAPI.portHolders) {
+        window.electronAPI.portHolders(label).then((h) => {
+          if (!hint) return;
+          if (h && h.procs && h.procs.length) {
+            hint.innerHTML = "<b>RX 0 B — the port is being read by another program:</b> " +
+              h.procs.map(escH).join(", ") +
+              " &mdash; <b>close it</b> (two readers share/steal the bytes!), then Disconnect &amp; Connect.";
+            addConsole("warn", "!! port held by: " + h.procs.join(", ") + " (PIDs " + h.pids.join(", ") + ") — close it and reconnect");
+          } else {
+            hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B) &mdash; no other program holds the port. Check the board baud rate (115200) and re-flash the firmware, then Disconnect &amp; Connect.";
+          }
+        }).catch(() => {});
+      }
     }
     if (S.serial.rxCount > 0) S._rxWarned = false;
   } else {
@@ -1654,6 +1668,8 @@ function init() {
     if (S.mode === "off") { toast("Connect to the Arduino (or start the simulator) first", "warn"); return; }
     const on = !$("btnAck").classList.contains("on");
     setAckUI(on); /* instant feedback — the board's reply re-syncs it */
+    if (on) toast("Board goes SILENT — no serial output at all (telemetry pauses too)", "warn", 5000);
+    else toast("Confirmations ON — board replies >> ACK: <cmd> after each command", "ok", 5000);
     send(on ? "ack on" : "ack off");
   };
   $("btnScanPorts").onclick = scanPorts;

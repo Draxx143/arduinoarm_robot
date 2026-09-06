@@ -1,4 +1,5 @@
 #include "SpeedProfile.h"
+#include "SerialCLI.h"
 
 SpeedProfileManager::SpeedProfileManager() {
     _currentProfile = PROFILE_NORMAL;
@@ -27,8 +28,8 @@ void SpeedProfileManager::setProfile(SpeedProfile profile) {
             break;
     }
     
-    Serial.print(">> Speed profile: ");
-    Serial.println(getProfileName());
+    C_PRINT(">> Speed profile: ");
+    C_PRINTLN(getProfileName());
 }
 
 SpeedProfile SpeedProfileManager::getProfile() {

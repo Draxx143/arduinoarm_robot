@@ -1,4 +1,5 @@
 #include "EnergyManager.h"
+#include "SerialCLI.h"
 
 EnergyManager::EnergyManager() {
     _sleeping = false;
@@ -15,12 +16,12 @@ void EnergyManager::setAutoSleepTimeout(unsigned long timeoutMs) {
 
 void EnergyManager::enableAutoSleep() {
     _autoSleepEnabled = true;
-    Serial.println(">> Auto-sleep ENABLED");
+    C_PRINTLN(">> Auto-sleep ENABLED");
 }
 
 void EnergyManager::disableAutoSleep() {
     _autoSleepEnabled = false;
-    Serial.println(">> Auto-sleep DISABLED");
+    C_PRINTLN(">> Auto-sleep DISABLED");
 }
 
 void EnergyManager::update(bool isMoving) {
@@ -40,7 +41,7 @@ void EnergyManager::update(bool isMoving) {
 void EnergyManager::sleep() {
     if (_sleeping) return;
     _sleeping = true;
-    Serial.println(">> Going to SLEEP");
+    C_PRINTLN(">> Going to SLEEP");
     if (_sleepCallback) _sleepCallback();
 }
 
@@ -48,7 +49,7 @@ void EnergyManager::wake() {
     if (!_sleeping) return;
     _sleeping = false;
     _lastActivityTime = millis();
-    Serial.println(">> Waking up");
+    C_PRINTLN(">> Waking up");
     if (_wakeCallback) _wakeCallback();
 }
 

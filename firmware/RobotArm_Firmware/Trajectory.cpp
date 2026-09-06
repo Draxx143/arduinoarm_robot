@@ -1,4 +1,5 @@
 #include "Trajectory.h"
+#include "SerialCLI.h"
 
 Trajectory::Trajectory() {
     _active = false;
@@ -27,12 +28,12 @@ void Trajectory::start() {
     _active = true;
     _startTime = millis();
     _progress = 0;
-    Serial.println(">> Trajectory started");
+    C_PRINTLN(">> Trajectory started");
 }
 
 void Trajectory::stop() {
     _active = false;
-    Serial.println(">> Trajectory stopped");
+    C_PRINTLN(">> Trajectory stopped");
 }
 
 void Trajectory::update(int32_t currentPos[]) {
@@ -44,7 +45,7 @@ void Trajectory::update(int32_t currentPos[]) {
         for (int i = 0; i < NUM_AXES; i++) {
             currentPos[i] = _end[i];
         }
-        Serial.println(">> Trajectory complete");
+        C_PRINTLN(">> Trajectory complete");
         return;
     }
     

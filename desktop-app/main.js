@@ -136,6 +136,19 @@ function createWindow() {
 
   /* OS-level port enumeration for the Connection card */
   ipcMain.handle("serial:list-system-ports", () => listSystemPorts());
+
+  /* Who else has the port open? (RX=0 usually means a 2nd reader is
+   * stealing the bytes — name it so the user knows what to close) */
+  ipcMain.handle("port:holders", (e, portPath) => new Promise((resolve) => {
+    execFile("fuser", [String(portPath)], (err, stdout) => {
+      const pids = String(stdout || "").trim().split(/\s+/).filter(Boolean);
+      if (!pids.length) return resolve({ pids: [], procs: [] });
+      execFile("ps", ["-o", "comm=", "-p", pids.join(",")], (e2, so) => {
+        const procs = String(so || "").split("\n").map((x) => x.trim()).filter(Boolean);
+        resolve({ pids, procs });
+      });
+    });
+  }));
   ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
 
   /* ---- Main-process serial backend (bypasses Chromium Web Serial) ---- */

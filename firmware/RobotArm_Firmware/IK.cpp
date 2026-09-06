@@ -1,4 +1,5 @@
 #include "IK.h"
+#include "SerialCLI.h"
 #include <math.h>
 
 IK::IK() {

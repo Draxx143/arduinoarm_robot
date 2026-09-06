@@ -3,6 +3,12 @@
 
 #include <Arduino.h>
 
+/* کلید سکوت سراسری: وقتی true است هیچ ماژولی چیزی به مانیتور چاپ نمی‌کند
+ * (فقط جواب خود دستورات ack در SerialCLI مستثنا است) */
+extern bool gCliMute;
+#define C_PRINT(...)   do { if (!gCliMute) Serial.print(__VA_ARGS__); } while (0)
+#define C_PRINTLN(...) do { if (!gCliMute) Serial.println(__VA_ARGS__); } while (0)
+
 /* ============================================================
  * SerialCLI — کتابخانه‌ی تمیز کنسول سریال
  * ============================================================

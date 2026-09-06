@@ -1,4 +1,5 @@
 #include "ROS_Interface.h"
+#include "SerialCLI.h"
 #include "Config.h"
 
 // ============================================

@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
   appVersion: ipcRenderer.sendSync("app:get-version") || "",
   serialDriverAvailable: () => ipcRenderer.invoke("serialport:available"),
+  portHolders: (p) => ipcRenderer.invoke("port:holders", p),
   ipcSerial: {
     list: () => ipcRenderer.invoke("serialport:list"),
     open: (portPath, baud) => ipcRenderer.invoke("serialport:open", portPath, baud),

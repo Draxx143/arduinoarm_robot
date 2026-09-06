@@ -1,4 +1,5 @@
 #include "Macro.h"
+#include "SerialCLI.h"
 
 Macro::Macro() {
     _pickSet = false;
@@ -30,7 +31,7 @@ void Macro::executePlace() {
 }
 
 void Macro::executeHome() {
-    Serial.println(">> Executing HOME macro");
+    C_PRINTLN(">> Executing HOME macro");
 }
 
 bool Macro::isPickSet() { return _pickSet; }

@@ -1,4 +1,5 @@
 #include "PositionStore.h"
+#include "SerialCLI.h"
 
 PositionStore::PositionStore() {
     for (int i = 0; i < MAX_POSITIONS; i++) {
@@ -26,20 +27,20 @@ bool PositionStore::save(uint8_t slot, const int32_t positions[], const char* na
         snprintf(_positions[slot].name, 16, "Pos%d", slot);
     }
     
-    Serial.print(">> Position saved in slot ");
-    Serial.print(slot);
-    Serial.print(" as '");
-    Serial.print(_positions[slot].name);
-    Serial.println("'");
+    C_PRINT(">> Position saved in slot ");
+    C_PRINT(slot);
+    C_PRINT(" as '");
+    C_PRINT(_positions[slot].name);
+    C_PRINTLN("'");
     
     return true;
 }
 
 bool PositionStore::load(uint8_t slot, int32_t positions[]) {
     if (slot >= MAX_POSITIONS || !_positions[slot].saved) {
-        Serial.print("!! Slot ");
-        Serial.print(slot);
-        Serial.println(" is empty");
+        C_PRINT("!! Slot ");
+        C_PRINT(slot);
+        C_PRINTLN(" is empty");
         return false;
     }
     
@@ -47,11 +48,11 @@ bool PositionStore::load(uint8_t slot, int32_t positions[]) {
         positions[i] = _positions[slot].positions[i];
     }
     
-    Serial.print(">> Loaded position from slot ");
-    Serial.print(slot);
-    Serial.print(" ('");
-    Serial.print(_positions[slot].name);
-    Serial.println("')");
+    C_PRINT(">> Loaded position from slot ");
+    C_PRINT(slot);
+    C_PRINT(" ('");
+    C_PRINT(_positions[slot].name);
+    C_PRINTLN("')");
     
     return true;
 }
@@ -63,19 +64,19 @@ bool PositionStore::clear(uint8_t slot) {
 }
 
 void PositionStore::list() {
-    Serial.println(">> Saved positions:");
+    C_PRINTLN(">> Saved positions:");
     int count = 0;
     for (int i = 0; i < MAX_POSITIONS; i++) {
         if (_positions[i].saved) {
-            Serial.print("  Slot ");
-            Serial.print(i);
-            Serial.print(": ");
-            Serial.println(_positions[i].name);
+            C_PRINT("  Slot ");
+            C_PRINT(i);
+            C_PRINT(": ");
+            C_PRINTLN(_positions[i].name);
             count++;
         }
     }
     if (count == 0) {
-        Serial.println("  (no saved positions)");
+        C_PRINTLN("  (no saved positions)");
     }
 }
 

@@ -1,5 +1,7 @@
 #include "SerialCLI.h"
 
+bool gCliMute = false;   // ack ON = سکوت کامل برد
+
 void SerialCLI::begin(unsigned long baud, DispatchFn dispatch) {
     _dispatch = dispatch;
     _buf.reserve(120);
@@ -10,6 +12,7 @@ void SerialCLI::begin(unsigned long baud, DispatchFn dispatch) {
  * و حالت OFF یعنی تاییدیه‌ها فعال‌اند. پیش‌فرض بعد از بوت: OFF (تاییدیه روشن) */
 void SerialCLI::ack(bool on) {
     _ack = on;
+    gCliMute = on;
     Serial.println(on ? ">> Ack mode ON - board is SILENT (no serial chatter)"
                       : ">> Ack mode OFF - confirmations enabled");
 }

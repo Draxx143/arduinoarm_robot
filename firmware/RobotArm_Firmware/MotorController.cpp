@@ -1,4 +1,5 @@
 #include "MotorController.h"
+#include "SerialCLI.h"
 #include <Arduino.h>
 
 // Global instance for timer interrupt
@@ -144,9 +145,9 @@ bool MotorController::startHoming() {
     
     #if DEBUG_SERIAL
     if (!started) {
-        Serial.print("!! Axis ");
-        Serial.print(_homingOrder[0] + 1);
-        Serial.println(" refused to start homing (already _homing or _moving)");
+        C_PRINT("!! Axis ");
+        C_PRINT(_homingOrder[0] + 1);
+        C_PRINTLN(" refused to start homing (already _homing or _moving)");
     }
     #endif
     
@@ -168,12 +169,12 @@ bool MotorController::startHomingAxis(uint8_t axis) {
     
     #if DEBUG_SERIAL
     if (!started) {
-        Serial.print("!! Axis ");
-        Serial.print(axis + 1);
-        Serial.println(" refused to start homing");
+        C_PRINT("!! Axis ");
+        C_PRINT(axis + 1);
+        C_PRINTLN(" refused to start homing");
     } else {
-        Serial.print(">> Homing axis ");
-        Serial.println(axis + 1);
+        C_PRINT(">> Homing axis ");
+        C_PRINTLN(axis + 1);
     }
     #endif
     
@@ -182,23 +183,23 @@ bool MotorController::startHomingAxis(uint8_t axis) {
 
 // FIX: برگشت همه محورها از endstop
 void MotorController::backoffAllFromEndstops() {
-    Serial.println(">> Checking endstops and backing off if needed...");
+    C_PRINTLN(">> Checking endstops and backing off if needed...");
     
     for (int i = 0; i < NUM_AXES; i++) {
         if (_axes[i]->getEndstopState() == LOW) {
-            Serial.print("  Axis ");
-            Serial.print(i + 1);
-            Serial.print(": endstop ACTIVE, backing off...");
+            C_PRINT("  Axis ");
+            C_PRINT(i + 1);
+            C_PRINT(": endstop ACTIVE, backing off...");
             _axes[i]->backoffFromEndstop();
-            Serial.println(" done");
+            C_PRINTLN(" done");
         } else {
-            Serial.print("  Axis ");
-            Serial.print(i + 1);
-            Serial.println(": endstop free");
+            C_PRINT("  Axis ");
+            C_PRINT(i + 1);
+            C_PRINTLN(": endstop free");
         }
     }
     
-    Serial.println(">> Endstop check complete");
+    C_PRINTLN(">> Endstop check complete");
 }
 
 // FIX: هوم هوشمند - اول عقب‌نشینی، بعد هوم
@@ -219,9 +220,9 @@ void MotorController::smartHoming() {
     
     #if DEBUG_SERIAL
     if (!started) {
-        Serial.print("!! Axis ");
-        Serial.print(_homingOrder[0] + 1);
-        Serial.println(" refused to start homing");
+        C_PRINT("!! Axis ");
+        C_PRINT(_homingOrder[0] + 1);
+        C_PRINTLN(" refused to start homing");
     }
     #endif
 }
@@ -233,16 +234,16 @@ void MotorController::smartHomingAxis(uint8_t axis) {
     
     enableAllMotors();
     
-    Serial.print(">> Smart homing axis ");
-    Serial.println(axis + 1);
+    C_PRINT(">> Smart homing axis ");
+    C_PRINTLN(axis + 1);
     
     // بررسی endstop
     if (_axes[axis]->getEndstopState() == LOW) {
-        Serial.print("  Endstop ACTIVE, backing off...");
+        C_PRINT("  Endstop ACTIVE, backing off...");
         _axes[axis]->backoffFromEndstop();
-        Serial.println(" done");
+        C_PRINTLN(" done");
     } else {
-        Serial.println("  Endstop free");
+        C_PRINTLN("  Endstop free");
     }
     
     // شروع هوم
@@ -254,9 +255,9 @@ void MotorController::smartHomingAxis(uint8_t axis) {
     
     #if DEBUG_SERIAL
     if (!started) {
-        Serial.print("!! Axis ");
-        Serial.print(axis + 1);
-        Serial.println(" refused to start homing");
+        C_PRINT("!! Axis ");
+        C_PRINT(axis + 1);
+        C_PRINTLN(" refused to start homing");
     }
     #endif
 }
@@ -265,9 +266,9 @@ void MotorController::smartHomingAxis(uint8_t axis) {
 void MotorController::enableAxis(uint8_t axis) {
     if (axis < NUM_AXES) {
         _axes[axis]->enableMotor();
-        Serial.print(">> Axis ");
-        Serial.print(axis + 1);
-        Serial.println(" enabled");
+        C_PRINT(">> Axis ");
+        C_PRINT(axis + 1);
+        C_PRINTLN(" enabled");
     }
 }
 
@@ -275,9 +276,9 @@ void MotorController::enableAxis(uint8_t axis) {
 void MotorController::disableAxis(uint8_t axis) {
     if (axis < NUM_AXES) {
         _axes[axis]->disableMotor();
-        Serial.print(">> Axis ");
-        Serial.print(axis + 1);
-        Serial.println(" disabled");
+        C_PRINT(">> Axis ");
+        C_PRINT(axis + 1);
+        C_PRINTLN(" disabled");
     }
 }
 
@@ -295,7 +296,7 @@ void MotorController::processHoming() {
         // هیچ محوری در حال هوم شدن نیست
         _homingInProgress = false;
         _currentHomingAxis = 0;
-        Serial.println(">> Single axis homing complete!");
+        C_PRINTLN(">> Single axis homing complete!");
         return;
     }
     
@@ -309,7 +310,7 @@ void MotorController::processHoming() {
             _homingInProgress = false;
             _allHomed = true;
             if (DEBUG_SERIAL) {
-                Serial.println("All axes homed successfully!");
+                C_PRINTLN("All axes homed successfully!");
             }
             return;
         }
@@ -355,15 +356,15 @@ void MotorController::moveAllAxes(const int32_t positions[]) {
         int32_t softMax = _axes[i]->getSoftMax();
         
         if (positions[i] < softMin || positions[i] > softMax) {
-            Serial.print("!! moveAllAxes: Axis ");
-            Serial.print(i + 1);
-            Serial.print(" out of range: ");
-            Serial.print(positions[i]);
-            Serial.print(" (allowed: ");
-            Serial.print(softMin);
-            Serial.print(" to ");
-            Serial.print(softMax);
-            Serial.println("). Command REJECTED.");
+            C_PRINT("!! moveAllAxes: Axis ");
+            C_PRINT(i + 1);
+            C_PRINT(" out of range: ");
+            C_PRINT(positions[i]);
+            C_PRINT(" (allowed: ");
+            C_PRINT(softMin);
+            C_PRINT(" to ");
+            C_PRINT(softMax);
+            C_PRINTLN("). Command REJECTED.");
             allValid = false;
             break;
         }
