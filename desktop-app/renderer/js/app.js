@@ -537,6 +537,14 @@ function send(text) {
 
 function rxLine(line) {
   addConsole("rx", line);
+  /* firmware complaints ("!! ...") must be impossible to miss */
+  if (/^!!/.test(line.trim())) {
+    const now = Date.now();
+    if (now - (S._lastFwErrAt || 0) > 2500) {
+      S._lastFwErrAt = now;
+      toast(line.trim(), "err", 6000);
+    }
+  }
   const ev = Parse.line(line);
 
   if (line.trim().startsWith("=== System Status")) {
@@ -557,6 +565,22 @@ function rxLine(line) {
   }
   if (/^>(?!>)/.test(line.trim())) return; /* firmware echo */
   if (!ev) return;
+
+  /* after the periodic status block lands, nudge if the board cannot move */
+  if (line.trim() === "======================" ) {
+    setTimeout(() => {
+      if (S.mode !== "serial") return;
+      const noneHomed = S.axes.every((a) => !a.homed);
+      const noneEnabled = S.axes.every((a) => a.enabled === false);
+      const hint = $("portHint");
+      if (!hint) return;
+      if (noneHomed) {
+        hint.innerHTML = "<b>Board rebooted on connect</b> (normal for Mega/CH340) — axes are disabled &amp; not homed, so moves are ignored. Press <b>⌂ Home All</b> on the Motion tab, then move.";
+      } else if (noneEnabled) {
+        hint.innerHTML = "Axes are <b>disabled</b> — press <b>Enable</b> (chip or Motion tab) before moving.";
+      }
+    }, 60);
+  }
 
   switch (ev.type) {
     case "axis": {

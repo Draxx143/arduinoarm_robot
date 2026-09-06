@@ -624,6 +624,10 @@ void handleMoveCommand(String command) {
     int axis = command.substring(firstSpace + 1, secondSpace).toInt() - 1;
     int32_t steps = command.substring(secondSpace + 1).toInt();
     if (axis >= 0 && axis < NUM_AXES) {
+        if (!motorController->getAxis(axis)->isEnabled()) {
+            Serial.print("!! Axis "); Serial.print(axis + 1);
+            Serial.println(" is DISABLED — send 'enable' or run 'home' first");
+        }
         motorController->moveTo(axis, steps);
         Serial.print("Moving axis "); Serial.print(axis + 1);
         Serial.print(" to "); Serial.print(steps); Serial.println(" steps");
@@ -652,6 +656,12 @@ void handleDegCommand(String command) {
         Serial.print(AXIS_MAX_DEG[axis], 1);
         Serial.println("°)");
         return;
+    }
+    
+    // FIX: قبلاً محورِ غیرفعال بی‌صدا رد می‌شد — حالا صریح می‌گوییم
+    if (!motorController->getAxis(axis)->isEnabled()) {
+        Serial.print("!! Axis "); Serial.print(axis + 1);
+        Serial.println(" is DISABLED — send 'enable' or run 'home' first");
     }
     
     int32_t steps = (int32_t)(degrees * DEG_TO_STEPS[axis]);
@@ -696,6 +706,14 @@ void handleMoveAllCommand(String command) {
     }
     
     for (int i = currentIdx; i < NUM_AXES; i++) steps[i] = 0;
+    
+    bool anyEnabled = false;
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (motorController->getAxis(i)->isEnabled()) { anyEnabled = true; break; }
+    }
+    if (!anyEnabled) {
+        Serial.println("!! All motors DISABLED — send 'enable' or run 'home' first");
+    }
     
     motorController->moveAllAxes(steps);
     Serial.print("Moving all: ");
