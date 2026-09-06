@@ -238,13 +238,22 @@ function portLabelFor(info) {
   return S._portNames[portKeyFromInfo(info)] || friendlyUsb(info) || "Serial port";
 }
 
+let _scanWatchdog = null;
+const isBestMatch = (name) => /Mega|Arduino|CH340|CH341|CP210|FTDI/i.test(name || "");
+
 /* rows shown while the chooser reports the system port list */
 function renderScanRows(ports) {
   const rows = $("portRows");
   if (!rows) return;
+  if (_scanWatchdog) { clearTimeout(_scanWatchdog); _scanWatchdog = null; }
   rows.innerHTML = "";
   if (!ports) {
     rows.innerHTML = `<div class="p-none">&#128269; Searching for serial devices&hellip;</div>`;
+    /* if the system list never arrives, fall back to the checklist */
+    _scanWatchdog = setTimeout(() => {
+      if (!S._scanActive) return;
+      rows.innerHTML = `<div class="p-none">No serial device appeared within 12 s &mdash; run through this checklist:</div>` + PORT_TROUBLE_HTML;
+    }, 12000);
     return;
   }
   ports.forEach((p) => {
@@ -258,9 +267,11 @@ function renderScanRows(ports) {
       const pid = p.usbProductId ? hex4(p.usbProductId) : null;
       const row = document.createElement("div");
       row.className = "port-row";
+      const best = isBestMatch(friendlyUsb(p) || p.displayName);
       row.innerHTML = `<span class="p-dot"></span>
         <div class="p-info"><span class="p-name">${escH(p.portName || p.portId)}</span>
-        <span class="p-meta">${escH(friendlyUsb(p) || p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>`;
+        <span class="p-meta">${escH(friendlyUsb(p) || p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>
+        ${best ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
       const b = document.createElement("button");
       b.className = "btn small";
       b.textContent = "Connect";
@@ -325,7 +336,8 @@ async function renderConnCard() {
       row.className = "port-row";
       row.innerHTML = `<span class="p-dot"></span>
         <div class="p-info"><span class="p-name">${escH(label)}</span>
-        <span class="p-meta">ready${info.usbVendorId ? " &middot; USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " &middot; <b>last used</b>" : ""}</span></div>`;
+        <span class="p-meta">ready${info.usbVendorId ? " &middot; USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " &middot; <b>last used</b>" : ""}</span></div>
+        ${isBestMatch(label) ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
       const b = document.createElement("button");
       b.className = "btn small";
       b.textContent = "Connect";
@@ -389,6 +401,7 @@ async function scanPorts() {
     }
   } finally {
     S._scanActive = false;
+    if (_scanWatchdog) { clearTimeout(_scanWatchdog); _scanWatchdog = null; }
     renderConnCard();
   }
 }

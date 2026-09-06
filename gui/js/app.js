@@ -131,6 +131,7 @@ function portLabelFor(info) {
   return USB_NAMES[key] ||
     (info && info.usbVendorId ? "دستگاه USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "پورت سریال");
 }
+const isBestMatch = (name) => /مگا|آردوینو|CH340|CH341|CP210|FTDI/i.test(name || "");
 const PORT_TROUBLE_HTML =
   `<div class="p-none" style="line-height:1.9">&bull; کابل <b>داده</b> استفاده کن نه کابل فقط‌شارژ — یک سوکت دیگر هم امتحان کن
    <br>&bull; در ترمینال: <code dir="ltr">lsusb | grep -i 2341</code> و <code dir="ltr">ls /dev/ttyACM* /dev/ttyUSB*</code>
@@ -191,7 +192,8 @@ async function renderConnCard() {
       row.className = "port-row";
       row.innerHTML = `<span class="p-dot"></span>
         <div class="p-info"><span class="p-name">${escH(label)}</span>
-        <span class="p-meta">آماده${info.usbVendorId ? " · USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " · <b>آخرین پورت</b>" : ""}</span></div>`;
+        <span class="p-meta">آماده${info.usbVendorId ? " · USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " · <b>آخرین پورت</b>" : ""}</span></div>
+        ${isBestMatch(label) ? '<span class="p-badge">پیشنهادی</span>' : ""}`;
       const b = document.createElement("button");
       b.className = "btn small";
       b.textContent = "اتصال";
