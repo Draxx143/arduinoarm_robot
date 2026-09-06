@@ -115,10 +115,34 @@ const hex4 = (v) => (v || 0).toString(16).padStart(4, "0");
 const escH = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+/* بردها و مبدل‌های رایج — به‌جای VID:PID خام نمایش داده می‌شوند */
+const USB_NAMES = {
+  "2341:0042": "آردوینو مگا 2560",
+  "2341:0010": "آردوینو مگا (ADK)",
+  "2341:0043": "آردوینو UNO",
+  "2341:0044": "آردوینو میکرو",
+  "1a86:7523": "مبدل CH340 (برد کپی)",
+  "1a86:5523": "مبدل CH341",
+  "10c4:ea60": "مبدل CP210x",
+  "0403:6001": "مبدل FTDI FT232",
+};
 function portLabelFor(info) {
-  return info && info.usbVendorId
-    ? "دستگاه USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId)
-    : "پورت سریال";
+  const key = hex4(info && info.usbVendorId) + ":" + hex4(info && info.usbProductId);
+  return USB_NAMES[key] ||
+    (info && info.usbVendorId ? "دستگاه USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "پورت سریال");
+}
+const PORT_TROUBLE_HTML =
+  `<div class="p-none" style="line-height:1.9">&bull; کابل <b>داده</b> استفاده کن نه کابل فقط‌شارژ — یک سوکت دیگر هم امتحان کن
+   <br>&bull; در ترمینال: <code dir="ltr">lsusb | grep -i 2341</code> و <code dir="ltr">ls /dev/ttyACM* /dev/ttyUSB*</code>
+   <br>&bull; رفع دسترسی: <code dir="ltr">sudo usermod -aG dialout $USER</code> و بعد <b>خروج و ورود دوباره</b>
+   <br>&bull; اگر dmesg گفت <i>brltty</i>: <code dir="ltr">sudo apt purge brltty</code> و دوباره وصل کن</div>`;
+function connErrorHint(e) {
+  const m = e && e.message ? e.message : String(e);
+  if (/Permission|Access denie|Unauthorized|cannot open/i.test(m))
+    return "لینوکس اجازه نداد — دستور `sudo usermod -aG dialout $USER` را بزن، «خروج و ورود» کن و دوباره وصل شو.";
+  if (/No such device|disconnected|not configured|unplugged|break/i.test(m))
+    return "برد قطع شد — کابل USB را جدا و دوباره وصل کن و اسکن بزن.";
+  return null;
 }
 
 async function renderConnCard() {
@@ -156,7 +180,7 @@ async function renderConnCard() {
   try { granted = await S.serial.previouslyGranted(); } catch (e) {}
   rows.innerHTML = "";
   if (!granted.length) {
-    rows.innerHTML = `<div class="p-none">هنوز پورتی شناخته نشده — آردوینو را وصل کن و «اسکن پورت‌ها» را بزن.</div>`;
+    rows.innerHTML = `<div class="p-none">هنوز پورتی شناخته نشده — آردوینو را وصل کن و «اسکن پورت‌ها» را بزن.</div>` + PORT_TROUBLE_HTML;
   } else {
     granted.forEach((port) => {
       let info = {};
@@ -189,9 +213,11 @@ async function connectDirect(port, label) {
     addConsole("sys", `[SYS] باز کردن ${label || "پورت"} @ ${baud} …`);
     await S.serial.connectPort(port, baud, label || null);
   } catch (e) {
-    const msg = "اتصال ناموفق: " + e.message;
+    const hint = connErrorHint(e);
+    const msg = hint || "اتصال ناموفق: " + (e && e.message);
     addConsole("err", "!! " + msg);
-    toast(msg, "err");
+    $("portHint").textContent = msg;
+    toast(msg, "err", 6000);
     renderConnCard();
   }
 }
@@ -412,11 +438,19 @@ async function toggleSerial() {
     await S.serial.connect(baud);
     Store.set("prefer_hw", "1");
   } catch (e) {
-    const msg = /No port selected|select/i.test(e.message)
-      ? "انتخاب پورت لغو شد"
-      : "اتصال ناموفق: " + e.message;
-    addConsole("err", "!! " + msg);
-    toast(msg, "err");
+    if (/No port selected|select/i.test(e.message)) {
+      addConsole("sys", "[SYS] انتخاب پورت لغو شد");
+      const hint = $("portHint");
+      if (hint) hint.textContent = "چوزر بسته شد. اگر پورتت در لیست نبود، چک‌لیست پایین را اجرا کن: " ;
+      toast("اگر پورت در چوزر نبود: کابل داده، دسترسی dialout، و حذف brltty را چک کن", "warn", 7000);
+    } else {
+      const hint = connErrorHint(e);
+      const msg = hint || "اتصال ناموفق: " + e.message;
+      addConsole("err", "!! " + msg);
+      const hint2 = $("portHint");
+      if (hint2) hint2.textContent = msg;
+      toast(msg, "err", 6000);
+    }
   }
 }
 

@@ -198,6 +198,35 @@ window.addEventListener("arm-choose-serial-port", (e) => {
 const hex4 = (v) => (v || 0).toString(16).padStart(4, "0");
 const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* common boards & USB-serial chips — shown instead of raw VID:PID */
+const USB_NAMES = {
+  "2341:0042": "Arduino Mega 2560",
+  "2341:0010": "Arduino Mega (ADK)",
+  "2341:0043": "Arduino UNO",
+  "2341:0044": "Arduino Micro",
+  "1a86:7523": "CH340 USB-Serial (clone board)",
+  "1a86:5523": "CH341 USB-Serial",
+  "10c4:ea60": "CP210x USB-Serial",
+  "0403:6001": "FTDI FT232 USB-Serial",
+};
+function friendlyUsb(info) {
+  const key = portKeyFromInfo(info);
+  return USB_NAMES[key] || (info && info.usbVendorId ? "USB device " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : null);
+}
+const PORT_TROUBLE_HTML =
+  `<div class="p-none" style="line-height:1.8">&bull; use a <b>data</b> USB cable (not charge-only), try another socket
+   <br>&bull; terminal check: <code>lsusb | grep -i 2341</code> and <code>ls /dev/ttyACM* /dev/ttyUSB*</code>
+   <br>&bull; permission fix: <code>sudo usermod -aG dialout $USER</code> then <b>log out &amp; back in</b>
+   <br>&bull; if dmesg mentions <i>brltty</i>: <code>sudo apt purge brltty</code> and replug</div>`;
+function connErrorHint(e) {
+  const m = e && e.message ? e.message : String(e);
+  if (/Permission|Access denie|Unauthorized|cannot open/i.test(m))
+    return "Linux refused the port — run `sudo usermod -aG dialout $USER`, LOG OUT & BACK IN, then connect again.";
+  if (/No such device|disconnected|not configured|unplugged|break/i.test(m))
+    return "The board dropped out — replug the USB cable and scan again.";
+  return null;
+}
 S._scanActive = false;
 S._portNames = {};   /* vid:pid -> human-readable port name from the last scan */
 
@@ -206,8 +235,7 @@ function portKeyFromInfo(info) {
   return hex4(info.usbVendorId) + ":" + hex4(info.usbProductId);
 }
 function portLabelFor(info) {
-  return S._portNames[portKeyFromInfo(info)] ||
-    (info && info.usbVendorId ? "USB device " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "Serial port");
+  return S._portNames[portKeyFromInfo(info)] || friendlyUsb(info) || "Serial port";
 }
 
 /* rows shown while the chooser reports the system port list */
@@ -223,7 +251,7 @@ function renderScanRows(ports) {
     S._portNames[portKeyFromInfo(p)] = p.portName || p.displayName || p.portId;
   });
   if (!ports.length) {
-    rows.innerHTML = `<div class="p-none">No serial devices found &mdash; plug the Arduino in and scan again.</div>`;
+    rows.innerHTML = `<div class="p-none">No serial devices found &mdash; run through this checklist:</div>` + PORT_TROUBLE_HTML;
   } else {
     ports.forEach((p) => {
       const vid = p.usbVendorId ? hex4(p.usbVendorId) : null;
@@ -232,7 +260,7 @@ function renderScanRows(ports) {
       row.className = "port-row";
       row.innerHTML = `<span class="p-dot"></span>
         <div class="p-info"><span class="p-name">${escH(p.portName || p.portId)}</span>
-        <span class="p-meta">${escH(p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>`;
+        <span class="p-meta">${escH(friendlyUsb(p) || p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>`;
       const b = document.createElement("button");
       b.className = "btn small";
       b.textContent = "Connect";
@@ -319,9 +347,11 @@ async function connectDirect(port, label) {
     addConsole("sys", `[SYS] opening ${label || "port"} @ ${baud} baud…`);
     await S.serial.connectPort(port, baud, label || null);
   } catch (e) {
-    const msg = "Connection failed: " + e.message;
+    const hint = connErrorHint(e);
+    const msg = hint || "Connection failed: " + (e && e.message);
     addConsole("err", "!! " + msg);
-    toast(msg, "err");
+    $("portHint").textContent = msg;
+    toast(msg, "err", 6000);
     renderConnCard();
   }
 }
@@ -347,11 +377,16 @@ async function scanPorts() {
     await S.serial.connect(baud);
     Store.set("prefer_hw", "1");
   } catch (e) {
-    const msg = e.message === "PORT_CANCELLED"
-      ? "Scan finished — no port picked"
-      : "Scan failed: " + e.message;
-    addConsole("sys", "[SYS] " + msg);
-    $("portHint").textContent = msg + ".";
+    if (e.message === "PORT_CANCELLED") {
+      addConsole("sys", "[SYS] Scan finished — no port picked");
+      $("portHint").textContent = "Scan finished — no port picked. If the list was empty, follow the checklist above.";
+    } else {
+      const hint = connErrorHint(e);
+      const msg = hint || "Scan failed: " + e.message;
+      addConsole("err", "!! " + msg);
+      $("portHint").textContent = msg;
+      toast(msg, "err", 6000);
+    }
   } finally {
     S._scanActive = false;
     renderConnCard();
