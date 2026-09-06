@@ -1125,12 +1125,15 @@ function calcIKLocal(move) {
     box.style.color = "#ff9b9e";
     return null;
   }
+  /* FIX: همان چیزی که نمایش داده می‌شود = همان چیزی که اجرا می‌شود */
+  const clamped = res.map((a, i) => Math.max(FW.AXES[i].min, Math.min(FW.AXES[i].max, a)));
+  const wasClamped = clamped.some((a, i) => a !== res[i]);
   box.style.color = "#7ce7ef";
-  box.textContent = "IK ⇒ " + res.map((a) => a.toFixed(1) + "°").join(" | ");
+  box.textContent = "IK ⇒ " + clamped.map((a) => a.toFixed(1) + "°").join(" | ") + (wasClamped ? "  (clamped)" : "");
   if (move) {
-    S.targets = res.slice();
+    S.targets = clamped.slice();
   }
-  return res;
+  return clamped;
 }
 
 function calcFKLocal() {

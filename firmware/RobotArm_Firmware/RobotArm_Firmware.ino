@@ -97,6 +97,7 @@ void teachMoveCallback(const int32_t positions[]) {
 
 void setup() {
     Serial.begin(115200);
+    Serial.setTimeout(8);   // FIX: readStringUntil با تایم‌اوت پیش‌فرض 1000ms حلقه را فریز می‌کرد
     delay(500);
     Serial.println("======================================");
     Serial.println("5 DOF Robot Arm - TEST MODE (No ROS)");
@@ -471,6 +472,14 @@ void handleSerialCommands() {
                 
                 float angles[NUM_AXES];
                 if (kinematics.solveIK(x, y, z, angles)) {
+                    // FIX: اول محدودسازی، بعد چاپ — چیزی که چاپ می‌شود
+                    // دقیقاً همان چیزی است که به موتورها می‌رود
+                    bool clamped = false;
+                    for (int i = 0; i < NUM_AXES; i++) {
+                        float c = constrain(angles[i], AXIS_MIN_DEG[i], AXIS_MAX_DEG[i]);
+                        if (c != angles[i]) { angles[i] = c; clamped = true; }
+                    }
+                    
                     Serial.print(">> IK solution: ");
                     for (int i = 0; i < NUM_AXES; i++) {
                         Serial.print(angles[i], 1);
@@ -478,17 +487,8 @@ void handleSerialCommands() {
                         if (i < NUM_AXES - 1) Serial.print(", ");
                     }
                     Serial.println();
-                    
-                    // FIX: محدودسازی زوایا به محدوده مجاز هر محور
-                    // (قبلاً زاویه خارج از محدوده مستقیم می‌رفت و moveAllAxes
-                    // آن محور را رد می‌کرد → حرکت ناقص و ناهماهنگ)
-                    bool clamped = false;
-                    for (int i = 0; i < NUM_AXES; i++) {
-                        float c = constrain(angles[i], AXIS_MIN_DEG[i], AXIS_MAX_DEG[i]);
-                        if (c != angles[i]) { angles[i] = c; clamped = true; }
-                    }
                     if (clamped) {
-                        Serial.println(">> Angles clamped to joint limits");
+                        Serial.println(">> NOTE: angles clamped to joint limits - real tool position is offset");
                     }
                     
                     // تبدیل به steps و حرکت
