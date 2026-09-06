@@ -1150,7 +1150,9 @@ function init() {
   /* ---------- اتصال کارت انتخاب پورت ---------- */
   $("btnAck").onclick = () => {
     if (S.mode === "off") { toast("اول به آردوینو وصل شو یا شبیه‌ساز را روشن کن", "warn"); return; }
-    send($("btnAck").classList.contains("on") ? "ack off" : "ack on");
+    const on = !$("btnAck").classList.contains("on");
+    setAckUI(on); /* بازخورد فوری — جواب برد دوباره همگامش می‌کند */
+    send(on ? "ack on" : "ack off");
   };
   $("btnScanPorts").onclick = toggleSerial;   /* در مرورگر، اسکن همان چوزر native است */
   $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };

@@ -551,21 +551,28 @@ function rxLine(line) {
   if (t.startsWith(">> Ack mode ON")) setAckUI(true);
   else if (t.startsWith(">> Ack mode OFF")) setAckUI(false);
 
-  if (t.startsWith("=== System Status")) {
+  /* ---- status block: loose matching + hard caps (suppression can never stick) ---- */
+  const RE_STATUS_HEADER = /^=*\s*System Status/;
+  const RE_STATUS_FOOTER = /^={6,}$/;   /* any long '=' run closes the block */
+  const RE_BLOCK_BREAKER = /^(Moving |>> |!!|Format:|Invalid|Unknown|Saved |Loaded |Slot )/;
+
+  if (RE_STATUS_HEADER.test(t)) {
     S.inStatus = true;
     /* a poll-triggered block is parsed but not printed */
     S._pollBlock = S._statusFromPoll === true;
     S._statusFromPoll = false;
+    S._blockLines = 0;
     if (!S._pollBlock) addConsole("rx", line);
     S.tmpDemo = null;
     S.tmpSleep = false;
     S.pendingSlots = null;
     return;
   }
-  if (t === "======================" && S.inStatus) {
+  if (S.inStatus && RE_STATUS_FOOTER.test(t)) {
     S.inStatus = false;
-    if (!S._pollBlock) addConsole("rx", line);
+    const show = !S._pollBlock;
     S._pollBlock = false;
+    if (show) addConsole("rx", line);
     S.demo = S.tmpDemo || { running: false, step: 0, total: FW.DEMO_MOVES.length };
     S.sleeping = S.tmpSleep;
     renderStats();
@@ -573,8 +580,19 @@ function rxLine(line) {
     renderSlots();
     return;
   }
-  if (S.inStatus && S._pollBlock) { /* parsing only — no console spam */ }
-  else addConsole("rx", line);
+  if (S.inStatus && S._pollBlock) {
+    S._blockLines = (S._blockLines || 0) + 1;
+    if (S._blockLines > 30 || RE_BLOCK_BREAKER.test(t)) {
+      /* safety valve: a real reply line or an over-long block ends suppression */
+      S.inStatus = false;
+      S._pollBlock = false;
+      addConsole("rx", line);
+      return;
+    }
+    /* parsing only — no console spam */
+  } else {
+    addConsole("rx", line);
+  }
   if (/^>(?!>)/.test(t)) return; /* firmware echo */
   const ev = Parse.line(line);
   if (!ev) return;
@@ -796,6 +814,8 @@ function bindLinkEvents(link) {
     setStateUI("INIT");
     try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
     setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
+    S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
+    S._connAt = Date.now(); S._rxWarned = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
   };
@@ -1353,6 +1373,8 @@ function buildHelp() {
  * Helpers
  * ============================================================ */
 function updateLinkStats() {
+  const rm = $("rxMeter");
+  if (rm) rm.textContent = S.mode === "serial" ? "RX " + Fmt.bytes(S.serial.rxCount) : "RX —";
   if (S.mode === "serial") {
     $("txCount").textContent = Fmt.bytes(S.serial.txCount);
     $("rxCount").textContent = Fmt.bytes(S.serial.rxCount);
@@ -1361,6 +1383,14 @@ function updateLinkStats() {
       led.classList.remove("blink"); void led.offsetWidth; led.classList.add("blink");
       updateLinkStats._lastRx = S.serial.rxCount;
     }
+    /* zero data from the board? say it loudly, once */
+    if (S.serial.rxCount === 0 && S._connAt && Date.now() - S._connAt > 6000 && !S._rxWarned) {
+      S._rxWarned = true;
+      const hint = $("portHint");
+      if (hint) hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B after 6 s) &mdash; close any other Serial Monitor holding the port, check baud 115200, then Disconnect &amp; Connect again.";
+      addConsole("warn", "!! no RX data 6 s after connect — is another serial monitor holding the port?");
+    }
+    if (S.serial.rxCount > 0) S._rxWarned = false;
   } else {
     $("txCount").textContent = "—";
     $("rxCount").textContent = "—";
@@ -1618,7 +1648,9 @@ function init() {
   /* ---------- Connection card wiring ---------- */
   $("btnAck").onclick = () => {
     if (S.mode === "off") { toast("Connect to the Arduino (or start the simulator) first", "warn"); return; }
-    send($("btnAck").classList.contains("on") ? "ack off" : "ack on");
+    const on = !$("btnAck").classList.contains("on");
+    setAckUI(on); /* instant feedback — the board's reply re-syncs it */
+    send(on ? "ack on" : "ack off");
   };
   $("btnScanPorts").onclick = scanPorts;
   $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };

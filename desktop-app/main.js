@@ -159,11 +159,19 @@ function createWindow() {
     sp.open((err) => {
       if (err) return resolve({ err: String(err.message || err) });
       const id = ++serialSeq;
-      openSerialPorts.set(id, sp);
-      sp.on("data", (buf) => {
-        if (win && !win.isDestroyed()) win.webContents.send("serialport:data", buf.toString("base64"));
-      });
+      /* RX pump: explicit poll every 15 ms — immune to Node-stream
+       * flowing/paused-mode differences across Electron versions. */
+      const pump = setInterval(() => {
+        try {
+          let chunk;
+          while ((chunk = sp.read()) !== null) {
+            if (win && !win.isDestroyed()) win.webContents.send("serialport:data", chunk.toString("base64"));
+          }
+        } catch (er2) {}
+      }, 15);
+      openSerialPorts.set(id, { sp, pump });
       sp.on("close", () => {
+        clearInterval(pump);
         openSerialPorts.delete(id);
         if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id);
       });
@@ -174,14 +182,15 @@ function createWindow() {
     });
   }));
   ipcMain.handle("serialport:write", (e, id, text) => {
-    const sp = openSerialPorts.get(Number(id));
-    if (!sp) return Promise.resolve({ err: "port not open" });
-    return new Promise((resolve) => sp.write(String(text), (err) => resolve(err ? { err: String(err.message || err) } : {})));
+    const rec = openSerialPorts.get(Number(id));
+    if (!rec) return Promise.resolve({ err: "port not open" });
+    return new Promise((resolve) => rec.sp.write(String(text), (err) => resolve(err ? { err: String(err.message || err) } : {})));
   });
   ipcMain.handle("serialport:close", (e, id) => {
-    const sp = openSerialPorts.get(Number(id));
-    if (!sp) return Promise.resolve({});
-    return new Promise((resolve) => sp.close((err) => resolve(err ? { err: String(err.message || err) } : {})));
+    const rec = openSerialPorts.get(Number(id));
+    if (!rec) return Promise.resolve({});
+    clearInterval(rec.pump);
+    return new Promise((resolve) => rec.sp.close((err) => resolve(err ? { err: String(err.message || err) } : {})));
   });
 
   ipcMain.on("serial:cancel-choose", () => {

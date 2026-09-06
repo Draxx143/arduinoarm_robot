@@ -28,6 +28,7 @@
 #include "Trajectory.h"
 #include "IK.h"
 #include "EnergyManager.h"
+#include "SerialCLI.h"
 
 // Global objects
 MotorController* motorController;
@@ -35,6 +36,7 @@ PositionStore positionStore;
 TimerManager timerManager;
 TeachMode teachMode;
 Logger logger;
+SerialCLI cli;      // کتابخانه‌ی تازه‌ی کنسول سریال (اکو/ACK/خواندن غیرمسدود)
 SpeedProfileManager speedProfile;
 Trajectory trajectory;
 IK kinematics;
@@ -96,8 +98,8 @@ void teachMoveCallback(const int32_t positions[]) {
 }
 
 void setup() {
-    Serial.begin(115200);
-    Serial.setTimeout(8);   // FIX: readStringUntil با تایم‌اوت پیش‌فرض 1000ms حلقه را فریز می‌کرد
+    cli.begin(115200, handleCommand);          // کنسول سریال جدید (بدون تایم‌اوت، غیرمسدود)
+    cli.setLogFn([](const char* c) { logger.log(c); });
     delay(500);
     Serial.println("======================================");
     Serial.println("5 DOF Robot Arm - TEST MODE (No ROS)");
@@ -157,7 +159,7 @@ void onTimerFire(uint8_t axis, int32_t target) {
 void loop() {
     updateSystemState();
     updateHeartbeat();
-    handleSerialCommands();
+    cli.poll();                 // کنسول سریال (خواندن غیرمسدود + ACK)
     executeDemo();
     timerManager.update();      // بررسی تایمرها
     teachMode.update();          // بررسی teach playback
@@ -250,23 +252,11 @@ void updateHeartbeat() {
     }
 }
 
-// FIX/FEATURE: حالت تاییدیه — با 'ack on' برد بعد از هر دستور موفق یک
-// خط «>> ACK: <command> — executed» می‌فرستد (پیش‌فرض: خاموش برای سربار کمتر)
-bool ackMode = false;
-
-void handleSerialCommands() {
-    if (Serial.available() > 0) {
-        String command = Serial.readStringUntil('\n');
-        command.trim();
-        if (command.length() == 0) return;
-        
-        Serial.print("> "); 
-        Serial.println(command);
-        
-        logger.log(command.c_str());
-        
-        bool unknownCmd = false;
-
+/* ============================================================
+ * dispatch دستورات — توسط SerialCLI::poll() صدا زده می‌شود
+ * خروجی: true = شناخته‌شده (در حالت ACK تاییدیه چاپ می‌شود)
+ * ============================================================ */
+bool handleCommand(const String& command) {
         // ==================== Basic Commands ====================
         if (command == "home") {
             Serial.println("Starting smart homing...");
@@ -549,29 +539,11 @@ void handleSerialCommands() {
         else if (command == "autosleep off") {
             energyManager.disableAutoSleep();
         }
-        else if (command == "ack on") {
-            ackMode = true;
-            Serial.println(">> Ack mode ON — every command will be confirmed");
-        }
-        else if (command == "ack off") {
-            ackMode = false;
-            Serial.println(">> Ack mode OFF — commands run silently");
-        }
-        else if (command == "ack") {
-            Serial.println(ackMode ? ">> Ack mode is ON" : ">> Ack mode is OFF");
-        }
         else {
-            unknownCmd = true;
-            Serial.println("Unknown command");
+            return false;   // نامعلوم — پیام را SerialCLI چاپ می‌کند
         }
         
-        // تاییدیه اجرا — فقط در حالت ACK و فقط برای دستورات شناخته‌شده
-        if (ackMode && !unknownCmd) {
-            Serial.print(">> ACK: ");
-            Serial.print(command);
-            Serial.println(" - executed");
-        }
-    }
+        return true;
 }
 
 void startDemo() {
