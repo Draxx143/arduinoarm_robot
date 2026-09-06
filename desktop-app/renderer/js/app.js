@@ -684,12 +684,7 @@ function rxLine(line) {
 function setStateUI(key) {
   S.state = key;
   const st = FW.STATES[key] || FW.STATES.INIT;
-  const badge = $("stateBadge");
-  $("stateLabel").textContent = st.label;
-  badge.querySelector(".dot").style.background = st.color;
-  badge.style.borderColor = st.color + "88";
-  badge.style.color = st.color;
-  badge.classList.toggle("estop", key === "ESTOP");
+  /* state badge pill removed — the header lamps carry the state now */
   $("lampRun").classList.toggle("on", key === "READY" || key === "MOVING");
   $("lampErr").classList.toggle("on", key === "ESTOP" || key === "ERROR");
   renderStats();
@@ -703,10 +698,7 @@ function setMode(mode) {
   renderConnCard();
   const led = $("led");
   led.className = "led" + (mode === "serial" ? " on" : mode === "sim" ? " sim" : "");
-  $("connText").textContent = mode === "serial" ? "LINKED" : mode === "sim" ? "SIMULATING" : "OFFLINE";
-  $("connMode").textContent = mode === "serial"
-    ? (S.serial.transport === "system" ? "System driver @ " + S.serial.baud : "Web Serial @ " + S.serial.baud)
-    : mode === "sim" ? "Firmware simulator" : "—";
+  /* Link Status card removed */
   $("lampCom").classList.toggle("on", mode === "serial" || mode === "sim");
   $("simBanner").classList.toggle("show", mode === "sim");
   $("btnConnect").textContent = mode === "serial" ? "✕ Disconnect" : "⚡ Connect Arduino";
@@ -1360,11 +1352,11 @@ function buildHelp() {
  * Helpers
  * ============================================================ */
 function updateLinkStats() {
-  const rm = $("rxMeter");
-  if (rm) rm.textContent = S.mode === "serial" ? "RX " + Fmt.bytes(S.serial.rxCount) : "RX —";
+  const rm = $("ioMeter");
+  if (rm) rm.textContent = S.mode === "serial"
+    ? "TX " + Fmt.bytes(S.serial.txCount) + " · RX " + Fmt.bytes(S.serial.rxCount)
+    : "TX — · RX —";
   if (S.mode === "serial") {
-    $("txCount").textContent = Fmt.bytes(S.serial.txCount);
-    $("rxCount").textContent = Fmt.bytes(S.serial.rxCount);
     const led = $("led");
     if (S.serial.rxCount !== updateLinkStats._lastRx) {
       led.classList.remove("blink"); void led.offsetWidth; led.classList.add("blink");
@@ -1393,9 +1385,6 @@ function updateLinkStats() {
       }
     }
     if (S.serial.rxCount > 0) S._rxWarned = false;
-  } else {
-    $("txCount").textContent = "—";
-    $("rxCount").textContent = "—";
   }
   renderTimersLocal();
 }
@@ -1438,11 +1427,11 @@ function bindActions() {
   $("btnSim").onclick = () => (S.mode === "sim" ? (stopSim(), toast("Simulator stopped", "info")) : startSim());
   $("selPoll").onchange = restartPoll;
 
-  $("btnEstop").onclick = () => {
+  function doEstop() {
     if (send(Cmd.estop())) { toast("⛔ E-STOP sent", "err"); addFeed("rx-err", "⛔ E-STOP"); }
-  };
+  }
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !$("modalBack").classList.contains("show")) $("btnEstop").click();
+    if (e.key === "Escape" && !$("modalBack").classList.contains("show")) doEstop();
     if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); $("cmdInput").focus(); }
     /* ---- keyboard jog (ignored while typing in a field) ---- */
     const tag = (e.target && e.target.tagName) || "";
@@ -1453,6 +1442,14 @@ function bindActions() {
       const sl = $("jSlider" + S.selJoint);
       if (sl) sl.closest(".joint-row").classList.add("sel");
       toast(`Jog target: J${S.selJoint + 1} ${FW.AXES[S.selJoint].name} — use ← / →`, "info", 1600);
+    } else if (e.key === "F2") {
+      e.preventDefault();
+      send(Cmd.homeAll());
+      toast("⌂ Home All sent (F2)", "info", 1600);
+    } else if (e.key === "F4") {
+      e.preventDefault();
+      send(Cmd.reset());
+      toast("↺ RESET sent (F4)", "info", 1600);
     } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
       if (S.selJoint === null || S.selJoint === undefined) return;
       e.preventDefault();
@@ -1462,7 +1459,7 @@ function bindActions() {
       S.targets[j] = v; syncJointInputs();
     }
   });
-  $("btnResetEstop").onclick = () => send(Cmd.reset());
+
 
   /* motion */
   $("swDegMode").onchange = () => { S.degMode = $("swDegMode").checked; buildJoints(); };

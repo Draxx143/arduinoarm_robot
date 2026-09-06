@@ -36,15 +36,12 @@
       <label class="chk" style="display:flex;align-items:center;gap:4px;font-size:10.5px;margin-inline-end:2px" title="Auto-connect the best port at startup"><input type="checkbox" id="chkAutoPort"> auto</label>
       <button class="btn teal" id="btnConnect">⚡ Connect Arduino</button>
       <button class="btn amber" id="btnSim">▦ Simulator</button>
-      <div class="state-badge" id="stateBadge"><span class="dot"></span><span id="stateLabel">OFFLINE</span></div>
       <select id="selPoll" title="Status polling">
         <option value="0">Poll: OFF</option>
         <option value="1500">Poll: 1.5s</option>
         <option value="3000" selected>Poll: 3s</option>
         <option value="5000">Poll: 5s</option>
       </select>
-      <button class="btn estop" id="btnEstop" title="Emergency stop (Esc)">⛔ E-STOP</button>
-      <button class="btn small green" id="btnResetEstop" title="Clear emergency stop">↺ RESET</button>
     </div>
   </div>
 </header>
@@ -370,17 +367,21 @@
         <h3>Serial Console<span class="en">115200 8N1</span></h3>
         <div class="card-body">
           <div class="console-tools">
-            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
-            <div class="chips" id="chipsBox"></div>
             <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
             <button class="btn small" id="btnPortTest" title="2 s raw OS-level read of the port — checks whether the board transmits at all">&#128269; Port Test</button>
-            <span class="tiny" id="rxMeter" style="margin-left:auto">RX 0 B</span>
+            <span class="tiny" id="ioMeter" style="margin-left:auto" title="Bytes sent / received">TX — · RX —</span>
           </div>
           <div id="consoleBox"></div>
           <div class="console-input">
             <input type="text" id="cmdInput" placeholder="Type a command and press Enter… (↑/↓ = history)" autocomplete="off" spellcheck="false">
             <button class="btn teal" id="btnSend">Send ⏎</button>
           </div>
+          <div class="row" style="margin-top:8px">
+            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
+            <div class="chips" id="chipsBox"></div>
+          </div>
+          <p class="tiny" id="portHint" style="margin-top:8px">Pick the port in the header, then press ⚡ Connect Arduino.</p>
+          <p class="tiny" id="serialHint" style="margin-top:4px"></p>
           <div class="row" style="margin-top:10px">
             <button class="btn small" id="btnClearConsole">✕ Clear screen</button>
             <button class="btn small teal" id="btnExportLog">⤓ Export log (txt)</button>
@@ -389,24 +390,12 @@
         </div>
       </div>
 
-    <div class="card">
-      <h3>Link Status<span class="en">COMMS</span></h3>
-      <div class="card-body">
-        <div class="kv"><span>State</span><b id="connText">OFFLINE</b></div>
-        <div class="kv"><span>Mode</span><b id="connMode">—</b></div>
-        <div class="kv"><span>TX</span><b id="txCount">0 B</b></div>
-        <div class="kv"><span>RX</span><b id="rxCount">0 B</b></div>
-        <p class="tiny" id="serialHint" style="margin-top:8px"></p>
-        <p class="tiny" id="portHint" style="margin-top:6px">Pick the port in the header, then press ⚡ Connect Arduino.</p>
-      </div>
-    </div>
-
   </aside>
 
 </div>
 
 <footer>
-  AXIS-5 ROBOT CONTROL v<b id="appVersion">—</b> · companion panel for <span class="code">RobotArm_Firmware.ino</span> · <kbd>Esc</kbd> E-STOP · <kbd>Ctrl+K</kbd> console
+  AXIS-5 ROBOT CONTROL v<b id="appVersion">—</b> · companion panel for <span class="code">RobotArm_Firmware.ino</span> · <kbd>Esc</kbd> E-STOP · <kbd>F4</kbd> RESET · <kbd>F2</kbd> INIT/HOME · <kbd>Ctrl+K</kbd> console
 </footer>
 
 <div id="toasts"></div>
