@@ -256,6 +256,9 @@ function rxLine(line, fromSim = false) {
   const ev = Parse.line(line);
 
   /* بلوک status */
+  if (line.trim().startsWith(">> Ack mode ON")) setAckUI(true);
+  else if (line.trim().startsWith(">> Ack mode OFF")) setAckUI(false);
+
   if (line.trim().startsWith("=== System Status")) {
     S.inStatus = true;
     S.tmpDemo = null;
@@ -389,6 +392,14 @@ function setStateUI(key) {
 /* ============================================================
  * حالت اتصال: سریال / شبیه‌ساز / خاموش
  * ============================================================ */
+/* دکمه تاییدیه (ACK) — وضعیت از جواب خود برد همگام می‌شود */
+function setAckUI(on) {
+  const b = $("btnAck");
+  if (!b) return;
+  b.textContent = on ? "\u2713 تاییدیه: روشن" : "\u2713 تاییدیه: خاموش";
+  b.classList.toggle("on", on);
+}
+
 function setMode(mode) {
   S.mode = mode;
   renderConnCard();
@@ -466,8 +477,9 @@ S.serial.onConnect = (baud) => {
     const info = S.serial.port && S.serial.port.getInfo ? S.serial.port.getInfo() : {};
     Store.set("last_port", hex4(info.usbVendorId) + ":" + hex4(info.usbProductId));
   } catch (e) {}
+  setAckUI(false); /* برد موقع اتصال ریست شده — ack به پیش‌فرض (خاموش) برگشته */
   renderConnCard();
-  setTimeout(() => send(Cmd.status()), 600);
+  setTimeout(() => send(Cmd.status(), { auto: true }), 600);
 };
 S.serial.onDisconnect = () => {
   if (S.mode === "serial") setMode("off");
@@ -1133,6 +1145,10 @@ function init() {
   }
 
   /* ---------- اتصال کارت انتخاب پورت ---------- */
+  $("btnAck").onclick = () => {
+    if (S.mode === "off") { toast("اول به آردوینو وصل شو یا شبیه‌ساز را روشن کن", "warn"); return; }
+    send($("btnAck").classList.contains("on") ? "ack off" : "ack on");
+  };
   $("btnScanPorts").onclick = toggleSerial;   /* در مرورگر، اسکن همان چوزر native است */
   $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");

@@ -601,6 +601,11 @@ kbd {
 .seq-item .seq-dwell input { width: 56px; padding: 3px 5px; font-size: 11px; }
 #seqProgress { font-size: 12px; min-width: 64px; text-align: center; }
 
+/* ================= Console toolbar (ACK toggle) ================= */
+.console-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.console-tools .tiny { color: var(--faint); }
+#btnAck.on { border-color: var(--teal); color: var(--teal2); background: rgba(0, 194, 209, 0.08); font-weight: 800; }
+
 /* ================= Connection card (port select) ================= */
 #portRows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 220px; overflow-y: auto; }
 .port-row {

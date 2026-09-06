@@ -13,6 +13,7 @@ class SimFirmware {
   }
 
   resetAll() {
+    this.ackMode = false;
     this.pos = [0, 0, 0, 0, 0];        // استپ
     this.target = [0, 0, 0, 0, 0];
     this.vel = [0, 0, 0, 0, 0];
@@ -228,6 +229,17 @@ class SimFirmware {
 
   /* ---------- پردازش دستور ---------- */
   handle(raw) {
+    /* ACK wrapper — mirrors the firmware: after a KNOWN command, when
+       ackMode is on, emit ">> ACK: <cmd> - executed" (unknown → no ack) */
+    const ack = !!this.ackMode;
+    let known = true;
+    const origEmit = this.emit;
+    this.emit = (m) => { if (String(m) === "Unknown command") known = false; origEmit.call(this, m); };
+    try { this._dispatch(raw); } finally { this.emit = origEmit; }
+    if (ack && known) this.emit(">> ACK: " + raw.trim() + " - executed");
+  }
+
+  _dispatch(raw) {
     const cmd = raw.trim();
     if (!cmd) return;
     this.lastActivity = Date.now();
@@ -510,6 +522,9 @@ class SimFirmware {
     if (lower === "autosleep on") { this.autoSleep = true; this.emit(">> Auto-sleep ENABLED"); return; }
     if (lower === "autosleep off") { this.autoSleep = false; this.emit(">> Auto-sleep DISABLED"); return; }
 
+    if (lower === "ack on") { this.ackMode = true; this.emit(">> Ack mode ON — every command will be confirmed"); return; }
+    if (lower === "ack off") { this.ackMode = false; this.emit(">> Ack mode OFF — commands run silently"); return; }
+    if (lower === "ack") { this.emit(this.ackMode ? ">> Ack mode is ON" : ">> Ack mode is OFF"); return; }
     this.emit("Unknown command");
   }
 

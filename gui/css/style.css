@@ -544,3 +544,8 @@ kbd {
 .conn-tools { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
 .conn-tools label.chk { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: auto; cursor: pointer; font-size: 11px; color: var(--faint, #8b98a5); white-space: nowrap; }
 .conn-tools label.chk input { accent-color: var(--cyan, #00c2d1); }
+
+/* دکمه تاییدیه (ACK) در کنسول */
+.console-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.console-tools .tiny { color: var(--faint, #8b98a5); }
+#btnAck.on { border-color: var(--cyan, #00c2d1); color: var(--cyan, #00c2d1); background: rgba(0, 194, 209, 0.08); font-weight: 800; }

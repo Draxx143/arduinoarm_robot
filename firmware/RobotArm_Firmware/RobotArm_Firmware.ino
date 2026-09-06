@@ -114,6 +114,7 @@ void setup() {
     Serial.println("  timer <ms> <axis> <target>");
     Serial.println("  teach / teach stop / play");
     Serial.println("  log on/off/show/clear");
+    Serial.println("  ack on/off       (per-command confirmations)");
     Serial.println("  profile slow/normal/fast");
     Serial.println("  traj line/circle");
     Serial.println("  ik <x> <y> <z>");
@@ -248,6 +249,10 @@ void updateHeartbeat() {
     }
 }
 
+// FIX/FEATURE: حالت تاییدیه — با 'ack on' برد بعد از هر دستور موفق یک
+// خط «>> ACK: <command> — executed» می‌فرستد (پیش‌فرض: خاموش برای سربار کمتر)
+bool ackMode = false;
+
 void handleSerialCommands() {
     if (Serial.available() > 0) {
         String command = Serial.readStringUntil('\n');
@@ -258,6 +263,8 @@ void handleSerialCommands() {
         Serial.println(command);
         
         logger.log(command.c_str());
+        
+        bool unknownCmd = false;
 
         // ==================== Basic Commands ====================
         if (command == "home") {
@@ -542,8 +549,27 @@ void handleSerialCommands() {
         else if (command == "autosleep off") {
             energyManager.disableAutoSleep();
         }
+        else if (command == "ack on") {
+            ackMode = true;
+            Serial.println(">> Ack mode ON — every command will be confirmed");
+        }
+        else if (command == "ack off") {
+            ackMode = false;
+            Serial.println(">> Ack mode OFF — commands run silently");
+        }
+        else if (command == "ack") {
+            Serial.println(ackMode ? ">> Ack mode is ON" : ">> Ack mode is OFF");
+        }
         else {
+            unknownCmd = true;
             Serial.println("Unknown command");
+        }
+        
+        // تاییدیه اجرا — فقط در حالت ACK و فقط برای دستورات شناخته‌شده
+        if (ackMode && !unknownCmd) {
+            Serial.print(">> ACK: ");
+            Serial.print(command);
+            Serial.println(" - executed");
         }
     }
 }

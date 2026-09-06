@@ -350,6 +350,10 @@
       <div class="card">
         <h3>Serial Console<span class="en">115200 8N1</span></h3>
         <div class="card-body">
+          <div class="console-tools">
+            <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
+            <span class="tiny">When ON, the board replies “&gt;&gt; ACK: &lt;command&gt; executed” after every command</span>
+          </div>
           <div id="consoleBox"></div>
           <div class="console-input">
             <input type="text" id="cmdInput" placeholder="Type a command and press Enter… (↑/↓ = history)" autocomplete="off" spellcheck="false">

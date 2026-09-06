@@ -548,6 +548,9 @@ function rxLine(line) {
     }
   }
 
+  if (t.startsWith(">> Ack mode ON")) setAckUI(true);
+  else if (t.startsWith(">> Ack mode OFF")) setAckUI(false);
+
   if (t.startsWith("=== System Status")) {
     S.inStatus = true;
     /* a poll-triggered block is parsed but not printed */
@@ -776,6 +779,14 @@ async function toggleSerial() {
   }
 }
 
+/* ACK toggle — state is synced from the board's own reply */
+function setAckUI(on) {
+  const b = $("btnAck");
+  if (!b) return;
+  b.textContent = on ? "\u2713 ACK: ON" : "\u2713 ACK: OFF";
+  b.classList.toggle("on", on);
+}
+
 function bindLinkEvents(link) {
   link.onConnect = (baud) => {
     setMode("serial");
@@ -784,6 +795,7 @@ function bindLinkEvents(link) {
     toast("Connected to the Arduino ✓", "ok");
     setStateUI("INIT");
     try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
+    setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
   };
@@ -1601,6 +1613,10 @@ function init() {
   $("appVersion").textContent = (window.electronAPI && window.electronAPI.appVersion) || "web";
 
   /* ---------- Connection card wiring ---------- */
+  $("btnAck").onclick = () => {
+    if (S.mode === "off") { toast("Connect to the Arduino (or start the simulator) first", "warn"); return; }
+    send($("btnAck").classList.contains("on") ? "ack off" : "ack on");
+  };
   $("btnScanPorts").onclick = scanPorts;
   $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");

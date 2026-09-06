@@ -320,6 +320,7 @@ const COMMAND_REF = [
   { cmd: "disable", args: "<1-5>", desc: "De-energize one axis", cat: "Basic" },
   { cmd: "estop", args: "", desc: "Immediate emergency stop of all axes", cat: "Safety" },
   { cmd: "reset", args: "", desc: "Clear emergency stop state", cat: "Safety" },
+  { cmd: "ack", args: "on/off", desc: "Toggle per-command confirmations (ACK) from the board", cat: "Basic" },
   { cmd: "demo", args: "", desc: "Run demo loop (6 poses x 3 repeats) — homing required", cat: "Motion" },
   { cmd: "stopdemo", args: "", desc: "Stop the demo loop", cat: "Motion" },
   { cmd: "stop", args: "", desc: "Full stop + motors off", cat: "Motion" },
