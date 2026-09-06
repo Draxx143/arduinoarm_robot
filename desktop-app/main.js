@@ -5,7 +5,7 @@
 "use strict";
 
 const { app, BrowserWindow, Menu, ipcMain, shell } = require("electron");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const path = require("path");
 
 /* OS-level serial driver (N-API — loads inside Electron without rebuild).
@@ -14,6 +14,21 @@ let SerialPortC = null;
 try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC = null; }
 const openSerialPorts = new Map();
 let serialSeq = 0;
+
+/* python bridge script path (unpacked from asar so python3 can exec it) */
+function bridgeScriptPath() {
+  const p = path.join(__dirname, "bridge", "serial_bridge.py");
+  return p.includes("app.asar")
+    ? path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "bridge", "serial_bridge.py")
+    : p;
+}
+function cleanupPy(id) {
+  const rec = openSerialPorts.get(id);
+  if (!rec || rec.done) return;
+  rec.done = true;
+  try { rec.child.kill(); } catch (e) {}
+  openSerialPorts.delete(id);
+}
 
 let win = null;
 let pendingPortCallback = null;
@@ -139,9 +154,9 @@ function createWindow() {
 
   /* How many bytes did the MAIN-process driver actually see? */
   ipcMain.handle("serialport:stats", () => {
-    let rx = 0;
-    openSerialPorts.forEach((r) => { rx += r.rx || 0; });
-    return { mainRx: rx };
+    let rx = 0, kind = "none";
+    openSerialPorts.forEach((r) => { rx += r.rx || 0; kind = r.kind || "?"; });
+    return { mainRx: rx, kind };
   });
 
   /* Raw OS-level port probe: 2 s of `cat` straight from the kernel.
@@ -182,6 +197,56 @@ function createWindow() {
     } catch (e) { return { err: String(e.message || e) }; }
   });
   ipcMain.handle("serialport:open", (e, portPath, baud) => new Promise((resolve) => {
+    /* ---- python bridge (preferred on Linux/macOS — same path `cat` proved working) ---- */
+    if (process.platform !== "win32") {
+      let child;
+      try {
+        child = spawn("python3", [bridgeScriptPath(), String(portPath), String(Number(baud) || 115200)],
+          { stdio: ["pipe", "pipe", "pipe"] });
+      } catch (er) {
+        return resolve({ err: "bridge spawn failed: " + er.message });
+      }
+      const id = ++serialSeq;
+      const rec = { kind: "py", child, rx: 0, path: String(portPath), ready: false, done: false };
+      openSerialPorts.set(id, rec);
+      let buf = "";
+      child.on("error", (er) => {
+        if (!rec.ready && !rec.done) { rec.done = true; openSerialPorts.delete(id); resolve({ err: "python3: " + er.message }); }
+      });
+      child.stdout.on("data", (chunk) => {
+        buf += chunk.toString("utf8");
+        let i;
+        while ((i = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          if (line.startsWith("R:")) {
+            rec.ready = true;
+            if (!rec.done) resolve({ id });
+          } else if (line.startsWith("D:")) {
+            rec.rx += Buffer.from(line.slice(2), "base64").length;
+            if (win && !win.isDestroyed()) win.webContents.send("serialport:data", line.slice(2));
+          } else if (line.startsWith("E:")) {
+            if (win && !win.isDestroyed()) win.webContents.send("serialport:error", Buffer.from(line.slice(2), "base64").toString("utf8"));
+          } else if (line.startsWith("X:")) {
+            if (!rec.done) { rec.done = true; openSerialPorts.delete(id); if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id); }
+          }
+        }
+      });
+      child.stderr.on("data", (c) => {
+        if (!rec.ready && !rec.done) {
+          rec.done = true; openSerialPorts.delete(id);
+          resolve({ err: "bridge: " + c.toString().slice(0, 180) });
+        }
+      });
+      child.on("exit", () => {
+        if (!rec.done) { rec.done = true; openSerialPorts.delete(id); if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id); }
+      });
+      setTimeout(() => {
+        if (!rec.ready && !rec.done) { cleanupPy(id); resolve({ err: "bridge timeout (is python3 installed?)" }); }
+      }, 5000);
+      return;
+    }
     if (!SerialPortC) return resolve({ err: "driver unavailable" });
     let sp;
     try { sp = new SerialPortC({ path: String(portPath), baudRate: Number(baud) || 115200, autoOpen: false }); }
@@ -222,11 +287,22 @@ function createWindow() {
   ipcMain.handle("serialport:write", (e, id, text) => {
     const rec = openSerialPorts.get(Number(id));
     if (!rec) return Promise.resolve({ err: "port not open" });
+    if (rec.kind === "py") {
+      try {
+        rec.child.stdin.write("W:" + Buffer.from(String(text), "utf8").toString("base64") + "\n");
+        return Promise.resolve({});
+      } catch (er) { return Promise.resolve({ err: String(er.message || er) }); }
+    }
     return new Promise((resolve) => rec.sp.write(String(text), (err) => resolve(err ? { err: String(err.message || err) } : {})));
   });
   ipcMain.handle("serialport:close", (e, id) => {
     const rec = openSerialPorts.get(Number(id));
     if (!rec) return Promise.resolve({});
+    if (rec.kind === "py") {
+      try { rec.child.stdin.write("C:\n"); } catch (e2) {}
+      setTimeout(() => cleanupPy(Number(id)), 500);
+      return Promise.resolve({});
+    }
     clearInterval(rec.pump);
     return new Promise((resolve) => rec.sp.close((err) => resolve(err ? { err: String(err.message || err) } : {})));
   });

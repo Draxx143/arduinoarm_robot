@@ -261,11 +261,12 @@ class IpcSerialLink {
   }
 
   async disconnect() {
+    const was = this.connected;
+    this.connected = false;   /* guard first: the closed-event must not double-fire */
     if (this.id != null) {
       try { await this.bridge.close(this.id); } catch (e) {}
     }
-    this.connected = false;
     this.id = null;
-    if (this.onDisconnect) this.onDisconnect();
+    if (was && this.onDisconnect) this.onDisconnect();
   }
 }
