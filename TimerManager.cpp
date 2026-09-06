@@ -1,7 +1,6 @@
 #include "TimerManager.h"
 
 TimerManager::TimerManager() {
-    _fireFn = nullptr;
     for (int i = 0; i < MAX_TIMERS; i++) {
         _timers[i].active = false;
     }
@@ -17,12 +16,8 @@ void TimerManager::update() {
             Serial.print(" to ");
             Serial.println(_timers[i].target);
             
-            // FIX: اجرای واقعی حرکت از طریق callback متصل‌شده
-            // (قبلاً فقط پیام چاپ می‌شد و هیچ حرکتی انجام نمی‌شد!)
-            if (_fireFn) {
-                _fireFn(_timers[i].axis, _timers[i].target);
-            }
-            
+            // اینجا باید motorController فراخوانی بشه
+            // ولی چون circular dependency داره، از callback استفاده می‌کنیم
             _timers[i].active = false;
         }
     }

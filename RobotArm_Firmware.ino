@@ -9,7 +9,7 @@
  *   move/deg/moveall  -> حرکت
  *   demo              -> حرکت نمایشی
  *   savepos/loadpos   -> ذخیره/بازیابی موقعیت
- *   timer <ms> <axis> -> تایمر خودکار (هدف = موقعیت لحظه‌ی ثبت)
+ *   timer             -> تایمر خودکار
  *   teach/teach stop/play -> حالت آموزش
  *   log               -> لاگ‌گیری
  *   profile           -> پروفایل سرعت
@@ -114,7 +114,6 @@ void setup() {
     Serial.println("  timer <ms> <axis> <target>");
     Serial.println("  teach / teach stop / play");
     Serial.println("  log on/off/show/clear");
-    Serial.println("  ack on/off       (per-command confirmations)");
     Serial.println("  profile slow/normal/fast");
     Serial.println("  traj line/circle");
     Serial.println("  ik <x> <y> <z>");
@@ -129,9 +128,6 @@ void setup() {
     motorController->init();
     motorController->startControlLoop();
 
-    // FIX: اتصال callback تایمر به حرکت واقعی موتور
-    timerManager.onFire(onTimerFire);
-
     positionStore.begin();
     
     // تنظیم callback های EnergyManager
@@ -140,17 +136,6 @@ void setup() {
     systemState = STATE_INIT;
     Serial.println("System initialized.");
     Serial.println("======================================");
-}
-
-// FIX: اجرای واقعی تایمر — قبلاً TimerManager فقط پیام چاپ می‌کرد
-void onTimerFire(uint8_t axis, int32_t target) {
-    if (axis >= NUM_AXES) return;
-    if (systemState != STATE_READY && systemState != STATE_MOVING) return;
-    motorController->moveTo(axis, target);
-    Serial.print(">> Moving axis ");
-    Serial.print(axis + 1);
-    Serial.print(" to ");
-    Serial.println(target);
 }
 
 void loop() {
@@ -249,10 +234,6 @@ void updateHeartbeat() {
     }
 }
 
-// FIX/FEATURE: حالت تاییدیه — با 'ack on' برد بعد از هر دستور موفق یک
-// خط «>> ACK: <command> — executed» می‌فرستد (پیش‌فرض: خاموش برای سربار کمتر)
-bool ackMode = false;
-
 void handleSerialCommands() {
     if (Serial.available() > 0) {
         String command = Serial.readStringUntil('\n');
@@ -263,8 +244,6 @@ void handleSerialCommands() {
         Serial.println(command);
         
         logger.log(command.c_str());
-        
-        bool unknownCmd = false;
 
         // ==================== Basic Commands ====================
         if (command == "home") {
@@ -479,18 +458,6 @@ void handleSerialCommands() {
                     }
                     Serial.println();
                     
-                    // FIX: محدودسازی زوایا به محدوده مجاز هر محور
-                    // (قبلاً زاویه خارج از محدوده مستقیم می‌رفت و moveAllAxes
-                    // آن محور را رد می‌کرد → حرکت ناقص و ناهماهنگ)
-                    bool clamped = false;
-                    for (int i = 0; i < NUM_AXES; i++) {
-                        float c = constrain(angles[i], AXIS_MIN_DEG[i], AXIS_MAX_DEG[i]);
-                        if (c != angles[i]) { angles[i] = c; clamped = true; }
-                    }
-                    if (clamped) {
-                        Serial.println(">> Angles clamped to joint limits");
-                    }
-                    
                     // تبدیل به steps و حرکت
                     int32_t steps[NUM_AXES];
                     for (int i = 0; i < NUM_AXES; i++) {
@@ -549,27 +516,8 @@ void handleSerialCommands() {
         else if (command == "autosleep off") {
             energyManager.disableAutoSleep();
         }
-        else if (command == "ack on") {
-            ackMode = true;
-            Serial.println(">> Ack mode ON — every command will be confirmed");
-        }
-        else if (command == "ack off") {
-            ackMode = false;
-            Serial.println(">> Ack mode OFF — commands run silently");
-        }
-        else if (command == "ack") {
-            Serial.println(ackMode ? ">> Ack mode is ON" : ">> Ack mode is OFF");
-        }
         else {
-            unknownCmd = true;
             Serial.println("Unknown command");
-        }
-        
-        // تاییدیه اجرا — فقط در حالت ACK و فقط برای دستورات شناخته‌شده
-        if (ackMode && !unknownCmd) {
-            Serial.print(">> ACK: ");
-            Serial.print(command);
-            Serial.println(" - executed");
         }
     }
 }
@@ -650,10 +598,6 @@ void handleMoveCommand(String command) {
     int axis = command.substring(firstSpace + 1, secondSpace).toInt() - 1;
     int32_t steps = command.substring(secondSpace + 1).toInt();
     if (axis >= 0 && axis < NUM_AXES) {
-        if (!motorController->getAxis(axis)->isEnabled()) {
-            Serial.print("!! Axis "); Serial.print(axis + 1);
-            Serial.println(" is DISABLED — send 'enable' or run 'home' first");
-        }
         motorController->moveTo(axis, steps);
         Serial.print("Moving axis "); Serial.print(axis + 1);
         Serial.print(" to "); Serial.print(steps); Serial.println(" steps");
@@ -682,12 +626,6 @@ void handleDegCommand(String command) {
         Serial.print(AXIS_MAX_DEG[axis], 1);
         Serial.println("°)");
         return;
-    }
-    
-    // FIX: قبلاً محورِ غیرفعال بی‌صدا رد می‌شد — حالا صریح می‌گوییم
-    if (!motorController->getAxis(axis)->isEnabled()) {
-        Serial.print("!! Axis "); Serial.print(axis + 1);
-        Serial.println(" is DISABLED — send 'enable' or run 'home' first");
     }
     
     int32_t steps = (int32_t)(degrees * DEG_TO_STEPS[axis]);
@@ -732,14 +670,6 @@ void handleMoveAllCommand(String command) {
     }
     
     for (int i = currentIdx; i < NUM_AXES; i++) steps[i] = 0;
-    
-    bool anyEnabled = false;
-    for (int i = 0; i < NUM_AXES; i++) {
-        if (motorController->getAxis(i)->isEnabled()) { anyEnabled = true; break; }
-    }
-    if (!anyEnabled) {
-        Serial.println("!! All motors DISABLED — send 'enable' or run 'home' first");
-    }
     
     motorController->moveAllAxes(steps);
     Serial.print("Moving all: ");
@@ -808,6 +738,10 @@ void executeDemo() {
     }
 }
 
-// FIX: پین ۲۲ روی Mega2560 وقفه‌ی خارجی ندارد (فقط پین‌های 2,3,18,19,20,21)
-// و این ISR هرگز attach نمی‌شد (کد مرده). پین E-STOP از قبل داخل
-// MotorController::update() با نرخ 1kHz poll می‌شود — همین کافی است.
+#if defined(EMERGENCY_STOP_PIN)
+void emergencyStopISR() {
+    motorController->emergencyStop();
+    systemState = STATE_ESTOP;
+    demoRunning = false;
+}
+#endif
