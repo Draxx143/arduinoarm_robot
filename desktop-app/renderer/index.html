@@ -62,7 +62,6 @@
       <button class="tab-btn" data-tab="kin">∑ Kinematics</button>
       <button class="tab-btn" data-tab="memory">▤ Memory &amp; Teach</button>
       <button class="tab-btn" data-tab="sched">◷ Scheduler &amp; Power</button>
-      <button class="tab-btn" data-tab="console">▣ Console</button>
       <button class="tab-btn" data-tab="help">▢ Reference</button>
     </nav>
 
@@ -346,33 +345,6 @@
     </section>
 
     <!-- ── Tab 6: Console ── -->
-    <section class="tab-panel" id="tab-console">
-      <div class="card">
-        <h3>Serial Console<span class="en">115200 8N1</span></h3>
-        <div class="card-body">
-          <div class="console-tools">
-            <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
-            <button class="btn small" id="btnPortTest" title="2 s raw OS-level read of the port — checks whether the board transmits at all">&#128269; Port Test</button>
-            <span class="tiny" id="rxMeter" style="margin-left:auto">RX 0 B</span>
-          </div>
-          <div id="consoleBox"></div>
-          <div class="console-input">
-            <input type="text" id="cmdInput" placeholder="Type a command and press Enter… (↑/↓ = history)" autocomplete="off" spellcheck="false">
-            <button class="btn teal" id="btnSend">Send ⏎</button>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
-            <div class="chips" id="chipsBox"></div>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <button class="btn small" id="btnClearConsole">✕ Clear screen</button>
-            <button class="btn small teal" id="btnExportLog">⤓ Export log (txt)</button>
-            <span class="tiny"><kbd>Esc</kbd> = E-STOP · <kbd>Ctrl+K</kbd> = focus console</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ── Tab 7: Reference ── -->
     <section class="tab-panel" id="tab-help">
       <div class="stack">
@@ -435,6 +407,32 @@
 
   <!-- ═══════════ Sidebar ═══════════ -->
   <aside class="sidebar">
+    <!-- ── FIXED SERIAL CONSOLE — visible on every tab ── -->
+<div class="card">
+        <h3>Serial Console<span class="en">115200 8N1</span></h3>
+        <div class="card-body">
+          <div class="console-tools">
+            <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
+            <button class="btn small" id="btnPortTest" title="2 s raw OS-level read of the port — checks whether the board transmits at all">&#128269; Port Test</button>
+            <span class="tiny" id="rxMeter" style="margin-left:auto">RX 0 B</span>
+          </div>
+          <div id="consoleBox"></div>
+          <div class="console-input">
+            <input type="text" id="cmdInput" placeholder="Type a command and press Enter… (↑/↓ = history)" autocomplete="off" spellcheck="false">
+            <button class="btn teal" id="btnSend">Send ⏎</button>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
+            <div class="chips" id="chipsBox"></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn small" id="btnClearConsole">✕ Clear screen</button>
+            <button class="btn small teal" id="btnExportLog">⤓ Export log (txt)</button>
+            <span class="tiny"><kbd>Esc</kbd> = E-STOP · <kbd>Ctrl+K</kbd> = focus console</span>
+          </div>
+        </div>
+      </div>
+
     <div class="card">
       <h3>Connection<span class="en">PORT SELECT</span></h3>
       <div class="card-body">

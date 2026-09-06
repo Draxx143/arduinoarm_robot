@@ -1447,7 +1447,6 @@ function initTabs() {
       document.querySelectorAll(".tab-panel").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       $("tab-" + b.dataset.tab).classList.add("active");
-      if (b.dataset.tab === "console") $("cmdInput").focus();
     });
   });
 }
