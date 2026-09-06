@@ -228,14 +228,17 @@ class SimFirmware {
 
   /* ---------- پردازش دستور ---------- */
   handle(raw) {
-    /* ACK wrapper — mirrors the firmware: after a KNOWN command, when
-       ackMode is on, emit ">> ACK: <cmd> - executed" (unknown → no ack) */
-    const ack = !!this.ackMode;
+    /* ACK wrapper — mirrors the NEW firmware semantics:
+       ackMode ON  = board SILENT (no ACK lines)
+       ackMode OFF = confirmations enabled (default), except for polled "status" */
+    const silent = !!this.ackMode;
     let known = true;
     const origEmit = this.emit;
     this.emit = (m) => { if (String(m) === "Unknown command") known = false; origEmit.call(this, m); };
     try { this._dispatch(raw); } finally { this.emit = origEmit; }
-    if (ack && known) this.emit(">> ACK: " + raw.trim() + " - executed");
+    if (!silent && known && raw.trim().toLowerCase() !== "status") {
+      this.emit(">> ACK: " + raw.trim() + " - executed");
+    }
   }
 
   _dispatch(raw) {

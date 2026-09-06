@@ -159,8 +159,13 @@ function createWindow() {
     sp.open((err) => {
       if (err) return resolve({ err: String(err.message || err) });
       const id = ++serialSeq;
-      /* RX pump: explicit poll every 15 ms — immune to Node-stream
-       * flowing/paused-mode differences across Electron versions. */
+      /* RX: BOTH mechanisms at once —
+       *  1) 'data' event (works when the stream flows)
+       *  2) 15 ms read() pump (works in paused mode)
+       * whichever fires, the renderer gets the bytes. */
+      sp.on("data", (buf) => {
+        if (win && !win.isDestroyed()) win.webContents.send("serialport:data", buf.toString("base64"));
+      });
       const pump = setInterval(() => {
         try {
           let chunk;

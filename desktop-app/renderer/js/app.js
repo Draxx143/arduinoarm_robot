@@ -405,10 +405,14 @@ async function renderConnCard() {
     }
     rows.appendChild(sec);
     const ev = (window.electronAPI && window.electronAPI.versions && window.electronAPI.versions.electron) || "?";
+    let drvState = "n/a";
+    try {
+      if (window.electronAPI.serialDriverAvailable) drvState = (await window.electronAPI.serialDriverAvailable()) ? "loaded ✓" : "FAILED ✗";
+    } catch (e) {}
     const diag = document.createElement("div");
     diag.className = "p-none";
     diag.style.marginTop = "6px";
-    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; driver ${useDriver ? "system ✓" : "web-only"} &middot; OS list: ${sysPorts.length}`;
+    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; driver ${drvState} &middot; OS list: ${sysPorts.length} &middot; RX ${S.serial.rxCount}B`;
     rows.appendChild(diag);
   }
 
