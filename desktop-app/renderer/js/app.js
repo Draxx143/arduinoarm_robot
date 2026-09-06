@@ -511,9 +511,10 @@ async function connectSystemPort(name) {
 /* ============================================================
  * Send / receive
  * ============================================================ */
-function send(text) {
+function send(text, opts = {}) {
   if (!text) return false;
-  if (S.mode === "off") {
+  const auto = !!opts.auto; /* automatic poll — keep it out of the console */
+  if (!auto && S.mode === "off") {
     const now = Date.now();
     addConsole("warn", "✗ not sent ('" + text + "') — connect first or start the simulator");
     if (now - S.lastWarnAt > 3000) {
@@ -522,7 +523,8 @@ function send(text) {
     }
     return false;
   }
-  addConsole("tx", "» " + text);
+  if (!auto) addConsole("tx", "» " + text);
+  if (text === "status") S._statusFromPoll = auto; /* suppress the reply block only for polls */
   if (text !== "status") addFeed("tx", "» " + text);
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
@@ -536,26 +538,31 @@ function send(text) {
 }
 
 function rxLine(line) {
-  addConsole("rx", line);
+  const t = line.trim();
   /* firmware complaints ("!! ...") must be impossible to miss */
-  if (/^!!/.test(line.trim())) {
+  if (/^!!/.test(t)) {
     const now = Date.now();
     if (now - (S._lastFwErrAt || 0) > 2500) {
       S._lastFwErrAt = now;
-      toast(line.trim(), "err", 6000);
+      toast(t, "err", 6000);
     }
   }
-  const ev = Parse.line(line);
 
-  if (line.trim().startsWith("=== System Status")) {
+  if (t.startsWith("=== System Status")) {
     S.inStatus = true;
+    /* a poll-triggered block is parsed but not printed */
+    S._pollBlock = S._statusFromPoll === true;
+    S._statusFromPoll = false;
+    if (!S._pollBlock) addConsole("rx", line);
     S.tmpDemo = null;
     S.tmpSleep = false;
     S.pendingSlots = null;
     return;
   }
-  if (line.trim() === "======================" && S.inStatus) {
+  if (t === "======================" && S.inStatus) {
     S.inStatus = false;
+    if (!S._pollBlock) addConsole("rx", line);
+    S._pollBlock = false;
     S.demo = S.tmpDemo || { running: false, step: 0, total: FW.DEMO_MOVES.length };
     S.sleeping = S.tmpSleep;
     renderStats();
@@ -563,7 +570,10 @@ function rxLine(line) {
     renderSlots();
     return;
   }
-  if (/^>(?!>)/.test(line.trim())) return; /* firmware echo */
+  if (S.inStatus && S._pollBlock) { /* parsing only — no console spam */ }
+  else addConsole("rx", line);
+  if (/^>(?!>)/.test(t)) return; /* firmware echo */
+  const ev = Parse.line(line);
   if (!ev) return;
 
   /* after the periodic status block lands, nudge if the board cannot move */
@@ -621,7 +631,7 @@ function rxLine(line) {
       break;
     case "posLoaded":
       toast(`Slot ${ev.slot} loaded — arm is moving`, "info");
-      setTimeout(() => send(Cmd.status()), 900);
+      setTimeout(() => send(Cmd.status(), { auto: true }), 900);
       break;
     case "slotEmpty": toast(`Slot ${ev.slot} is empty`, "warn"); break;
     case "slotsListStart": S.pendingSlots = {}; break;
@@ -775,7 +785,7 @@ function bindLinkEvents(link) {
     setStateUI("INIT");
     try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
     renderConnCard();
-    setTimeout(() => send(Cmd.status()), 600);
+    setTimeout(() => send(Cmd.status(), { auto: true }), 600);
   };
   link.onDisconnect = () => {
     if (S.mode === "serial") setMode("off");
@@ -794,7 +804,7 @@ function restartPoll() {
   if (S.pollTimer) clearInterval(S.pollTimer);
   S.pollTimer = null;
   const v = parseInt($("selPoll").value, 10);
-  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status()), v);
+  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status(), { auto: true }), v);
 }
 
 /* ============================================================
@@ -1029,7 +1039,7 @@ function seqRunFrom(i) {
     let waited = 0;
     const iv = setInterval(() => {
       if (!S.seq.playing) { clearInterval(iv); return; }
-      send(Cmd.status());
+      send(Cmd.status(), { auto: true });
       waited += 400;
       const still = S.axes.some((a) => a.moving);
       if ((!still && waited > 800) || waited > 30000) {
