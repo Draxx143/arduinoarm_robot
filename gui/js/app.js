@@ -109,6 +109,94 @@ function confirmModal(title, body) {
 }
 
 /* ============================================================
+ * کارت انتخاب پورت — اسکن/انتخاب/اتصال خودکار
+ * ============================================================ */
+const hex4 = (v) => (v || 0).toString(16).padStart(4, "0");
+const escH = (t) => String(t == null ? "" : t).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function portLabelFor(info) {
+  return info && info.usbVendorId
+    ? "دستگاه USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId)
+    : "پورت سریال";
+}
+
+async function renderConnCard() {
+  const rows = $("portRows");
+  if (!rows) return;
+  const scan = $("btnScanPorts"), disc = $("btnDiscPort"), chk = $("chkAutoPort");
+  const supported = SerialLink.supported;
+  if (chk) chk.checked = Store.get("auto_port", "0") === "1";
+  if (disc) disc.style.display = S.mode === "serial" ? "" : "none";
+  if (scan) {
+    scan.style.display = S.mode === "serial" ? "none" : "";
+    scan.disabled = !supported;
+  }
+
+  if (!supported) {
+    rows.innerHTML = `<div class="p-none">این مرورگر از Web Serial پشتیبانی نمی‌کند — از Chrome یا Edge استفاده کن.</div>`;
+    const hint = $("portHint");
+    if (hint) hint.textContent = S.mode === "sim" ? "شبیه‌ساز فعال است — پورت واقعی لازم نیست." : "برای اتصال واقعی Chrome/Edge دسکتاپ را باز کن.";
+    return;
+  }
+
+  if (S.mode === "serial") {
+    let info = {};
+    try { info = S.serial.port && S.serial.port.getInfo ? S.serial.port.getInfo() : {}; } catch (e) {}
+    const name = S.serial._label || portLabelFor(info);
+    rows.innerHTML = `<div class="port-row on"><span class="p-dot"></span>
+      <div class="p-info"><span class="p-name">${escH(name)}</span>
+      <span class="p-meta">متصل @ ${S.serial.baud} باود</span></div>
+      <span class="p-badge">متصل</span></div>`;
+    $("portHint").textContent = "برد متصل است — دستورات به فریم‌ور واقعی می‌روند.";
+    return;
+  }
+
+  let granted = [];
+  try { granted = await S.serial.previouslyGranted(); } catch (e) {}
+  rows.innerHTML = "";
+  if (!granted.length) {
+    rows.innerHTML = `<div class="p-none">هنوز پورتی شناخته نشده — آردوینو را وصل کن و «اسکن پورت‌ها» را بزن.</div>`;
+  } else {
+    granted.forEach((port) => {
+      let info = {};
+      try { info = port.getInfo ? port.getInfo() : {}; } catch (e) {}
+      const label = portLabelFor(info);
+      const last = Store.get("last_port", "") === hex4(info.usbVendorId) + ":" + hex4(info.usbProductId);
+      const row = document.createElement("div");
+      row.className = "port-row";
+      row.innerHTML = `<span class="p-dot"></span>
+        <div class="p-info"><span class="p-name">${escH(label)}</span>
+        <span class="p-meta">آماده${info.usbVendorId ? " · USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " · <b>آخرین پورت</b>" : ""}</span></div>`;
+      const b = document.createElement("button");
+      b.className = "btn small";
+      b.textContent = "اتصال";
+      b.onclick = () => connectDirect(port, label);
+      row.appendChild(b);
+      rows.appendChild(row);
+    });
+  }
+  $("portHint").textContent = S.mode === "sim"
+    ? "شبیه‌ساز فعال است — برای برد واقعی اسکن کن."
+    : "پورت را انتخاب کن یا «اسکن پورت‌ها» را بزن.";
+}
+
+async function connectDirect(port, label) {
+  if (S.mode === "serial" || !SerialLink.supported) return;
+  stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+  try {
+    addConsole("sys", `[SYS] باز کردن ${label || "پورت"} @ ${baud} …`);
+    await S.serial.connectPort(port, baud, label || null);
+  } catch (e) {
+    const msg = "اتصال ناموفق: " + e.message;
+    addConsole("err", "!! " + msg);
+    toast(msg, "err");
+    renderConnCard();
+  }
+}
+
+/* ============================================================
  * ارسال و دریافت
  * ============================================================ */
 function send(text) {
@@ -275,6 +363,7 @@ function setStateUI(key) {
  * ============================================================ */
 function setMode(mode) {
   S.mode = mode;
+  renderConnCard();
   const led = $("led");
   led.className = "led" + (mode === "serial" ? " on" : mode === "sim" ? " sim" : "");
   $("connText").textContent = mode === "serial" ? "متصل (سریال)" : mode === "sim" ? "شبیه‌ساز" : "قطع";
@@ -337,11 +426,18 @@ S.serial.onConnect = (baud) => {
   addFeed("rx-ok", "🔗 متصل شد @" + baud);
   toast("به آردوینو وصل شدی 🎉", "ok");
   setStateUI("INIT");
+  try {
+    const info = S.serial.port && S.serial.port.getInfo ? S.serial.port.getInfo() : {};
+    Store.set("last_port", hex4(info.usbVendorId) + ":" + hex4(info.usbProductId));
+  } catch (e) {}
+  renderConnCard();
   setTimeout(() => send(Cmd.status()), 600);
 };
 S.serial.onDisconnect = () => {
   if (S.mode === "serial") setMode("off");
   addConsole("sys", "[SYS] اتصال قطع شد");
+
+  renderConnCard();
 };
 S.serial.onLine = (l) => rxLine(l);
 S.serial.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
@@ -997,7 +1093,30 @@ function init() {
     $("serialHint").textContent = "⚠️ این مرورگر از Web Serial پشتیبانی نمی‌کند. Chrome یا Edge (دسکتاپ) را استفاده کن — فعلاً شبیه‌ساز در دسترس است.";
     $("btnConnect").disabled = true;
   } else {
-    $("serialHint").textContent = "روی «اتصال به آردوینو» بزن و پورت COM مگا را انتخاب کن (بعد از آپلود فریم‌ور).";
+    $("serialHint").textContent = "از کارت «انتخاب پورت» در سایدبار استفاده کن — یا دکمه‌ی اتصال بالای صفحه.";
+  }
+
+  /* ---------- اتصال کارت انتخاب پورت ---------- */
+  $("btnScanPorts").onclick = toggleSerial;   /* در مرورگر، اسکن همان چوزر native است */
+  $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };
+  $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
+  renderConnCard();
+
+  /* اتصال خودکار آخرین پورت مجازشده در شروع */
+  if (Store.get("auto_port", "0") === "1") {
+    setTimeout(async () => {
+      if (S.mode !== "off" || !SerialLink.supported) return;
+      try {
+        const ports = await S.serial.previouslyGranted();
+        if (ports.length) {
+          const hit = ports[ports.length - 1];
+          let info = {};
+          try { info = hit.getInfo ? hit.getInfo() : {}; } catch (e) {}
+          addConsole("sys", "[SYS] اتصال خودکار پورت…");
+          connectDirect(hit, portLabelFor(info));
+        }
+      } catch (e) {}
+    }, 900);
   }
 
   /* شروع خودکار شبیه‌ساز برای تجربه‌ی فوری */

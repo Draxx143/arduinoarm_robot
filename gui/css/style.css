@@ -528,3 +528,19 @@ kbd {
   header { padding: 8px 10px; }
   .layout { padding: 10px; }
 }
+
+/* ================= کارت انتخاب پورت ================= */
+#portRows { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 220px; overflow-y: auto; }
+.port-row { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line, #2a333c); border-inline-start: 3px solid var(--line, #2a333c); background: rgba(255,255,255,0.02); border-radius: 6px; padding: 7px 9px; }
+.port-row:hover { border-color: var(--cyan, #00c2d1); }
+.port-row.on { border-inline-start-color: var(--cyan, #00c2d1); background: rgba(0, 194, 209, 0.06); }
+.p-dot { width: 8px; height: 8px; border-radius: 50%; background: #3a4650; flex: 0 0 8px; }
+.port-row.on .p-dot { background: var(--cyan, #00c2d1); box-shadow: 0 0 8px var(--cyan, #00c2d1); }
+.p-info { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1; }
+.p-info .p-name { font-family: var(--mono, monospace); font-weight: 800; color: var(--cyan, #00c2d1); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-info .p-meta { font-size: 10px; color: var(--faint, #8b98a5); }
+.p-badge { font-size: 9px; font-weight: 800; color: var(--cyan, #00c2d1); border: 1px solid var(--cyan, #00c2d1); border-radius: 4px; padding: 2px 6px; flex: 0 0 auto; }
+.p-none { color: var(--faint, #8b98a5); padding: 4px 2px; }
+.conn-tools { display: flex; align-items: center; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+.conn-tools label.chk { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: auto; cursor: pointer; font-size: 11px; color: var(--faint, #8b98a5); white-space: nowrap; }
+.conn-tools label.chk input { accent-color: var(--cyan, #00c2d1); }

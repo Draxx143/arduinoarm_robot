@@ -1409,6 +1409,8 @@ function init() {
       : "Pick the port in the Connection card — the browser chooser opens.";
   }
 
+  $("appVersion").textContent = (window.electronAPI && window.electronAPI.appVersion) || "web";
+
   /* ---------- Connection card wiring ---------- */
   $("btnScanPorts").onclick = scanPorts;
   $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };

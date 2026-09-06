@@ -378,6 +378,19 @@
     </div>
 
     <div class="card">
+      <h3>🔌 انتخاب پورت <span class="en">PORT SELECT</span></h3>
+      <div class="card-body">
+        <div id="portRows"></div>
+        <div class="conn-tools">
+          <button class="btn small" id="btnScanPorts" title="لیست پورت‌های سریال متصل به سیستم">🔍 اسکن پورت‌ها</button>
+          <button class="btn small red" id="btnDiscPort" style="display:none" title="بستن اتصال سریال">✕ قطع اتصال</button>
+          <label class="chk"><input type="checkbox" id="chkAutoPort"> اتصال خودکار در شروع</label>
+        </div>
+        <p class="tiny" id="portHint" style="margin-top:8px">پورت آردوینو را انتخاب کن.</p>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>📡 اتصال <span class="en">LINK</span></h3>
       <div class="kv"><span>وضعیت</span><b id="connText">قطع</b></div>
       <div class="kv"><span>حالت</span><b id="connMode">—</b></div>
@@ -396,7 +409,7 @@
 
 <footer>
   کنترل‌پنل اختصاصی بازوی رباتیک ۵ محوره — ساخته‌شده برای فریم‌ور <span class="code">RobotArm_Firmware.ino</span>
- · کلید <kbd>Esc</kbd> توقف اضطراری · <kbd>Ctrl+K</kbd> کنسول
+ · کلید <kbd>Esc</kbd> توقف اضطراری · <kbd>Ctrl+K</kbd> کنسول · نسخه <b id="appVersion">1.0.10</b>
 </footer>
 
 <div id="toasts"></div>

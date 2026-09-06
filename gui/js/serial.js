@@ -53,6 +53,23 @@ class SerialLink {
     this._readLoop();
   }
 
+  /** اتصال مستقیم به یک پورتِ مجازشده (کارت انتخاب پورت) */
+  async connectPort(port, baud, label) {
+    if (!SerialLink.supported) throw new Error("Web Serial در دسترس نیست");
+    if (this.connected) throw new Error("هم‌اکنون متصل است");
+    this.baud = baud || FW.BAUD;
+    this.port = port;
+    this._label = label || null;
+    await this.port.open({
+      baudRate: this.baud, dataBits: 8, stopBits: 1,
+      parity: "none", bufferSize: 4096, flowControl: "none",
+    });
+    this.connected = true;
+    this._buff = "";
+    if (this.onConnect) this.onConnect(this.baud);
+    this._readLoop();
+  }
+
   /** اتصال به پورت قبلاً-مجوزداده‌شده بدون دیالوگ انتخاب */
   async reconnect(baud) {
     if (!SerialLink.supported) throw new Error("Web Serial در دسترس نیست");

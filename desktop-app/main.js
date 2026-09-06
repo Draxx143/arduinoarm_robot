@@ -90,6 +90,9 @@ function createWindow() {
       cb(portId);
     }
   });
+  /* Renderer reads the packaged app version for the footer badge */
+  ipcMain.on("app:get-version", (e) => { e.returnValue = app.getVersion(); });
+
   ipcMain.on("serial:cancel-choose", () => {
     if (pendingPortCallback) {
       const cb = pendingPortCallback;

@@ -7,6 +7,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("electronAPI", {
   isElectron: true,
+  appVersion: ipcRenderer.sendSync("app:get-version") || "",
   onPortList: (cb) => ipcRenderer.on("serial:port-list", (e, ports) => cb(ports)),
   onPortAdded: (cb) => ipcRenderer.on("serial:port-added", (e, port) => cb(port)),
   onPortRemoved: (cb) => ipcRenderer.on("serial:port-removed", (e, port) => cb(port)),
