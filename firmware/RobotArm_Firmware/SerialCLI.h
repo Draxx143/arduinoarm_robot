@@ -36,10 +36,12 @@ public:
 
 private:
     void _execute(const String& raw);
+    void _finishLine();
     DispatchFn _dispatch = nullptr;
     LogFn      _log = nullptr;
     bool       _ack = false;
     String     _buf;
+    bool       _over = false;   // خط از ۱۲۰ کاراکتر گذشت — تا پایانش دور ریخته می‌شود
     unsigned long _lastCharMs = 0;
 };
 

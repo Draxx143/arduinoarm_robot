@@ -40,6 +40,19 @@ def main():
         termios.tcsetattr(fd, termios.TCSANOW, attrs)
     except termios.error as e:
         die("termios failed: " + str(e))
+    # Arduino auto-reset: pulse DTR (deassert 120 ms -> assert), like the IDE/avrdude.
+    # Without this edge a running board never reboots, so no boot banner appears.
+    try:
+        import fcntl
+        TIOCMGET, TIOCMSET = 0x5415, 0x5418
+        TIOCM_DTR, TIOCM_RTS = 0x002, 0x004
+        bits = fcntl.ioctl(fd, TIOCMGET, 0)
+        fcntl.ioctl(fd, TIOCMSET, bits & ~TIOCM_DTR & ~TIOCM_RTS)
+        time.sleep(0.12)
+        fcntl.ioctl(fd, TIOCMSET, (bits & ~TIOCM_RTS) | TIOCM_DTR)
+        time.sleep(0.05)
+    except Exception:
+        pass  # ports/ptys without modem-control ioctls: just continue
     sys.stdout.write("R:\n")
     sys.stdout.flush()
 

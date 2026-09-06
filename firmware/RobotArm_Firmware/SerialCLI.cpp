@@ -22,18 +22,31 @@ void SerialCLI::poll() {
         char c = (char)Serial.read();
         _lastCharMs = millis();
         if (c == '\n') {
-            _execute(_buf);
-            _buf = "";
+            _finishLine();
         } else if (c != '\r') {
             if (_buf.length() < 120) _buf += c;
+            else _over = true;   /* نگهبان سرریز: خط‌های ناقص هرگز اجرا نمی‌شوند */
         }
     }
     /* مانیتورهایی که فقط CR می‌فرستند یا بدون Line Ending هستند:
        اگر بافر پر شده و ۵۰ms سکوت شد، همان را اجرا کن */
     if (_buf.length() > 0 && millis() - _lastCharMs > 50) {
-        _execute(_buf);
-        _buf = "";
+        _finishLine();
     }
+}
+
+/* پایان خط (LF یا idle-flush): اگر وسط ارسال سیلانی پرشده بود، کل خط را
+ * دور بریز — اجرای یک دستور بریده خطرناک است (Unknown/خارج از محدوده) */
+void SerialCLI::_finishLine() {
+    if (_over) {
+        _buf = "";
+        _over = false;
+        if (!_ack) Serial.println("!! line too long - dropped");
+        return;
+    }
+    if (_buf.length() == 0) return;
+    _execute(_buf);
+    _buf = "";
 }
 
 void SerialCLI::_execute(const String& raw) {

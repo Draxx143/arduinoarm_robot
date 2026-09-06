@@ -823,6 +823,9 @@ function bindLinkEvents(link) {
     S._connAt = Date.now(); S._rxWarned = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
+    /* second hello after the bootloader window: boards that reboot on open
+     * (DTR pulse) answer this one and the UI syncs right after boot */
+    setTimeout(() => send(Cmd.status(), { auto: true }), 3000);
   };
   link.onDisconnect = () => {
     if (S.mode === "serial") setMode("off");
@@ -936,15 +939,34 @@ function buildJoints() {
     slider.addEventListener("input", () => sync(+slider.value, true));
     slider.addEventListener("change", () => {
       const v = sync(+slider.value, true);
-      if ($("swLive").checked) sendJoint(i, v);
+      if ($("swLive").checked) sendJointLive(i, v);
     });
     num.addEventListener("change", () => {
       const v = sync(+num.value || 0, false);
-      if ($("swLive").checked) sendJoint(i, v);
+      if ($("swLive").checked) sendJointLive(i, v);
     });
     $("jGo" + i).addEventListener("click", () => sendJoint(i, +num.value || 0));
     $("jHome" + i).addEventListener("click", () => send(Cmd.homeAxis(i + 1)));
   });
+}
+
+/* Coalesce rapid slider/spinner changes into at most 2 commands
+ * (leading + trailing). A flood of `deg` lines overruns the AVR's 64-byte
+ * UART ring while it is busy -> dropped middle bytes -> garbled lines the
+ * board reports as "Unknown command" / bogus angles. */
+const _jtPending = {};
+function sendJointLive(i, v) {
+  const p = _jtPending[i] || (_jtPending[i] = { t: null, last: 0, fired: false });
+  p.last = v;
+  if (p.fired) return;            /* a leading send already went out for this burst */
+  p.fired = true;
+  sendJoint(i, v);                /* leading: first change is sent immediately */
+  p.t = setTimeout(() => {
+    const val = p.last;
+    p.t = null; p.fired = false; p.last = 0;
+    _jtPending[i] = null;
+    sendJoint(i, val);            /* trailing: the final value after the burst */
+  }, 160);
 }
 
 function sendJoint(i, v) {
