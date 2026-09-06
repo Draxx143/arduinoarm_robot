@@ -89,6 +89,8 @@ const Feed = {
 const FEED_ICONS = { tx: "▸", "rx-ok": "✓", "rx-err": "✗", warn: "⚠" };
 
 function addFeed(cls, text) {
+  /* Event Feed card removed by design — no-op */
+  return;
   Feed.total++;
   $("feedStat").textContent = Feed.total + " events";
   if (Feed.paused) return;
@@ -305,121 +307,76 @@ function renderScanRows(ports) {
 
 /* idle / connected view of the Connection card */
 async function renderConnCard() {
-  const rows = $("portRows");
-  if (!rows) return;
-  const scan = $("btnScanPorts"), disc = $("btnDiscPort"), chk = $("chkAutoPort");
+  const sel = $("hdrPort");
+  if (!sel) return;
+  const scan = $("hdrScan"), chk = $("chkAutoPort");
   if (!scan) return;
-  /* the main-process driver counts as a transport even without Web Serial */
   const supported = SerialLink.supported || IpcSerialLink.supported;
   chk.checked = Store.get("auto_port", "0") === "1";
-  disc.style.display = S.mode === "serial" ? "" : "none";
   scan.style.display = S.mode === "serial" ? "none" : "";
   scan.disabled = !supported;
+  const connected = S.mode === "serial";
 
   if (!supported) {
-    rows.innerHTML = `<div class="p-none">No serial transport available in this environment.</div>`;
+    sel.innerHTML = `<option value="">no serial transport</option>`;
+    sel.disabled = true;
     $("portHint").textContent = S.mode === "sim"
       ? "Simulator active — no real port needed."
       : "Use the simulator, or run in Chrome / Edge / Electron.";
     return;
   }
 
-  if (S.mode === "serial") {
+  if (connected) {
     const info = S.serial.activeInfo || {};
     const name = S.serial.activeLabel || portLabelFor(info);
-    rows.innerHTML = `<div class="port-row on"><span class="p-dot"></span>
-      <div class="p-info"><span class="p-name">${escH(name)}</span>
-      <span class="p-meta">connected @ ${S.serial.baud} baud</span></div>
-      <span class="p-badge">CONNECTED</span></div>`;
+    sel.innerHTML = `<option value="">${escH(name)} @ ${S.serial.baud}</option>`;
+    sel.disabled = true;
     $("portHint").textContent = "Board is linked — commands go to the real firmware.";
     return;
   }
 
+  sel.disabled = false;
+  const prev = sel.value || Store.get("last_port", "");
+  const opts = new Map();
   let granted = [];
   try { granted = await navigator.serial.getPorts(); } catch (e) {}
-  rows.innerHTML = "";
-  if (!granted.length) {
-    rows.innerHTML = `<div class="p-none">No known ports yet &mdash; click <b>Scan Ports</b> with the Arduino plugged in.</div>`;
-  } else {
-    granted.forEach((port) => {
-      const info = SerialLink._safeInfo(port);
-      const label = portLabelFor(info);
-      const last = Store.get("last_port", "") === portKeyFromInfo(info);
-      const row = document.createElement("div");
-      row.className = "port-row";
-      row.innerHTML = `<span class="p-dot"></span>
-        <div class="p-info"><span class="p-name">${escH(label)}</span>
-        <span class="p-meta">ready${info.usbVendorId ? " &middot; USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : ""}${last ? " &middot; <b>last used</b>" : ""}</span></div>
-        ${isBestMatch(label) ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
-      const b = document.createElement("button");
-      b.className = "btn small";
-      b.textContent = "Connect";
-      b.onclick = () => connectDirect(port, label);
-      row.appendChild(b);
-      rows.appendChild(row);
-    });
-  }
-  /* --- OS-level devices (Electron): mirrors exactly what the OS sees --- */
-  const useDriver = IpcSerialLink.supported;
-  const osListFn = useDriver
-    ? async () => {
-        const res = await window.electronAPI.ipcSerial.list();
-        if (res && res.err) throw new Error(res.err);
-        return (res.ports || []).map((p) => ({
-          name: p.path,
-          meta: [p.friendly, p.vid ? "USB " + String(p.vid) + ":" + String(p.pid) : ""].filter(Boolean).join(" · "),
-        }));
-      }
-    : (window.electronAPI && window.electronAPI.listSystemPorts
-        ? async () => (await window.electronAPI.listSystemPorts()).map((n) => ({ name: n, meta: "OS serial device" }))
-        : null);
-  if (osListFn) {
-    let sysPorts = null, sysErr = null;
-    try {
-      if (S._sysPorts && Date.now() - S._sysPorts.t < 10000) sysPorts = S._sysPorts.ports;
-      else sysPorts = await osListFn();
-      S._sysPorts = { t: Date.now(), ports: sysPorts };
-    } catch (e) { sysErr = e; }
-    const sec = document.createElement("div");
-    if (sysErr) {
-      sec.innerHTML = `<div class="p-none">system scan failed: ${escH(sysErr.message)}</div>`;
-    } else if (!sysPorts.length) {
-      sec.innerHTML = `<div class="p-none"><b>No OS serial devices</b> (checked /dev/ttyUSB* /dev/ttyACM*)</div>` + PORT_TROUBLE_HTML;
-    } else {
-      sec.innerHTML = `<div class="p-none"><b>System devices</b> (${sysPorts.length})${useDriver ? " — driver: node-serialport" : ""}</div>`;
-      sysPorts.forEach((p) => {
-        const row = document.createElement("div");
-        row.className = "port-row";
-        const best = /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.name + " " + (p.meta || ""));
-        row.innerHTML = `<span class="p-dot"></span>
-          <div class="p-info"><span class="p-name">${escH(p.name)}</span>
-          <span class="p-meta">${escH(p.meta || "OS serial device")}</span></div>
-          ${best ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
-        const b = document.createElement("button");
-        b.className = "btn small";
-        b.textContent = "Connect";
-        b.onclick = () => connectSystemPort(p.name);
-        row.appendChild(b);
-        sec.appendChild(row);
+  granted.forEach((port) => {
+    const info = SerialLink._safeInfo(port);
+    const label = portLabelFor(info);
+    opts.set(label, { label,
+      best: isBestMatch(label),
+      meta: info.usbVendorId ? "USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "saved" });
+  });
+  /* OS-level devices (Electron): mirror exactly what the OS sees */
+  try {
+    if (IpcSerialLink.supported) {
+      const res = await window.electronAPI.ipcSerial.list();
+      (res && res.ports ? res.ports : []).forEach((p) => {
+        if (!opts.has(p.path)) opts.set(p.path, { label: p.path,
+          best: /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.path + " " + (p.friendly || "")),
+          meta: p.friendly || "OS serial device" });
+      });
+    } else if (window.electronAPI && window.electronAPI.listSystemPorts) {
+      (await window.electronAPI.listSystemPorts()).forEach((n) => {
+        if (!opts.has(n)) opts.set(n, { label: n, best: /ttyUSB|ttyACM/i.test(n), meta: "OS serial device" });
       });
     }
-    rows.appendChild(sec);
-    const ev = (window.electronAPI && window.electronAPI.versions && window.electronAPI.versions.electron) || "?";
-    let drvState = "n/a", mainRx = 0;
-    try {
-      if (window.electronAPI.serialDriverAvailable) drvState = (await window.electronAPI.serialDriverAvailable()) ? "loaded ✓" : "FAILED ✗";
-      if (window.electronAPI.serialStats) mainRx = (await window.electronAPI.serialStats()).mainRx;
-    } catch (e) {}
-    const diag = document.createElement("div");
-    diag.className = "p-none";
-    diag.style.marginTop = "6px";
-    diag.innerHTML = `diag: Electron ${ev} &middot; driver ${drvState} &middot; OS list: ${sysPorts.length} &middot; mainRX ${mainRx}B &middot; appRX ${S.serial.rxCount}B`;
-    rows.appendChild(diag);
-  }
+  } catch (e) { /* scan failed — keep whatever we already have */ }
+  S._sysPorts = { t: Date.now(), ports: [...opts.keys()] };
 
-  $("portHint").textContent = S.mode === "sim"
-    ? "Simulator active — scan to switch to the real board."
-    : "Pick a port, or Scan to discover new devices.";
+  let html = `<option value="">pick port…</option>`;
+  [...opts.values()].sort((a, b) => (b.best - a.best) || a.label.localeCompare(b.label)).forEach((o) => {
+    html += `<option value="${escH(o.label)}">${escH(o.label)}${o.best ? "  \u2605" : ""}</option>`;
+  });
+  sel.innerHTML = html;
+  if (prev && opts.has(prev)) sel.value = prev;
+  else {
+    const best = [...opts.values()].find((o) => o.best);
+    if (best) sel.value = best.label;
+  }
+  $("portHint").textContent = opts.size
+    ? "Port picked — press \u26a1 Connect Arduino."
+    : "No serial device found — plug the Arduino in and press \u21bb.";
 }
 
 async function connectDirect(port, label) {
@@ -667,7 +624,6 @@ function rxLine(line) {
     case "teachCount":
       S.teachCountFw = ev.count;
       $("teachCountLabel").textContent = ev.count;
-      $("statTeach").textContent = ev.count;
       break;
     case "teachStepSaved":
       S.teachLocal.push(currentDegs());
@@ -783,6 +739,13 @@ async function toggleSerial() {
     await S.serial.disconnect();
     return;
   }
+  /* a port picked in the header? dial it directly (Electron driver path) */
+  const picked = ($("hdrPort") && $("hdrPort").value) || "";
+  if (picked && IpcSerialLink.supported) {
+    stopSim();
+    await connectSystemPort(picked);
+    return;
+  }
   if (!SerialLink.supported) {
     toast("Web Serial is not available in this environment", "err", 5000);
     return;
@@ -851,6 +814,8 @@ function restartPoll() {
  * Dashboard
  * ============================================================ */
 function buildAxisCards() {
+  /* Dashboard removed — the per-axis live cards lived there */
+  return;
   const row = $("axesRow");
   row.innerHTML = "";
   FW.AXES.forEach((ax, i) => {
@@ -870,6 +835,8 @@ function buildAxisCards() {
 }
 
 function renderAxisCard(i) {
+  /* Dashboard removed — per-axis live cards lived there */
+  return;
   const ax = FW.AXES[i], a = S.axes[i];
   $("axDeg" + i).textContent = a.deg.toFixed(1) + "°";
   $("axSteps" + i).textContent = a.steps + " steps";
@@ -881,17 +848,11 @@ function renderAxisCard(i) {
     fl("HOME", a.homed) + fl("PWR", a.enabled) +
     (spd || (a.moving ? `<span class="flag info">MOVING</span>` : "")) +
     `<span class="flag ${a.endstop === "Open" ? "" : "n"}">ES:${a.endstop === "Open" ? "OK" : "TRIG"}</span>`;
-  $("axisCard" + i).classList.toggle("moving", a.moving);
   renderStats();
 }
 
 function renderStats() {
-  $("statHomed").textContent = S.axes.filter((a) => a.homed).length + "/5";
-  $("statMoving").textContent = S.axes.filter((a) => a.moving).length;
-  $("statEnabled").textContent = S.axes.filter((a) => a.enabled).length + "/5";
-  $("statProfile").textContent = S.profileName;
-  $("statDemo").textContent = S.demo.running ? `RUNNING (${S.demo.step}/${S.demo.total})` : "idle";
-  $("statEnergy").textContent = S.sleeping ? "ASLEEP" : (S.autoSleep ? "auto-sleep armed" : "normal");
+  /* Dashboard removed — kept as no-op (still called from renderAxis) */
 }
 
 /* ============================================================
@@ -1243,7 +1204,6 @@ function renderTeachTimeline() {
     s.textContent = `#${i + 1} [${d.map((v) => v.toFixed(0)).join(",")}]`;
     tl.appendChild(s);
   });
-  $("statTeach").textContent = S.teachLocal.length;
 }
 
 function currentDegs() {
@@ -1504,15 +1464,6 @@ function bindActions() {
   });
   $("btnResetEstop").onclick = () => send(Cmd.reset());
 
-  /* dashboard */
-  $("qaHome").onclick = () => send(Cmd.homeAll());
-  $("qaDemo").onclick = () => send(Cmd.demo());
-  $("qaStopDemo").onclick = () => send(Cmd.stopDemo());
-  $("qaStop").onclick = () => send(Cmd.stop());
-  $("qaEnable").onclick = () => send(Cmd.enableAll());
-  $("qaDisable").onclick = () => send(Cmd.disableAll());
-  $("qaListPos").onclick = () => send(Cmd.listPos());
-
   /* motion */
   $("swDegMode").onchange = () => { S.degMode = $("swDegMode").checked; buildJoints(); };
   $("btnMoveAll").onclick = () => { const v = readMoveAll(); if (v) goMoveAll(v); };
@@ -1544,83 +1495,6 @@ function bindActions() {
   };
 
   /* event feed */
-  $("btnFeedPause").onclick = () => {
-    Feed.paused = !Feed.paused;
-    $("btnFeedPause").textContent = Feed.paused ? "▶ Resume" : "⏸ Pause";
-    $("btnFeedPause").classList.toggle("amber", Feed.paused);
-    $("feedStat").textContent = Feed.paused ? "paused" : Feed.total + " events";
-  };
-  $("btnFeedClear").onclick = () => {
-    $("feedBox").innerHTML = "";
-    Feed.lastText = null; Feed.lastEl = null; Feed.count = 1; Feed.total = 0;
-    $("feedStat").textContent = "0 events";
-  };
-
-  /* sequencer */
-  $("btnSeqAdd").onclick = addCurrentPoseToSeq;
-  $("btnSeqPlay").onclick = seqPlay;
-  $("btnSeqStop").onclick = seqStop;
-  $("btnSeqExport").onclick = seqExport;
-  $("btnSeqImport").onclick = () => $("seqFile").click();
-  $("seqFile").addEventListener("change", (e) => { if (e.target.files[0]) seqImport(e.target.files[0]); e.target.value = ""; });
-  $("btnSeqClear").onclick = async () => {
-    if (await confirmModal("Clear program", "Remove all steps from the program?")) { S.seq.items = []; renderSeqList(); }
-  };
-
-  /* memory */
-  $("btnListPos").onclick = () => send(Cmd.listPos());
-  $("btnTeachStart").onclick = () => send(Cmd.teachStart());
-  $("btnTeachStep").onclick = () => send(Cmd.teachStep());
-  $("btnTeachStop").onclick = () => send(Cmd.teachStop());
-  $("btnTeachCount").onclick = () => send(Cmd.teachCount());
-  $("btnPlay").onclick = () => send(Cmd.play());
-  $("btnPlayStop").onclick = () => send(Cmd.playStop());
-
-  /* scheduler */
-  $("btnTimerSet").onclick = () => {
-    const ms = parseInt($("timMs").value, 10) || 1000;
-    const axis = parseInt($("timAxis").value, 10);
-    S.timersLocal.push({ fireAt: Date.now() + ms, axis, ms });
-    renderTimersLocal();
-    send(Cmd.timer(ms, axis));
-  };
-  $("btnTimersCount").onclick = () => send(Cmd.timers());
-  $("btnClearTimers").onclick = async () => {
-    if (await confirmModal("Clear timers", "Clear all active timers?")) {
-      S.timersLocal = [];
-      renderTimersLocal();
-      send(Cmd.clearTimers());
-    }
-  };
-
-  /* power */
-  $("btnSleep").onclick = () => send(Cmd.sleep());
-  $("btnWake").onclick = () => send(Cmd.wake());
-  $("swAutoSleep").onchange = () => {
-    S.autoSleep = $("swAutoSleep").checked;
-    send(Cmd.autoSleep(S.autoSleep));
-    renderEnergy();
-  };
-
-  /* logger */
-  $("btnLogOn").onclick = () => send(Cmd.logOn());
-  $("btnLogOff").onclick = () => send(Cmd.logOff());
-  $("btnLogShow").onclick = () => send(Cmd.logShow());
-  $("btnLogClear").onclick = () => send(Cmd.logClear());
-
-  /* console */
-  $("btnSend").onclick = sendFromInput;
-  $("cmdInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") sendFromInput();
-    else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (S.histIdx > 0) { S.histIdx--; $("cmdInput").value = S.history[S.histIdx] || ""; }
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (S.histIdx < S.history.length) { S.histIdx++; $("cmdInput").value = S.history[S.histIdx] || ""; }
-    }
-  });
-  $("btnClearConsole").onclick = () => { $("consoleBox").innerHTML = ""; S.consoleLines = 0; };
   $("btnExportLog").onclick = () => {
     const text = Array.from($("consoleBox").children).map((d) => d.innerText).join("\n");
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
@@ -1677,7 +1551,7 @@ function init() {
       ? "Web Serial missing — the Connection card uses the system serial driver instead."
       : (inElectron ? "Serial support missing in this build."
                     : "This browser has no Web Serial. Use the simulator, or Chrome/Edge.");
-    $("btnConnect").disabled = !inElectron;
+    /* btnConnect stays enabled — it dials the port picked in hdrPort */
   } else {
     $("serialHint").textContent = inElectron
       ? "Pick the port in the Connection card (sidebar), or click “Connect Arduino”."
@@ -1721,8 +1595,8 @@ function init() {
     else toast("Confirmations ON — board replies >> ACK: <cmd> after each command", "ok", 5000);
     send(on ? "ack on" : "ack off");
   };
-  $("btnScanPorts").onclick = scanPorts;
-  $("btnDiscPort").onclick = () => { if (S.mode === "serial") S.serial.disconnect(); };
+  $("hdrScan").onclick = async () => { S._sysPorts = null; await renderConnCard();
+    addConsole("sys", "[SYS] port scan: " + Math.max(0, ($("hdrPort") ? $("hdrPort").length : 1) - 1) + " device(s)"); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
   if (window.electronAPI && window.electronAPI.onPortAdded) {
     window.electronAPI.onPortAdded(() => {

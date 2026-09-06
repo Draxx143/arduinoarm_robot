@@ -31,6 +31,9 @@
         <option value="57600">57600</option>
         <option value="115200" selected>115200</option>
       </select>
+      <select id="hdrPort" title="Serial port — ⚡ Connect Arduino dials this port"><option value="">pick port…</option></select>
+      <button class="btn small" id="hdrScan" title="Rescan serial ports">&#8635;</button>
+      <label class="chk" style="display:flex;align-items:center;gap:4px;font-size:10.5px;margin-inline-end:2px" title="Auto-connect the best port at startup"><input type="checkbox" id="chkAutoPort"> auto</label>
       <button class="btn teal" id="btnConnect">⚡ Connect Arduino</button>
       <button class="btn amber" id="btnSim">▦ Simulator</button>
       <div class="state-badge" id="stateBadge"><span class="dot"></span><span id="stateLabel">OFFLINE</span></div>
@@ -57,7 +60,6 @@
     </div>
 
     <nav class="tabs" id="tabsNav">
-      <button class="tab-btn active" data-tab="dashboard">▤ Dashboard</button>
       <button class="tab-btn" data-tab="motion">✥ Motion</button>
       <button class="tab-btn" data-tab="kin">∑ Kinematics</button>
       <button class="tab-btn" data-tab="memory">▤ Memory &amp; Teach</button>
@@ -65,53 +67,9 @@
       <button class="tab-btn" data-tab="help">▢ Reference</button>
     </nav>
 
-    <!-- ── Tab 1: Dashboard ── -->
-    <section class="tab-panel active" id="tab-dashboard">
-      <div class="stack">
-        <div class="card">
-          <h3>Axis Overview<span class="en">LIVE JOINT STATUS</span></h3>
-          <div class="card-body">
-            <div class="axes-row" id="axesRow"></div>
-          </div>
-        </div>
-
-        <div class="grid2">
-          <div class="card">
-            <h3>Quick Actions<span class="en">OPERATOR PANEL</span></h3>
-            <div class="card-body">
-              <div class="row">
-                <button class="btn teal" id="qaHome">⌂ Home All</button>
-                <button class="btn amber" id="qaDemo">▶ Run Demo</button>
-                <button class="btn" id="qaStopDemo">■ Stop Demo</button>
-                <button class="btn red" id="qaStop">✋ Full Stop</button>
-                <button class="btn green" id="qaEnable">⚡ Power All</button>
-                <button class="btn" id="qaDisable">◌ Unpower All</button>
-                <button class="btn" id="qaListPos">≡ List Slots</button>
-              </div>
-              <p class="tiny" style="margin-top:9px">Tip: “Home All” calibrates in firmware order Z → Y → X → A → B. The demo requires all axes homed.</p>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>System Summary<span class="en">MACHINE STATE</span></h3>
-            <div class="card-body">
-              <div class="grid3">
-                <div class="big-stat"><span class="v" id="statHomed">0/5</span><span class="t">Homed</span></div>
-                <div class="big-stat"><span class="v" id="statMoving">0</span><span class="t">Moving</span></div>
-                <div class="big-stat"><span class="v" id="statEnabled">0/5</span><span class="t">Powered</span></div>
-              </div>
-              <div class="kv"><span>Speed profile</span><b id="statProfile">—</b></div>
-              <div class="kv"><span>Demo</span><b id="statDemo">—</b></div>
-              <div class="kv"><span>Energy</span><b id="statEnergy">—</b></div>
-              <div class="kv"><span>Teach steps</span><b id="statTeach">—</b></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ── Tab 2: Motion ── -->
-    <section class="tab-panel" id="tab-motion">
+    <!-- ── Tab 1: Motion (default) ── -->
+    <section class="tab-panel active" id="tab-motion">
       <div class="stack">
         <div class="card">
           <h3>Joint Jog<span class="en">MANUAL MOVE PENDANT</span></h3>
@@ -412,6 +370,8 @@
         <h3>Serial Console<span class="en">115200 8N1</span></h3>
         <div class="card-body">
           <div class="console-tools">
+            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
+            <div class="chips" id="chipsBox"></div>
             <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
             <button class="btn small" id="btnPortTest" title="2 s raw OS-level read of the port — checks whether the board transmits at all">&#128269; Port Test</button>
             <span class="tiny" id="rxMeter" style="margin-left:auto">RX 0 B</span>
@@ -422,29 +382,12 @@
             <button class="btn teal" id="btnSend">Send ⏎</button>
           </div>
           <div class="row" style="margin-top:10px">
-            <span class="tiny" style="font-weight:800;letter-spacing:.1em">QUICK:</span>
-            <div class="chips" id="chipsBox"></div>
-          </div>
-          <div class="row" style="margin-top:10px">
             <button class="btn small" id="btnClearConsole">✕ Clear screen</button>
             <button class="btn small teal" id="btnExportLog">⤓ Export log (txt)</button>
             <span class="tiny"><kbd>Esc</kbd> = E-STOP · <kbd>Ctrl+K</kbd> = focus console</span>
           </div>
         </div>
       </div>
-
-    <div class="card">
-      <h3>Connection<span class="en">PORT SELECT</span></h3>
-      <div class="card-body">
-        <div id="portRows"></div>
-        <div class="conn-tools">
-          <button class="btn small" id="btnScanPorts" title="List every serial device connected to this machine">&#128269; Scan Ports</button>
-          <button class="btn small red" id="btnDiscPort" style="display:none" title="Close the serial link">&#10005; Disconnect</button>
-          <label class="chk"><input type="checkbox" id="chkAutoPort"> auto-connect on start</label>
-        </div>
-        <p class="tiny" id="portHint" style="margin-top:8px">Pick the port your Arduino is connected to.</p>
-      </div>
-    </div>
 
     <div class="card">
       <h3>Link Status<span class="en">COMMS</span></h3>
@@ -454,18 +397,10 @@
         <div class="kv"><span>TX</span><b id="txCount">0 B</b></div>
         <div class="kv"><span>RX</span><b id="rxCount">0 B</b></div>
         <p class="tiny" id="serialHint" style="margin-top:8px"></p>
+        <p class="tiny" id="portHint" style="margin-top:6px">Pick the port in the header, then press ⚡ Connect Arduino.</p>
       </div>
     </div>
 
-    <div class="card">
-      <h3>Event Feed<span class="en">LIVE LOG</span></h3>
-      <div class="feed-tools">
-        <button class="btn small" id="btnFeedPause" title="Freeze / resume the feed">⏸ Pause</button>
-        <button class="btn small" id="btnFeedClear" title="Clear the feed">✕ Clear</button>
-        <span class="tiny" id="feedStat" style="margin-left:auto">0 events</span>
-      </div>
-      <div class="feed" id="feedBox"></div>
-    </div>
   </aside>
 
 </div>

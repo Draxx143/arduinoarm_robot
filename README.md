@@ -35,10 +35,10 @@ arduinoarm_robot/
 
 | فایل | پلتفرم | نوع |
 |---|---|---|
-| `AXIS5-Robot-Control-1.0.27-amd64.deb` | Ubuntu / Debian | نصب‌کننده‌ی سیستم |
-| `AXIS5-Robot-Control-1.0.27-x86_64.AppImage` | هر لینوکس ۶۴بیتی | قابل‌حمل، بدون نصب |
-| `AXIS5-Robot-Control-Setup-1.0.27.exe` | Windows 10/11 | نصب‌کننده |
-| `AXIS5-Robot-Control-Portable-1.0.27.exe` | Windows 10/11 | قابل‌حمل، بدون نصب |
+| `AXIS5-Robot-Control-1.0.28-amd64.deb` | Ubuntu / Debian | نصب‌کننده‌ی سیستم |
+| `AXIS5-Robot-Control-1.0.28-x86_64.AppImage` | هر لینوکس ۶۴بیتی | قابل‌حمل، بدون نصب |
+| `AXIS5-Robot-Control-Setup-1.0.28.exe` | Windows 10/11 | نصب‌کننده |
+| `AXIS5-Robot-Control-Portable-1.0.28.exe` | Windows 10/11 | قابل‌حمل، بدون نصب |
 
 ---
 
@@ -50,14 +50,14 @@ arduinoarm_robot/
 
 ```bash
 # ۱) دانلود آخرین نسخه
-wget -c https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.27-amd64.deb
+wget -c https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.28-amd64.deb
 
 # ۲) (اختیاری اما توصیه‌شده) بررسی سلامت فایل — خروجی این دستور باید
 #    با SHA256 نمایش‌داده‌شده کنار فایل در صفحه‌ی Releases یکی باشد
-sha256sum AXIS5-Robot-Control-1.0.27-amd64.deb
+sha256sum AXIS5-Robot-Control-1.0.28-amd64.deb
 
 # ۳) نصب
-sudo apt install ./AXIS5-Robot-Control-1.0.27-amd64.deb
+sudo apt install ./AXIS5-Robot-Control-1.0.28-amd64.deb
 ```
 
 پس از نصب، برنامه با نام **AXIS-5 Robot Control** در منوی برنامه‌ها ظاهر می‌شود، یا در ترمینال:
@@ -66,19 +66,19 @@ sudo apt install ./AXIS5-Robot-Control-1.0.27-amd64.deb
 axis5-robot-control
 ```
 
-> اگر فایل را از مرورگر دانلود کردید، فقط مسیر را عوض کنید: `sudo apt install ~/Downloads/AXIS5-Robot-Control-1.0.27-amd64.deb`
+> اگر فایل را از مرورگر دانلود کردید، فقط مسیر را عوض کنید: `sudo apt install ~/Downloads/AXIS5-Robot-Control-1.0.28-amd64.deb`
 
 ### روش ۲ — AppImage (بدون نصب، قابل‌حمل)
 
 ```bash
-chmod +x AXIS5-Robot-Control-1.0.27-x86_64.AppImage
-./AXIS5-Robot-Control-1.0.27-x86_64.AppImage
+chmod +x AXIS5-Robot-Control-1.0.28-x86_64.AppImage
+./AXIS5-Robot-Control-1.0.28-x86_64.AppImage
 ```
 
 اگر روی توزیع‌های جدید خطای sandbox داد:
 
 ```bash
-./AXIS5-Robot-Control-1.0.27-x86_64.AppImage --no-sandbox
+./AXIS5-Robot-Control-1.0.28-x86_64.AppImage --no-sandbox
 ```
 
 ### روش ۳ — اجرا از سورس
@@ -152,13 +152,13 @@ ls ~/.config | grep -i axis5     # باید خالی باشد
 
 ### روش ۱ — نصب‌کننده‌ی Setup
 
-1. فایل `AXIS5-Robot-Control-Setup-1.0.27.exe` را از [Releases](https://github.com/Draxx143/arduinoarm_robot/releases/latest) دانلود کنید.
+1. فایل `AXIS5-Robot-Control-Setup-1.0.28.exe` را از [Releases](https://github.com/Draxx143/arduinoarm_robot/releases/latest) دانلود کنید.
 2. روی آن دوبار کلیک کنید (اگر SmartGuard هشدار داد: **More info → Run anyway** — چون امضای دیجیتال خریداری نشده).
 3. نصب پیش‌فرض: میان‌بر روی **دسکتاپ** و **Start Menu** ساخته می‌شود.
 
 ### روش ۲ — نسخه‌ی Portable (بدون نصب)
 
-فایل `AXIS5-Robot-Control-Portable-1.0.27.exe` را دانلود و مستقیم اجرا کنید — نیازی به نصب ندارد و می‌توانید از فلش هم اجرایش کنید.
+فایل `AXIS5-Robot-Control-Portable-1.0.28.exe` را دانلود و مستقیم اجرا کنید — نیازی به نصب ندارد و می‌توانید از فلش هم اجرایش کنید.
 
 ### روش ۳ — اجرا از سورس
 
