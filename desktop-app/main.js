@@ -137,11 +137,28 @@ function createWindow() {
   /* OS-level port enumeration for the Connection card */
   ipcMain.handle("serial:list-system-ports", () => listSystemPorts());
 
+  /* How many bytes did the MAIN-process driver actually see? */
+  ipcMain.handle("serialport:stats", () => {
+    let rx = 0;
+    openSerialPorts.forEach((r) => { rx += r.rx || 0; });
+    return { mainRx: rx };
+  });
+
+  /* Raw OS-level port probe: 2 s of `cat` straight from the kernel.
+   * Call with the app port CLOSED. Returns byte count + a sample. */
+  ipcMain.handle("port:probe", (e, portPath) => new Promise((resolve) => {
+    execFile("timeout", ["2", "cat", String(portPath)], { timeout: 4000, maxBuffer: 262144 }, (err, stdout) => {
+      const out = String(stdout || "");
+      resolve({ bytes: out.length, sample: out.slice(0, 160) });
+    });
+  }));
+
   /* Who else has the port open? (RX=0 usually means a 2nd reader is
    * stealing the bytes — name it so the user knows what to close) */
   ipcMain.handle("port:holders", (e, portPath) => new Promise((resolve) => {
     execFile("fuser", [String(portPath)], (err, stdout) => {
-      const pids = String(stdout || "").trim().split(/\s+/).filter(Boolean);
+      const pids = String(stdout || "").trim().split(/\s+/).filter(Boolean)
+        .map(Number).filter((pid) => pid && pid !== process.pid); /* the app itself always holds it */
       if (!pids.length) return resolve({ pids: [], procs: [] });
       execFile("ps", ["-o", "comm=", "-p", pids.join(",")], (e2, so) => {
         const procs = String(so || "").split("\n").map((x) => x.trim()).filter(Boolean);
@@ -176,18 +193,21 @@ function createWindow() {
        *  1) 'data' event (works when the stream flows)
        *  2) 15 ms read() pump (works in paused mode)
        * whichever fires, the renderer gets the bytes. */
+      const rec0 = openSerialPorts.get(id);
       sp.on("data", (buf) => {
+        rec0.rx += buf.length;
         if (win && !win.isDestroyed()) win.webContents.send("serialport:data", buf.toString("base64"));
       });
       const pump = setInterval(() => {
         try {
           let chunk;
           while ((chunk = sp.read()) !== null) {
+            rec0.rx += chunk.length;
             if (win && !win.isDestroyed()) win.webContents.send("serialport:data", chunk.toString("base64"));
           }
         } catch (er2) {}
       }, 15);
-      openSerialPorts.set(id, { sp, pump });
+      openSerialPorts.set(id, { sp, pump, rx: 0, path: String(portPath) });
       sp.on("close", () => {
         clearInterval(pump);
         openSerialPorts.delete(id);

@@ -405,14 +405,15 @@ async function renderConnCard() {
     }
     rows.appendChild(sec);
     const ev = (window.electronAPI && window.electronAPI.versions && window.electronAPI.versions.electron) || "?";
-    let drvState = "n/a";
+    let drvState = "n/a", mainRx = 0;
     try {
       if (window.electronAPI.serialDriverAvailable) drvState = (await window.electronAPI.serialDriverAvailable()) ? "loaded ✓" : "FAILED ✗";
+      if (window.electronAPI.serialStats) mainRx = (await window.electronAPI.serialStats()).mainRx;
     } catch (e) {}
     const diag = document.createElement("div");
     diag.className = "p-none";
     diag.style.marginTop = "6px";
-    diag.innerHTML = `diag: Electron ${ev} &middot; webSerial ${supported ? "ok" : "missing"} &middot; driver ${drvState} &middot; OS list: ${sysPorts.length} &middot; RX ${S.serial.rxCount}B`;
+    diag.innerHTML = `diag: Electron ${ev} &middot; driver ${drvState} &middot; OS list: ${sysPorts.length} &middot; mainRX ${mainRx}B &middot; appRX ${S.serial.rxCount}B`;
     rows.appendChild(diag);
   }
 
@@ -1398,12 +1399,13 @@ function updateLinkStats() {
         window.electronAPI.portHolders(label).then((h) => {
           if (!hint) return;
           if (h && h.procs && h.procs.length) {
-            hint.innerHTML = "<b>RX 0 B — the port is being read by another program:</b> " +
+            hint.innerHTML = "<b>RX 0 B — another program is reading the port:</b> " +
               h.procs.map(escH).join(", ") +
-              " &mdash; <b>close it</b> (two readers share/steal the bytes!), then Disconnect &amp; Connect.";
-            addConsole("warn", "!! port held by: " + h.procs.join(", ") + " (PIDs " + h.pids.join(", ") + ") — close it and reconnect");
+              " &mdash; <b>close it</b> (two readers steal each other's bytes!), then Disconnect &amp; Connect.";
+            addConsole("warn", "!! port ALSO held by: " + h.procs.join(", ") + " (PIDs " + h.pids.join(", ") + ") — close it and reconnect");
           } else {
-            hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B) &mdash; no other program holds the port. Check the board baud rate (115200) and re-flash the firmware, then Disconnect &amp; Connect.";
+            hint.innerHTML = "<b>RX 0 B</b> &mdash; no other reader. Run <b>Port Test</b>: if the board transmits to a raw OS reader, the driver path is at fault; if not, the board itself is silent (baud/firmware/another DTR app).";
+            addConsole("sys", "[SYS] no other program holds the port — press 🔬 Port Test to check the board itself");
           }
         }).catch(() => {});
       }
@@ -1664,6 +1666,32 @@ function init() {
   $("appVersion").textContent = (window.electronAPI && window.electronAPI.appVersion) || "web";
 
   /* ---------- Connection card wiring ---------- */
+  $("btnPortTest").onclick = async () => {
+    const hint = $("portHint");
+    let path = "";
+    try {
+      const res = await window.electronAPI.ipcSerial.list();
+      path = (res && res.ports && res.ports[0] && res.ports[0].path) || "";
+    } catch (e) {}
+    if (!path) { toast("No serial device found to test", "err"); return; }
+    if (S.mode === "serial") { await S.serial.disconnect(); await new Promise((r) => setTimeout(r, 400)); }
+    if (hint) hint.innerHTML = `&mdash; probing <code>${escH(path)}</code> for 2 s with a raw OS reader&hellip;`;
+    toast("Probing the port for 2 s (the board may reboot)", "info", 3000);
+    let res2 = { bytes: -1, sample: "" };
+    try { res2 = await window.electronAPI.portProbe(path); } catch (e) { res2 = { bytes: -1, sample: String(e.message || e) }; }
+    if (res2.bytes > 0) {
+      const sample = String(res2.sample || "").replace(/[\u0000-\u001f]+/g, " ").slice(0, 80);
+      if (hint) hint.innerHTML = `<b style="color:#3fb950">Board IS transmitting</b> (${res2.bytes} bytes on raw read) &mdash; sample: <code>${escH(sample)}</code>. The OS path works; reconnect and watch the RX meter.`;
+      addConsole("sys", `[SYS] port probe: ${res2.bytes} bytes received raw — board transmits ✓`);
+    } else if (res2.bytes === 0) {
+      if (hint) hint.innerHTML = `<b style="color:#fca5a5">Board sent NOTHING</b> even to a raw OS reader (2 s) &mdash; the board itself is silent: check it runs the latest firmware, baud 115200, no other DTR app, then power-cycle it.`;
+      addConsole("warn", "!! port probe: 0 bytes in 2 s — the board itself is not transmitting");
+    } else {
+      if (hint) hint.innerHTML = `probe failed: ${escH(res2.sample || "unknown error")}`;
+    }
+    renderConnCard();
+  };
+
   $("btnAck").onclick = () => {
     if (S.mode === "off") { toast("Connect to the Arduino (or start the simulator) first", "warn"); return; }
     const on = !$("btnAck").classList.contains("on");
