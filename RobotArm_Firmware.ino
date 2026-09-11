@@ -491,9 +491,23 @@ void handleSerialCommands() {
         else if (command == F("wake"))          { energyManager.wake(); }
         else if (command == F("autosleep on"))  { energyManager.enableAutoSleep(); }
         else if (command == F("autosleep off")) { energyManager.disableAutoSleep(); }
-        else if (command == F("help"))          { printSpeeds(); }
+        else if (command == F("help"))          { printSpeeds(); printUsage(); }
+        // ==================== راهنمای دستورات بدون آرگومان ====================
+        else if (command == F("move"))      { Serial.println(F("Format: move <axis 1-5> <steps>")); }
+        else if (command == F("deg"))       { Serial.println(F("Format: deg <axis 1-5> <degrees>")); }
+        else if (command == F("maxspeed"))  { Serial.println(F("Format: maxspeed <axis 1-5> <steps/s>")); }
+        else if (command == F("accel"))     { Serial.println(F("Format: accel <axis 1-5> <steps/s2>")); }
+        else if (command == F("homespeed")) { Serial.println(F("Format: homespeed <axis 1-5> <steps/s>")); }
+        else if (command == F("timer"))     { Serial.println(F("Format: timer <ms> <axis 1-5> <degrees>")); }
+        else if (command == F("ik"))        { Serial.println(F("Format: ik <x> <y> <z>")); }
+        else if (command == F("fk"))        { Serial.println(F("Format: fk <a1> <a2> <a3> <a4> <a5>")); }
+        else if (command == F("traj"))      { Serial.println(F("Format: traj line <d1> <d2> <d3> <d4> <d5> <ms> | traj stop")); }
+        else if (command == F("savepos"))   { Serial.println(F("Format: savepos <slot 0-9>")); }
+        else if (command == F("loadpos"))   { Serial.println(F("Format: loadpos <slot 0-9>")); }
+        else if (command == F("clearpos"))  { Serial.println(F("Format: clearpos <slot 0-9>")); }
+        else if (command == F("log"))       { Serial.println(F("Format: log on|off|show|clear")); }
         else {
-            Serial.println(F("Unknown command"));
+            Serial.println(F("Unknown command - send 'help'"));
         }
     }
 }
@@ -553,6 +567,23 @@ void printSpeeds() {
         Serial.println(a->getHomingSpeed());
     }
     Serial.println(F("=================================="));
+}
+
+void printUsage() {
+    Serial.println(F("=== Commands ==="));
+    Serial.println(F("  home / home <1-5> / abort"));
+    Serial.println(F("  move <ax> <steps> / deg <ax> <deg> / moveall <d1..d5>"));
+    Serial.println(F("  traj line <d1..d5> <ms> / traj stop"));
+    Serial.println(F("  speed <pct> / profile slow|normal|fast / speeds"));
+    Serial.println(F("  maxspeed|accel|homespeed <ax> <value>"));
+    Serial.println(F("  enable|disable [<ax>] / estop / reset / stop"));
+    Serial.println(F("  status / demo / stopdemo"));
+    Serial.println(F("  savepos|loadpos|clearpos <slot> / listpos"));
+    Serial.println(F("  timer <ms> <ax> <deg> / timers / cleartimers"));
+    Serial.println(F("  teach / teach step / teach stop / play / play stop"));
+    Serial.println(F("  ik <x> <y> <z> / fk <a1..a5>"));
+    Serial.println(F("  log on|off|show|clear / sleep / wake / autosleep on|off"));
+    Serial.println(F("================"));
 }
 
 void startDemo() {

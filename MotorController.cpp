@@ -165,7 +165,35 @@ void MotorController::enableAllMotors() {
 }
 
 void MotorController::disableAllMotors() {
+    // اول همه را متوقف کن: اگر موتوری وسط حرکت غیرفعال شود، ISR همچنان
+    // استپ می‌شمارد ولی موتور نمی‌چرخد → موقعیت ثبت‌شده غلط می‌شود
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->stop();
     for (int i = 0; i < NUM_AXES; i++) _axes[i]->disableMotor();
+    _homingInProgress = false;
+}
+
+// فعال‌سازی یک محور
+void MotorController::enableAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return;
+    _axes[axis]->clearHomingFault();
+    _axes[axis]->enableMotor();
+    Serial.print(F(">> Axis "));
+    Serial.print(axis + 1);
+    Serial.println(F(" enabled"));
+}
+
+// غیرفعال‌سازی یک محور
+void MotorController::disableAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return;
+    _axes[axis]->stop();          // جلوگیری از شمارش استپ بدون حرکت واقعی
+    _axes[axis]->disableMotor();
+    if (_homingInProgress) {
+        _homingInProgress = false;
+        _currentHomingAxis = 0;
+    }
+    Serial.print(F(">> Axis "));
+    Serial.print(axis + 1);
+    Serial.println(F(" disabled"));
 }
 
 void MotorController::emergencyStop() {
