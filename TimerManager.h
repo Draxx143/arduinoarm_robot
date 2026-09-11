@@ -4,6 +4,9 @@
 #include <Arduino.h>
 #include "Config.h"
 
+// وقتی تایمر شلیک شد این تابع صدا زده می‌شود (axis, targetSteps)
+typedef void (*TimerFireCallback)(uint8_t axis, int32_t target);
+
 struct TimerEntry {
     bool active;
     unsigned long triggerTime;
@@ -19,10 +22,13 @@ public:
     bool addTimer(unsigned long delayMs, uint8_t axis, int32_t target);
     void clear();
     int getActiveCount();
-    
+    // BUGFIX: قبلاً تایمر فقط یک پیام چاپ می‌کرد و هیچ حرکتی انجام نمی‌شد
+    void setCallback(TimerFireCallback cb);
+
 private:
     static const int MAX_TIMERS = 5;
     TimerEntry _timers[MAX_TIMERS];
+    TimerFireCallback _callback;
 };
 
 #endif

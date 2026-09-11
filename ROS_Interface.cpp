@@ -14,21 +14,16 @@ void ROSInterface::jointCommandCallback(const sensor_msgs::JointState& msg) {
     if (_instance && _instance->_controller) {
         if (msg.position_length >= NUM_AXES) {
             
-            // FIX: تبدیل صحیح درجه به استپ
-            // فرمول: steps = degrees * (stepsPerRev * microstep) / 360.0
-            // این مقادیر باید برای هر axis از Config.h خونده بشن
-            // برای سادگی از مقادیر axis X به عنوان پایه استفاده می‌کنیم
-            // اگر هر axis microstep متفاوت داره، باید آرایه جداگانه تعریف بشه
-            const float stepsPerDegree[NUM_AXES] = {
-                (AXIS_X_STEPS_PER_REV * AXIS_X_MICROSTEP) / 360.0f,  // Joint 1
-                (AXIS_Y_STEPS_PER_REV * AXIS_Y_MICROSTEP) / 360.0f,  // Joint 2
-                (AXIS_Z_STEPS_PER_REV * AXIS_Z_MICROSTEP) / 360.0f,  // Joint 3
-                (AXIS_A_STEPS_PER_REV * AXIS_A_MICROSTEP) / 360.0f,  // Joint 4
-                (AXIS_B_STEPS_PER_REV * AXIS_B_MICROSTEP) / 360.0f   // Joint 5
-            };
-            
+            // تبدیل درجه به استپ
+            // فرمول درست: steps = degrees * (stepsPerRev * microstep * gearRatio) / 360
+            // BUGFIX: قبلاً GEAR_RATIO در این تبدیل نبود، برای همین هر دستور ROS
+            //         بین ۳ تا ۸ برابر بزرگ‌تر از مقدار واقعی اجرا می‌شد.
+            //         حالا مستقیم از تنظیمات خود محور خوانده می‌شود.
             for (int i = 0; i < NUM_AXES; i++) {
-                int32_t targetSteps = (int32_t)(msg.position[i] * stepsPerDegree[i]);
+                Axis* ax = _instance->_controller->getAxis(i);
+                if (!ax) continue;
+                float stepsPerDegree = ax->getStepsPerDegree();
+                int32_t targetSteps = (int32_t)(msg.position[i] * stepsPerDegree);
                 _instance->_controller->moveTo(i, targetSteps);
             }
             
@@ -173,17 +168,11 @@ void ROSInterface::updateJointStateMessage() {
     
     _controller->getJointStates(positions, nullptr, moving, homed, endstops);
     
-    // FIX: تبدیل صحیح استپ به درجه (معکوس تبدیل در callback)
-    const float degreesPerStep[NUM_AXES] = {
-        360.0f / (AXIS_X_STEPS_PER_REV * AXIS_X_MICROSTEP),
-        360.0f / (AXIS_Y_STEPS_PER_REV * AXIS_Y_MICROSTEP),
-        360.0f / (AXIS_Z_STEPS_PER_REV * AXIS_Z_MICROSTEP),
-        360.0f / (AXIS_A_STEPS_PER_REV * AXIS_A_MICROSTEP),
-        360.0f / (AXIS_B_STEPS_PER_REV * AXIS_B_MICROSTEP)
-    };
-    
+    // تبدیل استپ به درجه — BUGFIX: GEAR_RATIO هم باید لحاظ شود
     for (int i = 0; i < NUM_AXES; i++) {
-        _jointStateMsg.position[i] = positions[i] * degreesPerStep[i];
+        Axis* ax = _controller->getAxis(i);
+        float stepsPerDegree = ax ? ax->getStepsPerDegree() : 1.0f;
+        _jointStateMsg.position[i] = positions[i] / stepsPerDegree;
         _jointStateMsg.velocity[i] = moving[i] ? 1.0f : 0.0f;
         _jointStateMsg.effort[i]   = moving[i] ? 0.5f : 0.0f;
     }

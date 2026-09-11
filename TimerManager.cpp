@@ -4,6 +4,11 @@ TimerManager::TimerManager() {
     for (int i = 0; i < MAX_TIMERS; i++) {
         _timers[i].active = false;
     }
+    _callback = nullptr;
+}
+
+void TimerManager::setCallback(TimerFireCallback cb) {
+    _callback = cb;
 }
 
 void TimerManager::update() {
@@ -11,14 +16,16 @@ void TimerManager::update() {
     
     for (int i = 0; i < MAX_TIMERS; i++) {
         if (_timers[i].active && currentTime >= _timers[i].triggerTime) {
-            Serial.print(">> Timer fired: axis ");
+            Serial.print(F(">> Timer fired: axis "));
             Serial.print(_timers[i].axis + 1);
-            Serial.print(" to ");
-            Serial.println(_timers[i].target);
-            
-            // اینجا باید motorController فراخوانی بشه
-            // ولی چون circular dependency داره، از callback استفاده می‌کنیم
+            Serial.print(F(" -> "));
+            Serial.print(_timers[i].target);
+            Serial.println(F(" steps"));
+
             _timers[i].active = false;
+            if (_callback) {
+                _callback(_timers[i].axis, _timers[i].target);
+            }
         }
     }
 }
