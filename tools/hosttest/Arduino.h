@@ -45,12 +45,13 @@ typedef bool    boolean;
 #ifndef constrain
 #define constrain(amt, low, high) ((amt) < (low) ? (low) : ((amt) > (high) ? (high) : (amt)))
 #endif
-#ifndef min
-#define min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-#ifndef max
-#define max(a, b) ((a) > (b) ? (a) : (b))
-#endif
+/* min/max به‌صورت template و نه macro: ماکرویی که اینجا تعریف شود
+   هدرهای استاندارد C++ (<fstream>, <algorithm>) را می‌شکند، چون آن‌ها
+   تابع‌های عضو min()/max() دارند. */
+template<typename A, typename B>
+inline auto min(A a, B b) -> decltype(a < b ? a : b) { return a < b ? a : b; }
+template<typename A, typename B>
+inline auto max(A a, B b) -> decltype(a > b ? a : b) { return a > b ? a : b; }
 #ifndef abs
 #define abs(x) ((x) > 0 ? (x) : -(x))
 #endif

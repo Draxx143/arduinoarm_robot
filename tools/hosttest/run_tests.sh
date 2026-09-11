@@ -7,8 +7,9 @@
 #  اجرا:  bash tools/hosttest/run_tests.sh
 # =====================================================================
 set -u
-SKETCH="$(cd "$(dirname "$0")/../.." && pwd)"
-HT="$SKETCH/tools/hosttest"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+SKETCH="$ROOT/firmware/RobotArm_Firmware"      # پوشه‌ی اسکچ آردوینو
+HT="$ROOT/tools/hosttest"
 OUT="$HT/build"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
@@ -43,6 +44,11 @@ PY
 # ---------------------------------------------------------------------
 # ۱) کامپایل همه‌ی ماژول‌ها
 # ---------------------------------------------------------------------
+if [ ! -f "$SKETCH/RobotArm_Firmware.ino" ]; then
+    echo "!! اسکچ پیدا نشد: $SKETCH" >&2
+    exit 1
+fi
+
 echo
 echo "===== [1/3] compiling all modules ====="
 OBJS=""
@@ -107,6 +113,41 @@ if [ $FAIL -eq 0 ]; then
         else
             echo "LINK FAIL"; FAIL=1
         fi
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# ۴) انطباق GUI ↔ فریم‌ور: هر دستوری که GUI می‌سازد باید شناخته شود
+# ---------------------------------------------------------------------
+if [ $FAIL -eq 0 ]; then
+    echo
+    echo "===== [4/4] GUI -> firmware command conformance ====="
+    if command -v node >/dev/null 2>&1; then
+        printf "  %-24s " "generating GUI commands"
+        if node "$ROOT/tools/gui_cmds.js" > "$OUT/gui_cmds.txt" 2> "$OUT/gui_cmds.err"; then
+            echo "OK — $(wc -l < "$OUT/gui_cmds.txt") commands"
+        else
+            echo "FAIL"; cat "$OUT/gui_cmds.err"; FAIL=1
+        fi
+
+        if [ $FAIL -eq 0 ]; then
+            printf "  %-24s " "feeding them to firmware"
+            if "$OUT/firmware" "$OUT/gui_cmds.txt" > "$OUT/gui_run.log" 2>&1; then
+                UNK=$(grep -c "^Unknown command" "$OUT/gui_run.log" || true)
+                REJ=$(grep -c "^!! " "$OUT/gui_run.log" || true)
+                if [ "$UNK" = "0" ]; then
+                    echo "OK — همه شناخته شدند (پیام‌های '!!' وابسته به وضعیت دستگاه: $REJ)"
+                else
+                    echo "FAIL — $UNK دستور ناشناخته"
+                    grep -B1 "^Unknown command" "$OUT/gui_run.log" | grep "^> " | sort -u | sed 's/^/      /'
+                    FAIL=1
+                fi
+            else
+                echo "RUNTIME FAIL"; FAIL=1
+            fi
+        fi
+    else
+        echo "  (node پیدا نشد — این بخش رد شد)"
     fi
 fi
 

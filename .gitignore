@@ -1,0 +1,33 @@
+# --- Build outputs ---
+dist/
+out/
+*.o
+*.elf
+*.hex
+*.bin
+tools/hosttest/build/
+
+# --- Node (فقط در desktop-app نصب می‌شود) ---
+node_modules/
+npm-debug.log*
+
+# --- Electron-builder artifacts ---
+*.AppImage
+*.deb
+*.rpm
+*.exe
+*.dmg
+build-win.log
+build-linux.log
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini

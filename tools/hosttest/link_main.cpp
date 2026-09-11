@@ -9,6 +9,9 @@
 #include "Arduino.h"
 #include "MotorController.h"
 #include <cstdio>
+#include <fstream>
+#include <string>
+#include <vector>
 
 extern uint64_t sim_micros;
 void setup();
@@ -63,13 +66,34 @@ static const char* CMDS[] = {
     "nosuchcommand", "", "   ",
 };
 
-int main() {
+// اگر یک نام فایل داده شود، دستورات از همان فایل خوانده می‌شوند
+// (برای تست انطباق GUI ↔ فریم‌ور)؛ وگرنه لیست داخلی اجرا می‌شود.
+static std::vector<std::string> loadCommands(int argc, char** argv) {
+    std::vector<std::string> out;
+    if (argc > 1) {
+        std::ifstream f(argv[1]);
+        if (!f) { fprintf(stderr, "!! cannot open %s\n", argv[1]); exit(2); }
+        std::string line;
+        while (std::getline(f, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+            if (!line.empty()) out.push_back(line);
+        }
+        printf("[SMOKE TEST] %d command(s) read from %s\n", (int)out.size(), argv[1]);
+    } else {
+        for (const char* c : CMDS) out.push_back(c);
+    }
+    return out;
+}
+
+int main(int argc, char** argv) {
     setup();
     tick(100);
 
-    int n = (int)(sizeof(CMDS) / sizeof(CMDS[0]));
+    std::vector<std::string> cmds = loadCommands(argc, argv);
+    int n = (int)cmds.size();
+
     for (int i = 0; i < n; i++) {
-        host_feed(CMDS[i]);
+        host_feed(cmds[i].c_str());
         loop();
         tick(4000);          // 200ms بین دستورات
         loop();
