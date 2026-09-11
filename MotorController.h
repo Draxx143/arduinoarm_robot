@@ -37,6 +37,13 @@ public:
     void abortHoming();
     bool homingFailed() const;
 
+    // ---- اولویت هومینگ ----
+    // ترتیب فعلی (ایندکس صفر‌بنیان) را چاپ می‌کند: J1 -> J2 -> J3 -> J4 -> J5
+    void printHomingOrder() const;
+    // تغییر ترتیب در زمان اجرا؛ order باید جایگشتی از 0..NUM_AXES-1 باشد
+    bool setHomingOrder(const uint8_t* order, uint8_t count);
+    const uint8_t* getHomingOrder() const { return _homingOrder; }
+
     // Single axis control
     void enableAxis(uint8_t axis);
     void disableAxis(uint8_t axis);
@@ -73,7 +80,8 @@ private:
     bool _allHomed;
     bool _homingInProgress;
     uint8_t _currentHomingAxis;
-    uint8_t _homingOrder[NUM_AXES];
+    uint8_t _homingOrder[NUM_AXES];   // ترتیب اولویت هومینگ
+    void printHomingFailure(uint8_t axis) const;
 
     volatile bool _estopActive;
     volatile uint8_t _estopDiv;

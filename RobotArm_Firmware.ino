@@ -253,9 +253,20 @@ void handleSerialCommands() {
 
         // ==================== Basic Commands ====================
         if (command == F("home")) {
-            Serial.println(F("Starting smart homing..."));
+            Serial.println(F("Starting homing of ALL joints (priority order J1 -> J5)..."));
             motorController->smartHoming();
             systemState = STATE_HOMING;
+        }
+        // ---- ترتیب اولویت هومینگ ----
+        else if (command == F("homeorder") || command == F("home order")) {
+            Serial.print(F(">> Homing priority: "));
+            motorController->printHomingOrder();
+            Serial.println(F(">> Each joint: search -> mandatory backoff -> verify endstop released"));
+            Serial.println(F(">> Strictly sequential - next joint starts only after backoff of this one"));
+            Serial.println(F(">> Change with: homeorder 1 2 3 4 5"));
+        }
+        else if (command.startsWith(F("homeorder "))) {
+            handleHomingOrderCommand(command);
         }
         else if (command.startsWith(F("home "))) {
             int axis = command.substring(5).toInt() - 1;
@@ -571,7 +582,7 @@ void printSpeeds() {
 
 void printUsage() {
     Serial.println(F("=== Commands ==="));
-    Serial.println(F("  home / home <1-5> / abort"));
+    Serial.println(F("  home / home <1-5> / abort / homeorder <j1..j5>"));
     Serial.println(F("  move <ax> <steps> / deg <ax> <deg> / moveall <d1..d5>"));
     Serial.println(F("  traj line <d1..d5> <ms> / traj stop"));
     Serial.println(F("  speed <pct> / profile slow|normal|fast / speeds"));
@@ -627,6 +638,17 @@ void printStatus() {
     Serial.print(F(" ("));
     Serial.print((int)(speedProfile.getMaxSpeedMultiplier() * 100.0f));
     Serial.println(F("%)"));
+
+    // ترتیب اولویت هومینگ + وضعیت هر جوینت
+    Serial.print(F("Homing priority: "));
+    motorController->printHomingOrder();
+    Serial.print(F("Homed: "));
+    for (int i = 0; i < NUM_AXES; i++) {
+        Serial.print(F("J"));
+        Serial.print(i + 1);
+        Serial.print(motorController->getAxis(i)->isHomed() ? F("[ok] ") : F("[--] "));
+    }
+    Serial.println();
 
     if (motorController->emergencyStopActive()) {
         Serial.println(F("!! EMERGENCY STOP ACTIVE - send 'reset'"));
@@ -703,6 +725,49 @@ void handleDegCommand(String command) {
     Serial.print(F("Moving axis ")); Serial.print(axis + 1);
     Serial.print(F(" to ")); Serial.print(degrees, 1);
     Serial.print(F("° (")); Serial.print(steps); Serial.println(F(" steps)"));
+}
+
+// ---- تغییر ترتیب اولویت هومینگ در زمان اجرا ----
+// نمونه: homeorder 1 2 3 4 5   -> اول جوینت ۱، بعد ۲، ۳، ۴ و ۵
+// نمونه: homeorder 3 2 1 4 5   -> اول Z (اگر مثلاً بخوای Z اول بالا بره)
+void handleHomingOrderCommand(String command) {
+    String args = command.substring(command.indexOf(' ') + 1);
+    args.trim();
+
+    uint8_t order[NUM_AXES];
+    int count = 0;
+    int startPos = 0;
+
+    while (count < NUM_AXES) {
+        int spacePos = args.indexOf(' ', startPos);
+        String tok = (spacePos == -1) ? args.substring(startPos)
+                                      : args.substring(startPos, spacePos);
+        tok.trim();
+        if (tok.length() == 0) break;
+
+        int joint = tok.toInt();
+        if (joint < 1 || joint > NUM_AXES) {
+            Serial.print(F("!! Joint numbers must be 1.."));
+            Serial.print(NUM_AXES);
+            Serial.print(F(" (got "));
+            Serial.print(joint);
+            Serial.println(F(")"));
+            return;
+        }
+        order[count++] = (uint8_t)(joint - 1);
+        if (spacePos == -1) break;
+        startPos = spacePos + 1;
+    }
+
+    if (count != NUM_AXES) {
+        Serial.print(F("!! homeorder needs exactly "));
+        Serial.print(NUM_AXES);
+        Serial.print(F(" joint numbers, got "));
+        Serial.print(count);
+        Serial.println(F(". Example: homeorder 1 2 3 4 5"));
+        return;
+    }
+    motorController->setHomingOrder(order, NUM_AXES);
 }
 
 void handleMoveAllCommand(String command) {

@@ -221,16 +221,27 @@ bool MotorController::startHoming() {
 
     for (int i = 0; i < NUM_AXES; i++) _axes[i]->clearHomingFault();
 
+    // هومینگ کامل = همه‌ی محورها از نو مرجع می‌گیرند. پرچم «هوم‌شده» همه
+    // همین الان پاک می‌شود تا وضعیت (status) در میانه‌ی توالی درست بگوید
+    // کدام جوینت هنوز مرجع ندارد.
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->clearHomed();
+
     _currentHomingAxis = 0;
     _allHomed = false;
 
     bool started = _axes[_homingOrder[0]]->startHoming();
     _homingInProgress = started;
 
-    if (!started) {
-        Serial.print(F("!! Axis "));
+    if (started) {
+        Serial.print(F(">> [1/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
         Serial.print(_homingOrder[0] + 1);
-        Serial.println(F(" refused to start homing (already homing/moving)"));
+        Serial.println(F(" homing started"));
+    } else {
+        Serial.print(F("!! Joint "));
+        Serial.print(_homingOrder[0] + 1);
+        Serial.println(F(" refused to start homing (emergency stop / already homing)"));
     }
     return started;
 }
@@ -273,12 +284,78 @@ void MotorController::backoffAllFromEndstops() {
     }
 }
 
+// متن دلیل شکست هومینگ (از کد خطایی که Axis در ISR ست می‌کند)
+static const char* homingFaultText(uint8_t code) {
+    switch (code) {
+        case HOME_FAULT_ESTOP:           return "emergency stop active";
+        case HOME_FAULT_NOT_FOUND:       return "endstop not found within search limit (check wiring / switch)";
+        case HOME_FAULT_BACKOFF_STUCK:   return "endstop stuck - never released, even during backoff";
+        case HOME_FAULT_BACKOFF_PRESSED: return "endstop still pressed after backoff";
+        default:                         return "unknown";
+    }
+}
+
+void MotorController::printHomingOrder() const {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (i) Serial.print(F(" -> "));
+        Serial.print(F("J"));
+        Serial.print(_homingOrder[i] + 1);
+    }
+    Serial.println();
+}
+
+bool MotorController::setHomingOrder(const uint8_t* order, uint8_t count) {
+    if (_homingInProgress) {
+        Serial.println(F("!! Cannot change homing order while homing is running"));
+        return false;
+    }
+    if (order == nullptr || count != NUM_AXES) {
+        Serial.print(F("!! homeorder needs exactly "));
+        Serial.print(NUM_AXES);
+        Serial.println(F(" joint numbers, e.g. homeorder 1 2 3 4 5"));
+        return false;
+    }
+    // باید جایگشت کاملی از 0..NUM_AXES-1 باشد (بدون تکرار و خارج از محدوده)
+    bool seen[NUM_AXES];
+    for (int i = 0; i < NUM_AXES; i++) seen[i] = false;
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (order[i] >= NUM_AXES) {
+            Serial.print(F("!! homeorder: invalid joint "));
+            Serial.print(order[i] + 1);
+            Serial.println();
+            return false;
+        }
+        if (seen[order[i]]) {
+            Serial.print(F("!! homeorder: joint "));
+            Serial.print(order[i] + 1);
+            Serial.println(F(" listed more than once"));
+            return false;
+        }
+        seen[order[i]] = true;
+    }
+    for (int i = 0; i < NUM_AXES; i++) _homingOrder[i] = order[i];
+    Serial.print(F(">> Homing order is now: "));
+    printHomingOrder();
+    return true;
+}
+
+void MotorController::printHomingFailure(uint8_t axis) const {
+    Serial.print(F("!! Joint "));
+    Serial.print(axis + 1);
+    Serial.print(F(" HOMING FAILED: "));
+    Serial.println(homingFaultText(_axes[axis]->homingFaultCode()));
+}
+
 void MotorController::smartHoming() {
     if (_homingInProgress) return;
 
     enableAllMotors();
     backoffAllFromEndstops();
-    Serial.println(F(">> Smart homing: all axes (order Z, Y, X, A, B)"));
+    Serial.print(F(">> Homing ALL joints in priority order: "));
+    printHomingOrder();
+    Serial.println(F(">> Strictly sequential: each joint finishes search + backoff"));
+    Serial.println(F(">> before the next one starts. Backoff is mandatory and the"));
+    Serial.println(F(">> endstop release is verified for every joint."));
     startHoming();
 }
 
@@ -314,38 +391,59 @@ void MotorController::processHoming() {
 
         for (int i = 0; i < NUM_AXES; i++) {
             if (_axes[i]->homingFailed()) {
-                Serial.print(F("!! Axis "));
-                Serial.print(i + 1);
-                Serial.println(F(" HOMING FAILED - endstop not reached (check wiring/limit)"));
+                printHomingFailure(i);
                 return;
             }
         }
-        Serial.println(F(">> Single axis homing complete!"));
+        Serial.println(F(">> Single axis homing complete - backoff verified!"));
         return;
     }
 
-    // ---- هومینگ کامل همه‌ی محورها ----
+    // ---- هومینگ ترتیبی همه‌ی محورها بر اساس اولویت ----
     uint8_t currentAxis = _homingOrder[_currentHomingAxis];
+    Axis* ax = _axes[currentAxis];
 
-    if (_axes[currentAxis]->homingFailed()) {
+    // خطا -> کل توالی متوقف می‌شود (مرجع موقعیت قابل اعتماد نیست)
+    if (ax->homingFailed()) {
         _homingInProgress = false;
-        Serial.print(F("!! Axis "));
-        Serial.print(currentAxis + 1);
-        Serial.println(F(" HOMING FAILED - sequence aborted"));
+        printHomingFailure(currentAxis);
+        Serial.println(F("!! Homing sequence ABORTED - remaining joints were NOT homed"));
+        Serial.println(F("!! Fix the endstop, then send 'home' again"));
         return;
     }
 
-    if (!_axes[currentAxis]->isHoming() && _axes[currentAxis]->isHomed()) {
+    // این جوینت کامل شد: جست‌وجو + بک‌آف + تأیید آزاد شدن endstop
+    if (!ax->isHoming() && ax->isHomed()) {
+        Serial.print(F(">> ["));
+        Serial.print(_currentHomingAxis + 1);
+        Serial.print(F("/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
+        Serial.print(currentAxis + 1);
+        if (ax->backoffDone()) {
+            Serial.println(F(" homed - backoff done, endstop released, position zeroed"));
+        } else {
+            Serial.println(F(" homed (WARNING: backoff not verified)"));
+        }
+
         _currentHomingAxis++;
 
         if (_currentHomingAxis >= NUM_AXES) {
             _homingInProgress = false;
             _allHomed = true;
-            Serial.println(F(">> All axes homed successfully!"));
+            Serial.println(F(">> ALL JOINTS HOMED in priority order - backoff done for every axis"));
             return;
         }
 
-        _axes[_homingOrder[_currentHomingAxis]]->startHoming();
+        uint8_t next = _homingOrder[_currentHomingAxis];
+        Serial.print(F(">> ["));
+        Serial.print(_currentHomingAxis + 1);
+        Serial.print(F("/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
+        Serial.print(next + 1);
+        Serial.println(F(" homing started"));
+        _axes[next]->startHoming();
     }
 }
 

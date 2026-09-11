@@ -31,6 +31,19 @@ enum HomingState : uint8_t {
     HOME_FAILED
 };
 
+// کد دلیل شکست هومینگ.
+// نکته: ماشین حالت هومینگ داخل ISR تایمر اجرا می‌شود، پس آنجا هیچ
+// Serial.print ای زده نمی‌شود (روی AVR اگر بافر TX پر شود و interrupt
+// هم‌سطح باشد، بن‌بست می‌کند). دلیل را با این کد بیرون می‌دهیم و
+// MotorController از حلقه‌ی اصلی چاپش می‌کند.
+enum HomingFaultCode : uint8_t {
+    HOME_FAULT_NONE = 0,
+    HOME_FAULT_ESTOP,           // استپ اضطراری فعال بود
+    HOME_FAULT_NOT_FOUND,       // endstop در محدوده‌ی جست‌وجو پیدا نشد
+    HOME_FAULT_BACKOFF_STUCK,   // سوئیچ حین بک‌آف آزاد نشد (چسبیده/خراب)
+    HOME_FAULT_BACKOFF_PRESSED  // بک‌آف تمام شد ولی سوئیچ هنوز فشرده بود
+};
+
 class Axis {
 public:
     // Constructor
@@ -67,7 +80,19 @@ public:
     bool isHomed() const;
     bool homingFailed() const;
     void clearHomingFault();
+    // پاک کردن پرچم «هوم‌شده» بدون حرکت دادن موتور. وقتی توالی هومینگ
+    // کامل شروع می‌شود، همه‌ی محورها از نو مرجع می‌گیرند، پس وضعیت باید
+    // همان لحظه «هوم‌نشده» گزارش شود (نه بعد از رسیدن نوبتشان).
+    void clearHomed() { _homed = false; }
     void backoffFromEndstop();   // غیرمسدودکننده: فقط endstop رو آزاد می‌کنه
+
+    // کد دلیل شکست هومینگ (HOME_FAULT_*) — برای چاپ از حلقه‌ی اصلی
+    uint8_t homingFaultCode() const { return _homeFaultCode; }
+    // بک‌آف کامل شد و آزاد شدن endstop هم تأیید شد؟
+    bool    backoffDone()   const { return _backoffDone; }
+    // وضعیت ماشین حالت هومینگ (HOME_*) و تعداد استپ‌های فاز فعلی
+    uint8_t  homeState() const { return _homeState; }
+    uint32_t homeSteps() const { return _homeSteps; }
 
     // ---- Status ----
     int32_t  getCurrentPosition() const;
@@ -116,7 +141,7 @@ private:
     void beginSearch();
     void beginBackoff();
     void completeHoming();
-    void failHoming();
+    void failHoming(uint8_t code);
     static uint16_t intervalTicks(float speed, float minSpeed, float maxSpeed);
 
     // ---- Pin configuration ----
@@ -187,6 +212,8 @@ private:
     volatile uint8_t  _homeState;
     volatile uint32_t _homeSteps;
     volatile bool     _homeFault;
+    volatile uint8_t  _homeFaultCode;   // دلیل شکست (HomingFaultCode)
+    volatile bool     _backoffDone;     // بک‌آف انجام و تأیید شد
     volatile bool     _releaseOnly;   // فقط آزادسازی endstop (بدون صفر کردن)
     uint32_t _homeSearchLimit;
     uint32_t _homeReleaseLimit;

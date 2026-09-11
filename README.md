@@ -88,7 +88,11 @@ Changes apply to the **next** move (never mid-move).
 ### Motion commands
 
 ```
-home / home <1-5>            smart, non-blocking homing
+home                         home ALL joints, in priority order J1 -> J2 -> J3 -> J4 -> J5
+home <1-5>                   home a single joint
+homeorder                    show the current homing priority
+homeorder <j1> <j2> <j3> <j4> <j5>
+                             change the priority at runtime (each joint exactly once)
 abort                        abort homing / motion
 move <axis> <steps>          absolute move in steps
 deg <axis> <degrees>         absolute move in degrees
@@ -105,9 +109,77 @@ log on|off|show|clear
 sleep / wake / autosleep on|off
 ```
 
+### Homing sequence
+
+Homing is **strictly sequential by priority** and completely non-blocking
+(no `delay()` inside the timer ISR, so the serial prompt stays alive and
+`abort` works at any time).
+
+For every joint, in priority order (`J1 -> J2 -> J3 -> J4 -> J5` by default):
+
+```
+   [endstop already pressed?] --yes--> RELEASE: creep off the switch
+                                        |
+   SEARCH  : move toward the endstop at AXIS_x_HOMING_SPEED
+                                        |  endstop hit
+   BACKOFF : dwell HOMING_DWELL_MS, then move away by AXIS_x_BACKOFF steps
+                                        |
+   VERIFY  : the endstop MUST be released -> position := 0, joint marked homed
+                                        |
+                              next joint starts only now
+```
+
+Guarantees:
+
+* **The backoff is mandatory** — no joint is ever zeroed without backing off.
+  The measured backoff distance is always at least `AXIS_x_BACKOFF` steps.
+* **The endstop release is verified.** If the switch is still pressed after
+  the backoff, homing continues up to `HOMING_BACKOFF_EXTRA_STEPS` more
+  steps; if it is *still* pressed, homing **fails loudly** instead of
+  silently zeroing on top of a pressed switch (which used to corrupt the
+  whole position reference).
+* `home` re-homes **all** joints even if they are already marked homed.
+* A failing joint **aborts the sequence** — the remaining joints are not
+  homed and are reported as not homed.
+
+Reported fault reasons:
+
+| message | meaning |
+|---|---|
+| `endstop not found within search limit` | switch never triggered — wiring / mount / travel |
+| `endstop stuck - never released, even during backoff` | switch stays closed while moving away |
+| `endstop still pressed after backoff` | backoff too short for this switch's hysteresis |
+| `emergency stop active` | `estop` engaged — send `reset` first |
+
+Tuning in `Config.h`:
+
+```c
+#define HOMING_ORDER         {0, 1, 2, 3, 4}   // priority: joint 1 first
+#define HOMING_VERIFY_BACKOFF      true        // verify the switch released
+#define HOMING_BACKOFF_EXTRA_STEPS 400         // extra travel to free a switch
+#define AXIS_X_BACKOFF        5200             // per-joint backoff distance
+#define AXIS_X_HOMING_SPEED    900             // per-joint homing speed
+```
+
+> Note: joint 1 (`X`) has a large `AXIS_X_BACKOFF` (5200 steps ≈ 117°).
+> Since the position zero is defined **at the end of the backoff**, that
+> value is part of your machine's geometry — change it only if you know the
+> switch is mounted that far from the working zero.
+
 ---
 
 ## Development
+
+`tools/hosttest/run_tests.sh` builds the **real firmware sources** with g++
+against an Arduino stub, links them (so `undefined reference` errors are caught
+before flashing), runs `setup()` + `loop()` and feeds **90 serial commands**
+through the actual handlers, then runs a behavioural simulation of the 20 kHz
+step ISR: homing priority/backoff, trapezoid timing accuracy, speed ceilings,
+estop, soft limits and mid-move retargeting.
+
+```bash
+bash tools/hosttest/run_tests.sh     # compile + link + smoke test + simulation
+```
 
 `tools/sim_motion.py` simulates the exact motion math (old vs. new firmware)
 on a desktop, so speed regressions can be measured without hardware:

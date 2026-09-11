@@ -10,10 +10,27 @@
 // کمک‌تابع‌ها
 // ============================================
 
-// تبدیل سرعت (steps/s) به تعداد تیک تایمر
+// تبدیل سرعت (steps/s) به تعداد تیک تایمر.
+//
+// تیک تایمر 20kHz است، پس فاصله‌ی استپ یک عدد صحیح از تیک‌هاست و سرعت
+// قابل دستیابی گسسته است: 20000/t. دو نکته مهم:
+//   ۱) در محدوده‌ی کاری معمول (interval >= 8 یعنی تا ~2500 steps/s) به
+//      نزدیک‌ترین عدد گرد می‌کنیم -> دقیق‌ترین زمان‌بندی ممکن.
+//   ۲) در سرعت‌های بالا (interval < 8) همیشه به بالا گرد می‌کنیم، یعنی
+//      سرعت واقعی هرگز از مقدار درخواستی بیشتر نمی‌شود. با گرد کردن به
+//      پایین، مثلاً درخواست 8000 steps/s به 10000 steps/s واقعی تبدیل
+//      می‌شد (۲۵٪ سریع‌تر!) که روی سخت‌افزار باعث جا ماندن استپ می‌شود.
 static inline uint16_t speedToTicks(uint32_t speed) {
     if (speed < 1) speed = 1;
-    uint32_t t = (uint32_t)STEP_TICK_FREQ / speed;
+    if (speed > (uint32_t)STEP_TICK_FREQ) speed = (uint32_t)STEP_TICK_FREQ;
+
+    uint32_t t   = (uint32_t)STEP_TICK_FREQ / speed;
+    uint32_t rem = (uint32_t)STEP_TICK_FREQ - t * speed;
+
+    if (rem) {
+        if (t >= 8) { if (rem * 2 >= speed) t++; }   // گرد کردن به نزدیک‌ترین
+        else        { t++; }                         // ایمن: هرگز سریع‌تر از درخواست
+    }
     if (t < 1) t = 1;
     if (t > 65535UL) t = 65535UL;
     return (uint16_t)t;
@@ -86,6 +103,8 @@ Axis::Axis(uint8_t stepPin, uint8_t dirPin, uint8_t enablePin,
     _homeState        = HOME_IDLE;
     _homeSteps        = 0;
     _homeFault        = false;
+    _homeFaultCode    = HOME_FAULT_NONE;
+    _backoffDone      = false;
     _homeSearchLimit  = 0;
     _homeReleaseLimit = HOMING_RELEASE_MAX_STEPS;
     _homeSearchTicks  = 1;
@@ -351,10 +370,8 @@ uint16_t Axis::intervalTicks(float speed, float minSpeed, float maxSpeed) {
     if (speed > maxSpeed) speed = maxSpeed;
     if (speed < 1.0f)     speed = 1.0f;
 
-    uint32_t t = (uint32_t)((float)STEP_TICK_FREQ / speed);
-    if (t < 1) t = 1;
-    if (t > 65535UL) t = 65535UL;
-    return (uint16_t)t;
+    // همان قاعده‌ی speedToTicks (نگاه نک. توضیح آنجا)
+    return speedToTicks((uint32_t)(speed + 0.5f));
 }
 
 void Axis::buildProfile(uint32_t startSpeed, uint32_t totalSteps, uint32_t maxSpeed) {
@@ -565,7 +582,12 @@ void Axis::finishMove() {
 // هومینگ — ماشین حالت غیرمسدودکننده
 // ============================================
 bool Axis::startHoming() {
-    if (_homing || _emergencyStop) return false;
+    if (_emergencyStop) {
+        _homeFault     = true;
+        _homeFaultCode = HOME_FAULT_ESTOP;
+        return false;
+    }
+    if (_homing) return false;
     if (!_enabled) enableMotor();
 
     // اگر حرکتی در جریان است، اول تمیز متوقفش کن (هومینگ مرجع موقعیت را
@@ -594,6 +616,8 @@ bool Axis::startHoming() {
     cli();
     _homing         = true;
     _homeFault      = false;
+    _homeFaultCode  = HOME_FAULT_NONE;
+    _backoffDone    = false;      // بک‌آف باید از نو انجام و تأیید شود
     _homeSteps      = 0;
     _homed          = false;
     _releaseOnly    = false;
@@ -631,11 +655,12 @@ void Axis::backoffFromEndstop() {
 
     uint8_t sreg = SREG;
     cli();
-    _homing      = true;
-    _releaseOnly = true;
-    _homeState   = HOME_RELEASE;
-    _homeSteps   = 0;
-    _homeFault   = false;
+    _homing        = true;
+    _releaseOnly   = true;
+    _homeState     = HOME_RELEASE;
+    _homeSteps     = 0;
+    _homeFault     = false;
+    _homeFaultCode = HOME_FAULT_NONE;
     _phase       = PHASE_IDLE;
     _stepsToGo   = 0;
     _counter     = 0;
@@ -663,19 +688,40 @@ bool Axis::homingTick() {
 
     case HOME_SEARCH:
         if (endstopPressed()) {
+            // سوئیچ پیدا شد -> بک‌آف اجباری شروع می‌شود
             beginBackoff();
         } else if (_homeSteps >= _homeSearchLimit) {
-            failHoming();
+            failHoming(HOME_FAULT_NOT_FOUND);
             return true;
         }
         break;
 
-    case HOME_BACKOFF:
-        if (_homeSteps >= (uint32_t)abs(_backoff)) {
-            completeHoming();
+    case HOME_BACKOFF: {
+        // ==== بک‌آف اجباری ====
+        // ۱) حداقل abs(_backoff) استپ حتماً طی می‌شود (هیچ محوری بدون
+        //    بک‌آف صفر نمی‌شود).
+        // ۲) در پایان، آزاد شدن endstop بررسی می‌شود. اگر سوئیچ هنوز
+        //    فشرده بود، تا HOMING_BACKOFF_EXTRA_STEPS استپ اضافه‌تر هم
+        //    عقب می‌رویم تا آزاد شود.
+        // ۳) اگر باز هم آزاد نشد -> هومینگ با خطا تمام می‌شود. قبلاً در
+        //    این حالت بی‌سروصدا «صفر» ثبت می‌شد در حالی که سوئیچ زیر فشار
+        //    بود و کل مرجع موقعیت غلط می‌شد.
+        const uint32_t need    = (uint32_t)abs(_backoff);
+        const uint32_t hardMax = need + (uint32_t)HOMING_BACKOFF_EXTRA_STEPS;
+        const bool pressed     = endstopPressed();
+
+        if (_homeSteps >= need && (!HOMING_VERIFY_BACKOFF || !pressed)) {
+            completeHoming();          // بک‌آف کامل + سوئیچ آزاد ✓
+            return true;
+        }
+        if (_homeSteps >= hardMax) {
+            // حتی با استپ‌های اضافه هم سوئیچ آزاد نشد
+            failHoming(pressed ? HOME_FAULT_BACKOFF_STUCK
+                               : HOME_FAULT_BACKOFF_PRESSED);
             return true;
         }
         break;
+    }
 
     default:
         _homing = false; _moving = false; _active = false;
@@ -703,6 +749,8 @@ void Axis::beginBackoff() {
 
 void Axis::completeHoming() {
     _homeState = HOME_DONE;
+    _backoffDone     = true;          // بک‌آف انجام و آزاد شدن سوئیچ تأیید شد
+    _homeFaultCode   = HOME_FAULT_NONE;
     _currentPosition = 0;
     _targetPosition  = 0;
     _homed   = true;
@@ -713,9 +761,11 @@ void Axis::completeHoming() {
     _interval = 0;
 }
 
-void Axis::failHoming() {
-    _homeState = HOME_FAILED;
-    _homeFault = true;
+void Axis::failHoming(uint8_t code) {
+    _homeState     = HOME_FAILED;
+    _homeFault     = true;
+    _homeFaultCode = code;
+    _backoffDone   = false;
     _homed     = false;
     _homing    = false;
     _moving    = false;
