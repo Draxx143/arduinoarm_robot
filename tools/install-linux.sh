@@ -155,8 +155,14 @@ API="https://api.github.com/repos/${REPO}/releases/tags/${TAG}"
 META="$(curl -fsSL "$API" 2>/dev/null)" || { c_r "نتوانستم ریلیز را بخوانم: $API"; exit 1; }
 
 pick_url() {  # pick_url <پسوند> <الگوی معماری>
+    # اگر در ریلیز چند نسخه‌ی مختلف بسته باشد (مثلاً ۱.۰.۳۸ قدیمی کنار
+    # ۱.۰.۳۹ تازه)، بالاترین شماره‌ی نسخه انتخاب می‌شود — نه اولین تصادفی.
     printf '%s\n' "$META" | grep -o '"browser_download_url": *"[^"]*"' \
-        | sed 's/.*"\(http[^"]*\)"/\1/' | grep -- "$1" | grep -- "$2" | head -1
+        | sed 's/.*"\(http[^"]*\)"/\1/' | grep -- "$1" | grep -- "$2" \
+        | while read -r u; do
+              v="$(basename "$u" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+              printf '%s %s\n' "${v:-0.0.0}" "$u"
+          done | sort -V -r | head -1 | cut -d' ' -f2-
 }
 
 if [ "$MODE" = "deb" ]; then

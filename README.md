@@ -248,9 +248,13 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.38-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.38-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.39-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.39-x86_64.AppImage
 ```
+
+> اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
+> موجود در ریلیز را پیدا می‌کند؛ لینک‌های بالا فقط برای دانلود دستی هستند.
+> صفحه‌ی ریلیز: <https://github.com/Draxx143/arduinoarm_robot/releases/tag/latest>
 
 اجرا: `axis5-robot-control` (یا از منوی برنامه‌ها). لاگ اجرا: `~/.axis5/last-run.log`.
 
