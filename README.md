@@ -224,6 +224,38 @@ Tuning in `Config.h`:
 
 ---
 
+## نصب روی لینوکس از ترمینال (کامل)
+
+**یک خطی** — نه کلون لازم است نه چیز دیگر:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/install-linux.sh)
+```
+
+اسکریپت `tools/install-linux.sh` این کارها را به ترتیب انجام می‌دهد:
+پاک‌سازی کامل نسخه‌ی قبلی → گرفتن لینک تازه‌ترین بسته از ریلیز `latest`
+→ دانلود → نصب با `apt` (وابستگی‌ها خودکار حل می‌شوند) → گذاشتن کاربر در
+گروه `dialout` برای دسترسی به پورت سریال → راستی‌آزمایی.
+
+```bash
+bash tools/install-linux.sh --dry-run      # فقط نشان بده چه می‌کرد
+bash tools/install-linux.sh --appimage     # بدون روت، یک فایل اجرایی
+bash tools/install-linux.sh --purge        # فقط حذف کامل
+bash tools/install-linux.sh --keep-config  # حذف کامل ولی تنظیمات بماند
+bash tools/install-linux.sh --force        # نصب دوباره‌ی همان نسخه
+```
+
+لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
+
+```bash
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.38-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.38-x86_64.AppImage
+```
+
+اجرا: `axis5-robot-control` (یا از منوی برنامه‌ها). لاگ اجرا: `~/.axis5/last-run.log`.
+
+---
+
 ## Control GUIs / رابط‌های کنترل
 
 دو GUI وجود دارد که هر دو **یک پروتکل** را حرف می‌زنند:
