@@ -393,7 +393,11 @@ function rxLine(line, fromSim = false) {
     case "rangeError":
       toast(`زاویه‌ی محور ${ev.axis + 1} خارج از محدوده مجاز است!`, "err");
       break;
-    case "unknown": toast("دستور ناشناخته — راهنما را ببین", "warn"); break;
+    case "unknown":
+      /* اگر این «ناشناخته» مالِ poll همگام‌سازی است، خاموشش کن و هشدار نده */
+      if (disablePosIfUnsupported()) break;
+      toast("دستور ناشناخته — راهنما را ببین", "warn");
+      break;
     case "homingStart": toast("هومینگ هوشمند شروع شد…", "info"); break;
     case "demoStart": S.demo.running = true; renderStats(); break;
     case "demoStop": S.demo.running = false; renderStats(); break;
@@ -643,6 +647,9 @@ S.serial.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
  * استعلام وضعیت (Polling)
  * ============================================================ */
 function restartPoll() {
+  /* هر اتصال تازه یک شانس دوباره به کانال POS می‌دهد: شاید در این فاصله
+     فریم‌ور برد را فلش کرده باشی. */
+  S.posUnsupported = false;
   if (S.pollTimer) clearInterval(S.pollTimer);
   S.pollTimer = null;
   if (S.posTimer) clearInterval(S.posTimer);
@@ -656,6 +663,21 @@ function restartPoll() {
   if (S.mode !== "off") S.posTimer = setInterval(pollPos, 330);
 }
 
+/* بردی که فریم‌ور قدیمی دارد «pos» را نمی‌شناسد. به‌محضِ فهمیدنش کانال
+   همگام‌سازی را خاموش می‌کنیم و **یک بار** توضیح می‌دهیم — وگرنه هر
+   ۳۳۰ میلی‌ثانیه یک هشدار روی صفحه می‌آمد. poll وضعیت دست‌نخورده می‌ماند. */
+function disablePosIfUnsupported() {
+  if (!S.posTimer || S.posUnsupported) return false;
+  if (Date.now() - (S._lastPosPollAt || 0) > 1500) return false;  /* مالِ pos نبود */
+  clearInterval(S.posTimer);
+  S.posTimer = null;
+  S.posUnsupported = true;
+  toast("برد دستور «pos» را نمی‌شناسد (فریم‌ور قدیمی) — همگام‌سازی اسلایدر با برد خاموش شد. firmware/RobotArm_Firmware/ را روی Mega فلش کن و دوباره وصل شو.", "err", 10000);
+  const h = $("portHint");
+  if (h) h.innerHTML = `<b style="color:#ff9b9e">⚠ فریم‌ورِ برد «pos» ندارد</b> — برای اینکه اسلایدرها موقعیت واقعی برد را دنبال کنند و آفست صفرِ J5 اعمال شود، <b>firmware/RobotArm_Firmware/</b> را روی Mega فلش کن و دوباره وصل شو.`;
+  return true;
+}
+
 function pollPos() {
   if (S.mode === "off") return;
   /* drag-safe: وسط کار با اسلایدر/کادر عدد، عدد زیر دست کاربر نپرد */
@@ -663,6 +685,7 @@ function pollPos() {
   if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
   if (S.jHeld && S.jHeld.some(Boolean)) return;
   if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
+  S._lastPosPollAt = Date.now();
   send(Cmd.pos(), { auto: true });
 }
 

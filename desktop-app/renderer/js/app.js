@@ -687,7 +687,11 @@ function rxLine(line) {
     case "rangeError":
       toast(`Axis ${ev.axis + 1} angle is out of range!`, "err");
       break;
-    case "unknown": toast("Unknown command — see the Reference tab", "warn"); break;
+    case "unknown":
+      /* if this "unknown" came from our own sync poll, silence it instead */
+      if (disablePosIfUnsupported()) break;
+      toast("Unknown command — see the Reference tab", "warn");
+      break;
     case "homingStart": toast("Smart homing started…", "info"); break;
     case "demoStart": S.demo.running = true; renderStats(); break;
     case "demoStop": S.demo.running = false; renderStats(); break;
@@ -818,6 +822,9 @@ bindLinkEvents(S.serial);
  * Polling
  * ============================================================ */
 function restartPoll() {
+  /* every fresh connection gives the POS channel another chance — the board
+     may have been reflashed in the meantime */
+  S.posUnsupported = false;
   if (S.pollTimer) clearInterval(S.pollTimer);
   S.pollTimer = null;
   if (S.posTimer) clearInterval(S.posTimer);
@@ -830,6 +837,21 @@ function restartPoll() {
   if (S.mode !== "off") S.posTimer = setInterval(pollPos, 330);
 }
 
+/* A board running older firmware does not know "pos". As soon as we see that,
+   switch the sync channel off and say so ONCE — otherwise a toast would pop up
+   every 330 ms. The status poll keeps working untouched. */
+function disablePosIfUnsupported() {
+  if (!S.posTimer || S.posUnsupported) return false;
+  if (Date.now() - (S._lastPosPollAt || 0) > 1500) return false;  /* not our poll */
+  clearInterval(S.posTimer);
+  S.posTimer = null;
+  S.posUnsupported = true;
+  toast("The board does not know the 'pos' command (older firmware) — slider sync is off. Flash firmware/RobotArm_Firmware/ to the Mega and reconnect.", "err", 10000);
+  const h = $("portHint");
+  if (h) h.innerHTML = `<b style="color:#ff9b9e">&#9888; Board firmware has no 'pos' channel</b> — to make the sliders follow the real board (and to get the J5 zero offset), flash <b>firmware/RobotArm_Firmware/</b> to the Mega and reconnect.`;
+  return true;
+}
+
 function pollPos() {
   if (S.mode === "off") return;
   /* drag-safe: never yank a value out from under the user's cursor */
@@ -837,6 +859,7 @@ function pollPos() {
   if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
   if (S.jHeld && S.jHeld.some(Boolean)) return;
   if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
+  S._lastPosPollAt = Date.now();
   send(Cmd.pos(), { auto: true });
 }
 
