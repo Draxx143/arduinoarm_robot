@@ -587,6 +587,7 @@ function send(text, opts = {}) {
 
 function rxLine(line) {
   const t = line.trim();
+  if (boardTextScore(t).known) S._sawBoardText = true;   /* این واقعاً حرفِ برد است */
   /* ">> POS ..." is the slider-sync channel: it arrives several times a
      second, so it is parsed but never printed (the console would drown). */
   const isPosSync = /^>>\s*POS\s/.test(t);
@@ -896,56 +897,154 @@ async function toggleSerial() {
  * نردبانِ baud را می‌رویم و اگر برد با سرعتِ دیگری حرف زد، **همان‌جا
  * متصل می‌مانیم** و کشوی baud را هم به‌روز می‌کنیم. */
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
-const BAUD_LADDER = [9600, 57600, 38400, 19200, 230400];
 
+/* ---- «آیا این واقعاً حرفِ برد است یا بایتِ به‌هم‌ریخته؟» ---------------
+ * با baudِ اشتباه، برد همچنان بایت می‌فرستد — فقط کاراکترِ بی‌معنی. نردبانِ
+ * قبلی فقط rxCount را می‌شمرد، برای همین بایتِ آشغال را «پاسخِ برد» گرفت و
+ * اپ را روی ۱۹۲۰۰ قفل کرد: دقیقاً همان «یک پیام می‌آید ولی کاراکترهای
+ * بی‌معنی و غیرقابلِ خواندن» که کاربر گزارش داد. */
+function boardTextScore(text) {
+  const t = String(text || "");
+  if (!t.length) return { bytes: 0, ratio: 0, known: false };
+  let printable = 0;
+  for (let k = 0; k < t.length; k++) {
+    const c = t.charCodeAt(k);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c <= 126)) printable++;
+  }
+  return {
+    bytes: t.length,
+    ratio: printable / t.length,
+    known: /AXIS-5 Firmware|System Status|>>\s*POS|State:|Homed:|Unknown command|System initialized/i.test(t),
+  };
+}
+/* تنها متنی را باور کن که هم خوانا باشد هم نشانه‌های فریم‌ور را داشته باشد */
+function looksLikeBoard(text) {
+  const sc = boardTextScore(text);
+  return sc.known && sc.ratio >= 0.85;
+}
+
+/* ترتیب مهم است: اول سرعتِ خودِ فریم‌ور (Config.h)، بعد سرعت‌های رایج */
+const BAUD_LADDER = [FW.BAUD, 9600, 57600, 38400, 19200];
+
+/* ---- اصلاحِ خودکارِ baud ---------------------------------------------
+ * اگر داده می‌آید ولی خوانا نیست، یعنی سرعت غلط است — نه بردِ خراب. خودمان
+ * به سرعتِ فریم‌ور برمی‌گردیم و دوباره وصل می‌شویم. */
+async function autoCorrectBaud(from) {
+  if (!IpcSerialLink.supported || S._correcting) return false;
+  const path = (S.serial && S.serial.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
+  if (!path || !looksLikeDevPath(path)) return false;
+  S._correcting = true;
+  const sel = $("selBaud");
+  if (sel) sel.value = String(FW.BAUD);
+  addConsole("sys", `[SYS] switching ${from} → ${FW.BAUD} baud (this firmware's own speed) and reconnecting…`);
+  try { await S.serial.disconnect(); } catch (e) {}
+  await nap(300);
+  const link = new IpcSerialLink();
+  bindLinkEvents(link);
+  S.serial = link;
+  try {
+    await link.connectVia(path, FW.BAUD);
+    S._connAt = Date.now(); S._rxWarned = false; S._baudWarned = false;
+    S._sawBoardText = false; S._recoveredAuto = false;
+    renderConnCard();
+    S._correcting = false;
+    return true;
+  } catch (e) {
+    addConsole("err", `!! reconnect at ${FW.BAUD} failed: ${e.message}`);
+    S._correcting = false;
+    return false;
+  }
+}
+
+/* ---- بازیابیِ خودکارِ RX=0 -------------------------------------------
+ * پله‌ها: (۰) از کاربر بخواه دکمه‌ی RESET را بزند — بسیاری از کلون‌های
+ * CH340 مدارِ ریستِ خودکار ندارند؛ (۱) نردبانِ baud، ولی فقط سرعتی پذیرفته
+ * می‌شود که پاسخِ **خوانا و شناخته‌شده** بدهد. */
 async function autoRecoverRx() {
   if (S._recovering || !IpcSerialLink.supported) return false;
-  const link = S.serial;
-  const path = (link && link.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
+  let cur = S.serial;
+  const path = (cur && cur.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
   if (!path || !looksLikeDevPath(path)) return false;   /* وب‌سریال: مسیرِ دستگاه نداریم */
-  const start = (link && link.baud) || parseInt($("selBaud").value, 10) || FW.BAUD;
-  const tries = BAUD_LADDER.filter((b) => b !== start);
+  const start = (cur && cur.baud) || parseInt($("selBaud").value, 10) || FW.BAUD;
   S._recovering = true;
-  addConsole("warn", `[SYS] RX is still 0 @ ${start} baud — the board may be at another speed; trying ${tries.join(", ")} …`);
-  toast("Board is silent — auto-trying other baud rates…", "info", 6000);
+
+  /* ۰) ریستِ دستی — کاربرِ ما گزارش کرده که تا دکمه‌ی RESET را نزند وصل نمی‌شود */
+  const heard = [];
+  const origOnLine = cur.onLine;
+  cur.onLine = (l) => { heard.push(l); if (origOnLine) origOnLine(l); };
+  addConsole("warn", "👉 Press the RESET button on the Arduino now — boards without an auto-reset circuit (many CH340 clones) only talk after that. Waiting 6 s…");
+  toast("Press the board's RESET button now", "info", 6500);
+  try { send(Cmd.status(), { auto: true }); } catch (e) {}
+  await nap(6000);
+  cur.onLine = origOnLine;
+  if (looksLikeBoard(heard.join("\n"))) {
+    S._recovering = false; S._rxWarned = false; S._connAt = Date.now(); S._sawBoardText = true;
+    addConsole("sys", `[SYS] ✓ the board answered after a manual reset @ ${start} baud`);
+    toast("✓ Board answered after RESET", "ok", 6000);
+    renderConnCard();
+    return true;
+  }
+
+  /* ۱) نردبانِ baud — با سنجه‌ی محتوا، نه شمارشِ بایت */
+  const tries = [];
+  BAUD_LADDER.forEach((b) => { if (b !== start && tries.indexOf(b) === -1) tries.push(b); });
+  addConsole("warn", `[SYS] still nothing readable @ ${start} baud — trying ${tries.join(", ")} …`);
+  const garbage = [];
   for (const b of tries) {
     let probe = null;
     try {
-      try { await link.disconnect(); } catch (e) {}
+      try { await cur.disconnect(); } catch (e) {}
       await nap(250);                                  /* پل باید پورت را رها کند */
       probe = new IpcSerialLink();
       bindLinkEvents(probe);
       S.serial = probe;
+      const got = [];
+      probe.onLine = (l) => got.push(l);               /* آشغال را در کنسول نریز */
       await probe.connectVia(path, b);
-      await nap(2800);                                 /* بنرِ بوت + اولین status */
-      if (probe.rxCount > 0) {
+      await nap(2600);                                 /* بنرِ بوت + پاسخِ status */
+      const text = got.join("\n");
+      if (looksLikeBoard(text)) {
+        probe.onLine = (l) => rxLine(l);
         const sel = $("selBaud");
         if (sel) sel.value = String(b);
-        addConsole("sys", `[SYS] ✓ the board answers at ${b} baud — staying connected (baud selector updated; the firmware is not at ${start})`);
-        toast(`✓ Connected at ${b} baud — firmware is not at ${start}`, "ok", 9000);
-        S._rxWarned = false; S._connAt = Date.now(); S._doctorAuto = false;
-        S._recovering = false;
+        addConsole("sys", `[SYS] ✓ the board answers at ${b} baud — staying connected (baud selector updated; it was ${start})`);
+        toast(`✓ Connected at ${b} baud`, "ok", 8000);
+        S._rxWarned = false; S._baudWarned = false; S._connAt = Date.now();
+        S._sawBoardText = true; S._doctorAuto = false; S._recovering = false;
         renderConnCard();
+        try { send(Cmd.status(), { auto: true }); } catch (e) {}
         return true;
       }
-      addConsole("warn", `[SYS] ${b} baud: port opened, still no reply`);
+      if (probe.rxCount > 0) {
+        garbage.push(b);
+        addConsole("warn", `[SYS] ${b} baud: ${probe.rxCount} byte(s) came back but they are UNREADABLE → wrong speed, moving on`);
+      } else {
+        addConsole("warn", `[SYS] ${b} baud: nothing at all`);
+      }
+      cur = probe;
       await probe.disconnect();
       probe = null;
     } catch (e) {
       addConsole("err", `!! ${b} baud: ${e.message}`);
-      if (probe) { try { await probe.disconnect(); } catch (e2) {} }
-      probe = null;
+      if (probe) { try { await probe.disconnect(); } catch (e2) {} probe = null; }
     }
   }
-  /* هیچ baud ای جواب نداد → پورت را به وضعیتِ اول برگردان و عیب‌یاب را صدا کن */
+
+  /* هیچ سرعتی پاسخِ خوانا نداد → به وضعیتِ اول برگرد و گزارش بده */
   try {
     const back = new IpcSerialLink();
     bindLinkEvents(back);
     S.serial = back;
+    cur = back;
     await back.connectVia(path, start);
-    addConsole("sys", `[SYS] back to ${start} baud — no baud rate produced any reply, so the board itself is silent`);
+    addConsole("sys", `[SYS] back to ${start} baud`);
   } catch (e) {
     addConsole("err", "!! could not reopen the port: " + e.message);
+  }
+  if (garbage.length) {
+    addConsole("err", `!! bytes came back at ${garbage.join(", ")} baud but were unreadable at every speed → the board is not running this firmware (reflash firmware/RobotArm_Firmware/), or the cable/adapter is dropping bits`);
+  } else {
+    addConsole("err", "!! the board sent NOTHING at any baud rate → press its RESET button, check the heartbeat LED, the data cable and the external motor supply");
   }
   S._recovering = false;
   setMode("serial");
@@ -969,9 +1068,14 @@ async function runPortDoctor(auto) {
   try { devPath = (await resolvePortPath(picked)) || picked; } catch (e) {}
   const btn = $("btnDoctor");
   if (btn) { btn.disabled = true; btn.textContent = "🩺 …"; }
-  addConsole("sys", `[DOCTOR] checking ${devPath || "(no port)"} @ ${baud} baud …`);
   try {
-    const rep = await window.electronAPI.portDoctor(devPath, baud);
+    addConsole("sys", `[DOCTOR] checking ${devPath || "(no port)"} @ ${baud} baud …`);
+  if (S.mode === "serial") {
+    addConsole("warn", "[DOCTOR] 👉 press the board's RESET button while the doctor waits — its live handshake is the only part that needs the port, and the app must give it up first.");
+  } else {
+    addConsole("warn", "[DOCTOR] 👉 if the board stays silent, press its RESET button during the handshake (many CH340 clones have no auto-reset).");
+  }
+  const rep = await window.electronAPI.portDoctor(devPath, baud);
     let bad = 0;
     (rep && rep.checks ? rep.checks : []).forEach((c) => {
       const mark = c.ok === null ? "…" : (c.ok ? "✓" : "✗");
@@ -979,6 +1083,10 @@ async function runPortDoctor(auto) {
       if (c.fix) addConsole("warn", `[DOCTOR]     → fix: ${c.fix}`);
       if (c.ok === false) bad++;
     });
+    const skipped = (rep && rep.checks ? rep.checks : []).some((c) => c.name === "handshake" && c.ok === null);
+    if (skipped) {
+      addConsole("warn", "[DOCTOR] the live handshake was skipped because the app itself holds the port — press Disconnect, then 🩺 Doctor again for the full test.");
+    }
     const hint = $("portHint");
     if (hint) hint.innerHTML = bad
       ? `<b>🩺 Doctor found ${bad} problem${bad > 1 ? "s" : ""}</b> — the console shows each one with its fix.`
@@ -1011,6 +1119,7 @@ function bindLinkEvents(link) {
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
     S._connAt = Date.now(); S._rxWarned = false; S._doctorAuto = false;
     S._recoveredAuto = false; S._recovering = false;
+    S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
     /* second hello after the bootloader window: boards that reboot on open
@@ -1827,6 +1936,20 @@ function updateLinkStats() {
     if (S.serial.rxCount !== updateLinkStats._lastRx) {
       led.classList.remove("blink"); void led.offsetWidth; led.classList.add("blink");
       updateLinkStats._lastRx = S.serial.rxCount;
+    }
+    /* داده می‌آید ولی هیچ نشانه‌ای از فریم‌ور دیده نشده؟ یعنی سرعت غلط است.
+       این همان «کاراکترِ بی‌معنی» است: باید صریح گفته شود و خودکار درست شود،
+       نه اینکه کاربر به آشغالِ روی صفحه خیره بماند. */
+    if (S.serial.rxCount > 40 && !S._sawBoardText && S._connAt &&
+        Date.now() - S._connAt > 3000 && !S._baudWarned && !S._recovering && !S._correcting) {
+      S._baudWarned = true;
+      const curB = S.serial.baud || parseInt($("selBaud").value, 10) || FW.BAUD;
+      addConsole("err", `!! ${S.serial.rxCount} bytes arrived but none of it is readable — the BAUD RATE IS WRONG (app at ${curB}, this firmware uses ${FW.BAUD})`);
+      addConsole("warn", `   → unreadable characters are never a broken board, always a speed mismatch. Switching to ${FW.BAUD} automatically…`);
+      const hintB = $("portHint");
+      if (hintB) hintB.innerHTML = `<b>Unreadable reply = wrong baud rate.</b> The app was at ${curB}; this firmware uses <b>${FW.BAUD}</b> &mdash; switching automatically.`;
+      toast(`Wrong baud rate — switching to ${FW.BAUD}`, "err", 9000);
+      setTimeout(() => { autoCorrectBaud(curB).catch(() => {}); }, 300);
     }
     /* zero data from the board? say it loudly, once */
     if (S.serial.rxCount === 0 && S._connAt && Date.now() - S._connAt > 6000 && !S._rxWarned) {

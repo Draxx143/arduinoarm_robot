@@ -37,6 +37,27 @@ function defaultSh(cmd, args, ms = 4000) {
 }
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* baudِ خودِ فریم‌ور (Config.h: SERIAL_BAUD) — مرجعِ «سرعتِ درست». */
+const FW_BAUD = 115200;
+
+/* آیا این متن واقعاً حرفِ برد است یا بایتِ به‌هم‌ریخته‌ی baudِ اشتباه؟
+ * با سرعتِ غلط، برد همچنان بایت می‌فرستد — پس «تعدادِ بایت» به‌تنهایی
+ * هیچ چیز را ثابت نمی‌کند. */
+function scoreText(text) {
+  const s = String(text || "");
+  if (!s.length) return { bytes: 0, ratio: 0, known: false };
+  let printable = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c <= 126)) printable++;
+  }
+  return {
+    bytes: s.length,
+    ratio: printable / s.length,
+    known: /AXIS-5 Firmware|System Status|>>\s*POS|State:|Homed:|Unknown command|System initialized/i.test(s),
+  };
+}
+
 /**
  * @param {object} o
  * @param {string} o.portPath
@@ -90,8 +111,12 @@ async function runDoctor(o) {
         rw ? "" : "sudo usermod -aG dialout $USER, then log out & back in");
 
     const h = await sh("fuser", [p], 3000);
+    /* فرایندهای خودمان (اپ + پلِ پایتونی که اپ بالا آورده) خواننده‌ی دوم
+     * نیستند؛ وگرنه عیب‌یاب دقیقاً همان چیزی را می‌گفت که کاربرِ ما دید:
+     * «ALSO held by PID 24396» درحالی‌که ۲۴۳۹۶ خودِ پلِ اپ بود. */
+    const ours = new Set([process.pid, ...(Array.isArray(o.selfPids) ? o.selfPids : [])]);
     const pids = String(h.out || "").trim().split(/\s+/).filter(Boolean).map(Number)
-      .filter((n) => n && n !== process.pid);
+      .filter((n) => n && !ours.has(n));
     add("free", pids.length === 0,
         pids.length
           ? "ALSO held by PID(s) " + pids.join(", ") + " — two readers steal each other's bytes"
@@ -128,7 +153,10 @@ async function runDoctor(o) {
       },
     });
     if (res.err) return { err: res.err, text: "" };
-    await nap(H || (quick ? 1200 : 2600));                /* بنرِ بوت بعد از پالسِ ریست */
+    /* بنرِ بوت بعد از پالسِ ریست. ۵ ثانیه برایِ بردی که ریستِ خودکار ندارد
+       (بسیاری از کلون‌های CH340) — تا کاربر فرصت داشته باشد دکمه‌ی RESET را
+       بزند؛ رندر پیش از صداکردنِ عیب‌یاب همین را در کنسول می‌گوید. */
+    await nap(H || (quick ? 1200 : 5000));
     o.pybridge.writeTo(res.id, "status\n");
     await nap(H || (quick ? 900 : 1600));
     o.pybridge.writeTo(res.id, "pos\n");
@@ -161,11 +189,21 @@ async function runDoctor(o) {
     if (altHit) text = altHit.text;      /* بگذار بررسی‌های بعدی همان را ببینند */
   }
 
-  add("rx", text.length > 0, `${text.length} byte(s) came back from the board`,
+  /* بایت آمد ولی خوانا نبود؟ این یعنی baud اشتباه — نه بردِ خراب. */
+  const sc = scoreText(text);
+  add("rx", text.length > 0, `${text.length} byte(s) came back from the board` +
+      (text.length && !sc.known ? ` — but only ${Math.round(sc.ratio * 100)}% printable ASCII (unreadable)` : ""),
       text.length ? "" :
-        "the board is silent at every baud we tried: is the firmware's heartbeat LED blinking? " +
-        "make sure the USB cable carries data (charge-only cables are very common), and that " +
-        "nothing else (Arduino IDE / Serial Monitor) is holding the port");
+        "the board is silent at every baud we tried: press the board's RESET button while the " +
+        "doctor waits (many CH340 clones have no auto-reset circuit), check that the firmware's " +
+        "heartbeat LED blinks, and make sure the USB cable carries data (charge-only cables are common)");
+  if (text.length && !sc.known) {
+    add("baudmatch", false,
+        `the board sends data but it is unreadable at ${b} baud → the baud rate is WRONG ` +
+        `(the firmware in this repo uses ${FW_BAUD})`,
+        `set the app's baud rate to ${FW_BAUD} (the selector next to the port) and reconnect — ` +
+        "garbage characters are never a board fault, always a speed mismatch");
+  }
 
   /* نتیجه‌ی کاوشِ baud — هم وقتی پیدا شد، هم وقتی نشد */
   if (!first.text.length) {
@@ -200,4 +238,4 @@ async function runDoctor(o) {
   return { port: p, baud: b, checks };
 }
 
-module.exports = { runDoctor };
+module.exports = { runDoctor, scoreText, FW_BAUD };

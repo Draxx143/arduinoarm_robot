@@ -32,11 +32,14 @@ import tty
 
 FW_VERSION = "1.0.41"
 ONLY_BAUD = 0
+GARBAGE = False
 _args = sys.argv[1:]
 _i = 0
 while _i < len(_args):
     if _args[_i] == "--only-baud":
         ONLY_BAUD = int(_args[_i + 1]); _i += 2
+    elif _args[_i] == "--garbage":
+        GARBAGE = True; _i += 1
     else:
         FW_VERSION = _args[_i]; _i += 1
 
@@ -68,10 +71,24 @@ BAUD_NAMES = {getattr(termios, n): int(n[1:])
               for n in dir(termios) if n.startswith("B") and n[1:].isdigit()}
 
 
+def send_raw(data):
+    try:
+        os.write(mfd, data)
+        return True
+    except OSError:
+        return False
+
+
 def send(text):
     # بردِ «فقط-9600» با سرعتِ اشتباه هیچ نمی‌گوید — مثلِ بردِ واقعی
     if ONLY_BAUD and BAUD_NAMES.get(host_baud(), 0) != ONLY_BAUD:
         return True
+    # بردِ «آشغال»: بایت می‌فرستد ولی بی‌معنی — دقیقاً همان چیزی که با baudِ
+    # اشتباه روی سیم دیده می‌شود (و همان که کاربر گزارش داد: «یک پیام
+    # می‌آید ولی کاراکترهای بی‌معنی و غیرقابلِ خواندن»)
+    if GARBAGE:
+        return send_raw(bytes([0xC3, 0x28, 0xA0, 0xFF, 0x9B, 0x07, 0xE2, 0x10,
+                               0xBE, 0x44, 0x0A, 0xF8, 0x7F, 0x31, 0x13]))
     try:
         os.write(mfd, text.encode("utf-8"))
         return True

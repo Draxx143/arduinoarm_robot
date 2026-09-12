@@ -31,9 +31,10 @@ function ok(cond, msg) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* بردِ جعلی را بالا بیاور و مسیرِ pty را بگیر */
-function startFakeBoard(version, onlyBaud) {
+function startFakeBoard(version, onlyBaud, garbage) {
   const args = [path.join(__dirname, "fake_board.py"), version || "1.0.41"];
   if (onlyBaud) args.push("--only-baud", String(onlyBaud));
+  if (garbage) args.push("--garbage");
   const child = spawn("python3", args, { stdio: ["pipe", "pipe", "pipe"] });
   let buf = "", first = null;
   const ready = new Promise((res) => {
@@ -56,7 +57,8 @@ function makeSh(opts = {}) {
       ? { err: "spawn python3 ENOENT", out: "", errOut: "" }
       : { err: "", out: "Python 3.11.2\n", errOut: "" };
     if (cmd === "id") return { err: "", out: opts.noDialout ? "user cdrom plugdev\n" : "user dialout\n", errOut: "" };
-    if (cmd === "fuser") return { err: "", out: opts.holderPid ? String(opts.holderPid) + "\n" : "", errOut: "" };
+    if (cmd === "fuser") return { err: "", out: opts.rawHolders !== undefined
+        ? opts.rawHolders : (opts.holderPid ? String(opts.holderPid) + "\n" : ""), errOut: "" };
     if (cmd === "sh") return { err: "", out: "[  120.4] usb 1-2: ch341-uart converter now attached to ttyUSB0\n", errOut: "" };
     return { err: "", out: "", errOut: "" };
   };
@@ -166,6 +168,44 @@ async function main() {
   ok(find(rep, "bauds").ok === false, "bauds ✗ — هیچ baud ای جواب نداد");
   ok(/heartbeat LED|reflash|data cable/i.test(find(rep, "bauds").fix || ""),
      "راه‌حلِ واقعی داده شد (LED/کابلِ دیتا/فلش): " + (find(rep, "bauds").fix || "").slice(0, 70));
+  fb.quit();
+  await sleep(300);
+
+  /* ---------- ۹) پلِ خودِ اپ «خواننده‌ی دوم» نیست ---------- */
+  console.log("\n-- fuser هم pidِ اپ و هم pidِ پلِ پایتون را نشان می‌دهد --");
+  fb = startFakeBoard("1.0.41");
+  slave = await fb.ready;
+  const MY_PID = process.pid, BRIDGE_PID = 24396, OTHER_PID = 31337;
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge,
+                          sh: makeSh({ rawHolders: `${MY_PID} ${BRIDGE_PID}\n` }),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 300,
+                          selfPids: [MY_PID, BRIDGE_PID] });
+  ok(find(rep, "free").ok === true,
+     "free ✓ — pidِ اپ و پلِ خودش «خواننده‌ی دوم» حساب نمی‌شوند (گزارشِ کاذبِ قبلی)",
+     find(rep, "free").detail || "");
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge,
+                          sh: makeSh({ rawHolders: `${MY_PID} ${OTHER_PID}\n` }),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 300,
+                          selfPids: [MY_PID] });
+  ok(find(rep, "free").ok === false && /31337/.test(find(rep, "free").detail || ""),
+     "free ✗ — ولی خواننده‌ی واقعیِ دوم هنوز شناسایی می‌شود", find(rep, "free").detail || "");
+  fb.quit();
+  await sleep(400);
+
+  /* ---------- ۱۰) بایت می‌آید ولی آشغال است = baudِ اشتباه ---------- */
+  console.log("\n-- بردی که بایت می‌فرستد ولی هیچ‌کدام خوانا نیست (باudِ اشتباه) --");
+  fb = startFakeBoard("1.0.41", 0, true);
+  slave = await fb.ready;
+  rep = await runDoctor({ portPath: slave, baud: 19200, pybridge, sh: makeSh(),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 400 });
+  ok(find(rep, "rx").ok === true, "rx ✓ — بایت آمد، پس سیم و پورت سالم‌اند",
+     find(rep, "rx").detail || "");
+  ok(/unreadable|printable ASCII/i.test(find(rep, "rx").detail || ""),
+     "و صریح می‌گوید خوانا نیست", find(rep, "rx").detail || "");
+  const bm = find(rep, "baudmatch");
+  ok(bm.ok === false, "baudmatch ✗ — علتِ واقعی نام‌گذاری شد: سرعتِ اشتباه");
+  ok(/115200/.test(bm.fix || ""), "راه‌حلش سرعتِ درستِ فریم‌ور است (۱۱۵۲۰۰)",
+     (bm.fix || "").slice(0, 70));
   fb.quit();
   await sleep(300);
   pybridge.closeAll();

@@ -67,8 +67,8 @@ function openBridge(o) {
     }
 
     const id = ++seq;
-    const rec = { kind: "py", child, rx: 0, tx: 0, path: portPath, baud,
-                  ready: false, done: false };
+    const rec = { kind: "py", child, pid: child.pid || 0, rx: 0, tx: 0,
+                  path: portPath, baud, ready: false, done: false };
     sessions.set(id, rec);
 
     /* هر شکستی پیش از آماده‌شدن = خطا به کاربر (نه سکوت، نه hang) */
@@ -176,11 +176,20 @@ function closeAll() {
 }
 
 function has(id) { return sessions.has(Number(id)); }
+
+/* شناسه‌ی فرایندِ پلِ پایتونِ خودمان. بدونِ این، fuser خودِ اپ را به‌عنوانِ
+ * «خواننده‌ی دومِ پورت» گزارش می‌کرد و کاربر را به بستنِ برنامه‌ای که باز
+ * نیست می‌فرستاد — یک تشخیصِ کاذبِ تمام‌عیار. */
+function pids() {
+  const out = [];
+  sessions.forEach((r) => { if (r.pid) out.push(r.pid); });
+  return out;
+}
 function stats() {
   let rx = 0;
   sessions.forEach((r) => { rx += r.rx || 0; });
   return { count: sessions.size, rx, kind: sessions.size ? "py" : "?" };
 }
 
-module.exports = { openBridge, writeTo, closeSession, closeAll, has, stats,
+module.exports = { openBridge, writeTo, closeSession, closeAll, has, stats, pids,
                    bridgeScriptPath, ID_BASE };

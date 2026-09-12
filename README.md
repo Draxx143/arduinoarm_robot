@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.45-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.45-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.46-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.46-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -347,11 +347,15 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 2. مسیرِ وب‌سریال هم حالا خطوطِ مودم را کنترل می‌کند (`setSignals`) — بدونِ
    آن، بردهای USB بومی (Leonardo/Micro/ESP32) «میزبان وصل نیست» فرض می‌کنند
    و هر `Serial.print` را بی‌صدا دور می‌ریزند.
-3. اگر بعد از اتصال **RX صفر** بماند، اپ خودش نردبانِ baud را می‌رود
-   (۹۶۰۰ ← ۵۷۶۰۰ ← ۳۸۴۰۰ ← ۱۹۲۰۰ ← ۲۳۰۴۰۰). اگر برد با سرعتِ دیگری حرف
-   زد، **همان‌جا متصل می‌ماند** و کشوی baud را به‌روز می‌کند؛ اگر هیچ‌کدام
-   جواب نداد، به baudِ اول برمی‌گردد، صریح می‌گوید «برد ساکت است» و 🩺
-   عیب‌یاب را اجرا می‌کند.
+3. اگر بعد از اتصال **RX صفر** بماند، اول صریح می‌گوید «دکمه‌ی RESET روی
+   برد را بزن» (بسیاری از کلون‌های CH340 مدارِ ریستِ خودکار ندارند و فقط
+   دستی حرف می‌زنند) و بعد نردبانِ baud را می‌رود — **اول ۱۱۵۲۰۰** (سرعتِ
+   خودِ فریم‌ور)، بعد ۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰/۱۹۲۰۰. فقط سرعتی پذیرفته می‌شود
+   که پاسخِ **خوانا و شناخته‌شده** بدهد: بایتِ بی‌معنی دلیل بر درست بودنِ
+   سرعت نیست.
+4. اگر داده می‌آید ولی **کاراکترِ بی‌معنی** است، یعنی سرعت غلط است — اپ
+   صریح می‌گوید `BAUD RATE IS WRONG` و خودش به ۱۱۵۲۰۰ برمی‌گردد و دوباره
+   وصل می‌شود.
 
 
 > **ریشه‌ی شایع‌ترین حالت («پورت شناسایی می‌شود، خطایی نمی‌آید، ولی RX صفر

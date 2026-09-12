@@ -171,8 +171,12 @@ function createWindow() {
    * stealing the bytes — name it so the user knows what to close) */
   ipcMain.handle("port:holders", (e, portPath) => new Promise((resolve) => {
     execFile("fuser", [String(portPath)], (err, stdout) => {
+      /* خودِ اپ و پلِ پایتونی که اپ بالا آورده همیشه پورت را نگه می‌دارند —
+       * آن‌ها «خواننده‌ی دوم» نیستند. بدونِ این فیلتر، عیب‌یاب به کاربر می‌گفت
+       * «PID 24396 هم پورت را گرفته، ببندش» درحالی‌که آن خودِ اپ بود. */
+      const ours = new Set([process.pid, ...pybridge.pids()]);
       const pids = String(stdout || "").trim().split(/\s+/).filter(Boolean)
-        .map(Number).filter((pid) => pid && pid !== process.pid); /* the app itself always holds it */
+        .map(Number).filter((pid) => pid && !ours.has(pid));
       if (!pids.length) return resolve({ pids: [], procs: [] });
       execFile("ps", ["-o", "comm=", "-p", pids.join(",")], (e2, so) => {
         const procs = String(so || "").split("\n").map((x) => x.trim()).filter(Boolean);
@@ -193,6 +197,7 @@ function createWindow() {
         busy: openSerialPorts.size > 0,
         platform: process.platform,
         expectedFw: EXPECTED_FW,
+        selfPids: [process.pid, ...pybridge.pids()],
       });
     } catch (er) {
       return { port: String(portPath || ""), baud: Number(baud) || 115200, checks: [

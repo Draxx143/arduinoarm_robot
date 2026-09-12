@@ -80,11 +80,19 @@ function startStatic() {
 function makeBoard() {
   return {
     onlyBaud: 0,          /* 0 = در هر baud ای جواب می‌دهد */
+    realBaud: 0,          /* اگر != 0: فقط در این baud متنِ درست می‌فرستد */
+    garbage: false,       /* در baudِ اشتباه بایتِ بی‌معنی بفرست (مثلِ سیمِ واقعی) */
     opened: [],           /* هر open: {path, baud} */
     written: [],          /* هر write */
     closed: 0,
     onData: null,
     rxSent: 0,
+    replyGarbage() {
+      /* بایتِ بی‌معنی — دقیقاً همان چیزی که با سرعتِ اشتباه روی سیم است */
+      const junk = Buffer.from([0xC3, 0x28, 0xA0, 0xFF, 0x9B, 0x07, 0xE2, 0x10,
+                                0xBE, 0x44, 0x0A, 0xF8, 0x7F, 0x31, 0x13, 0xC9]);
+      if (this.onData) { this.onData(junk.toString("base64")); this.rxSent += junk.length; }
+    },
     reply() {
       /* پاسخِ واقعیِ فریم‌ور: بلوکِ status + خطِ POS (همان قالبِ Config.h) */
       const block = "=== System Status ===\nState: Ready\nFW: v1.0.41\n" +
@@ -119,15 +127,22 @@ function installMock(w, board) {
         board.id = 1000001;
         /* بردِ واقعی بعد از پالسِ ریست، بنرِ بوت را می‌فرستد — اما فقط اگر
            سرعت درست باشد (فریمِور با Config.h قدیمی = ۹۶۰۰) */
-        if (!board.onlyBaud || board.onlyBaud === Number(baud)) {
-          setTimeout(() => board.reply(), 30);
-        }
+        /* بردِ واقعی هم بعد از پالسِ ریست بنر می‌فرستد — ولی فقط اگر سرعت
+           درست باشد؛ وگرنه یا ساکت است یا بایتِ بی‌معنی می‌دهد. */
+        const rightSpeed = (!board.onlyBaud || board.onlyBaud === Number(baud)) &&
+                           (!board.realBaud || board.realBaud === Number(baud));
+        if (rightSpeed) setTimeout(() => board.reply(), 30);
+        else if (board.garbage) setTimeout(() => board.replyGarbage(), 30);
         return { id: 1000001 };
       },
       write: async (id, text) => {
         board.written.push(String(text));
         const last = board.opened[board.opened.length - 1] || {};
-        if (!board.onlyBaud || board.onlyBaud === Number(last.baud)) board.reply();
+        if (board.realBaud && board.realBaud !== Number(last.baud)) {
+          if (board.garbage) board.replyGarbage();
+        } else if (!board.onlyBaud || board.onlyBaud === Number(last.baud)) {
+          board.reply();
+        }
         return {};
       },
       close: async () => { board.closed++; return {}; },
@@ -271,9 +286,60 @@ async function main() {
   ok(board3.opened.filter((o) => o.baud === 115200).length >= 2,
      "در پایان به baudِ اولیه برگشت (اتصالِ کاربر را خراب رها نمی‌کند)",
      JSON.stringify(board3.opened.map((o) => o.baud)));
-  ok(/silent|ساکت/.test(consoleText(dom)),
-     "صریحاً گفت برد ساکت است (نه یک پیامِ مبهم)");
+  ok(/NOTHING at any baud|silent|ساکت/.test(consoleText(dom)),
+     "صریحاً گفت برد در هیچ سرعتی چیزی نفرستاد (نه یک پیامِ مبهم)");
   ok(w.eval("S.mode") === "serial", "اپ هنوز در وضعیتِ اتصال است تا کاربر بتواند عیب‌یاب را ببیند");
+  dom.window.close();
+
+  /* ---------- ۵) بایتِ آشغال = سرعتِ اشتباه (گزارشِ واقعیِ کاربر) ---------- */
+  console.log("\n-- اپ روی ۱۹۲۰۰، برد روی ۱۱۵۲۰۰: پاسخ «کاراکترِ بی‌معنی» --");
+  const board4 = makeBoard();
+  board4.realBaud = 115200; board4.garbage = true;
+  dom = await loadApp(port, board4);
+  w = dom.window;
+  ok(w.eval(`looksLikeBoard("\\u00c3(\\u00a0\\uffff\\u009b\\u0007 junk")`) === false,
+     "سنجه: بایتِ بی‌معنی «حرفِ برد» حساب نمی‌شود");
+  ok(w.eval(`looksLikeBoard("=== System Status ===\\nState: Ready\\n>> POS 0.0,0.0")`) === true,
+     "سنجه: بلوکِ واقعیِ status را می‌شناسد");
+  w.document.getElementById("selBaud").value = "19200";
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");
+  await sleep(700);
+  ok(board4.opened[0] && board4.opened[0].baud === 19200, "با همان ۱۹۲۰۰ی که کاربر داشت وصل شد");
+  ok(w.eval("S.serial.rxCount") > 0, "بایت می‌آید — پس سیم، پورت و مجوز سالم‌اند",
+     "rxCount=" + w.eval("S.serial.rxCount"));
+  ok(w.eval("S._sawBoardText") === false, "ولی هیچ نشانه‌ای از فریم‌ور دیده نمی‌شود (یعنی آشغال است)");
+  const corrected = await w.eval("autoCorrectBaud(19200)");
+  await sleep(400);
+  ok(corrected === true, "اصلاحِ خودکارِ baud موفق بود");
+  ok(w.document.getElementById("selBaud").value === "115200",
+     "کشوی baud به ۱۱۵۲۰۰ برگشت", "value=" + w.document.getElementById("selBaud").value);
+  ok(w.eval("S.serial.baud") === 115200, "اتصالِ فعلی روی ۱۱۵۲۰۰ است");
+  ok(w.eval("S._sawBoardText") === true, "حالا متنِ خوانا می‌رسد");
+  ok(board4.opened.some((o) => o.baud === 115200), "پورت با ۱۱۵۲۰۰ از نو باز شد");
+  dom.window.close();
+
+  /* ---------- ۶) نردبان باید آشغال را نپذیرد ---------- */
+  console.log("\n-- نردبانِ baud: آشغال را رد کند، سرعتِ درست را بپذیرد --");
+  const board5 = makeBoard();
+  board5.realBaud = 57600; board5.garbage = true;
+  dom = await loadApp(port, board5);
+  w = dom.window;
+  w.eval("BAUD_LADDER.splice(0, BAUD_LADDER.length, 9600, 57600)");
+  w.document.getElementById("selBaud").value = "115200";
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");
+  await sleep(500);
+  ok(w.eval("S.serial.rxCount") > 0 && w.eval("S._sawBoardText") === false,
+     "در ۱۱۵۲۰۰ فقط آشغال می‌آید");
+  const fixed5 = await w.eval("autoRecoverRx()");
+  await sleep(300);
+  ok(fixed5 === true, "نردبان سرعتِ درست را پیدا کرد و متصل ماند");
+  ok(w.eval("S.serial.baud") === 57600, "روی ۵۷۶۰۰ ماند (نه ۹۶۰۰ که آشغال می‌داد)",
+     "baud=" + w.eval("S.serial.baud"));
+  ok(w.document.getElementById("selBaud").value === "57600", "کشوی baud به‌روز شد");
+  ok(/UNREADABLE/.test(consoleText(dom)),
+     "در کنسول صریح گفت که بایتِ ۹۶۰۰ خوانا نبود");
+  ok(/Press the RESET button/.test(consoleText(dom)),
+     "از کاربر خواست دکمه‌ی RESET را بزند (بردهای بدونِ ریستِ خودکار)");
   dom.window.close();
 
   srv.close();
