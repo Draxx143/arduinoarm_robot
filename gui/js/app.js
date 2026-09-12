@@ -227,9 +227,13 @@ async function connectDirect(port, label) {
 /* ============================================================
  * ارسال و دریافت
  * ============================================================ */
-function send(text) {
+function send(text, opts = {}) {
   if (!text) return false;
+  /* auto = پرسش خودکار (poll). کنسول و فید را شلوغ نکند و وقتی وصل نیست
+     بی‌صدا رد شود — وگرنه هر ۳۳۰ms یک خط «» pos» و یک هشدار می‌آمد. */
+  const auto = !!opts.auto;
   if (S.mode === "off") {
+    if (auto) return false;
     const now = Date.now();
     addConsole("warn", "⛔ ارسال نشد («" + text + "») — ابتدا متصل شو یا شبیه‌ساز را روشن کن");
     if (now - S.lastWarnAt > 3000) {
@@ -238,8 +242,10 @@ function send(text) {
     }
     return false;
   }
-  addConsole("tx", "» " + text);
-  addFeed("tx", "» " + text);
+  if (!auto) {
+    addConsole("tx", "» " + text);
+    addFeed("tx", "» " + text);
+  }
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
       addConsole("err", "!! خطای ارسال: " + e.message);
@@ -642,7 +648,7 @@ function restartPoll() {
   if (S.posTimer) clearInterval(S.posTimer);
   S.posTimer = null;
   const v = parseInt($("selPoll").value, 10);
-  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status()), v);
+  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status(), { auto: true }), v);
   /* همگام‌سازی اسلایدرها با برد، مستقل از نرخ status: «pos» یک خط کوچک
      است و echo ندارد، پس ۳ بار در ثانیه پرسیدنش کنسول را شلوغ نمی‌کند.
      این‌طور اگر حرکت را از جای دیگری بدهی (تایپ در کنسول، Teach، تایمر،
@@ -657,7 +663,7 @@ function pollPos() {
   if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
   if (S.jHeld && S.jHeld.some(Boolean)) return;
   if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
-  send(Cmd.pos());
+  send(Cmd.pos(), { auto: true });
 }
 
 /* ============================================================
