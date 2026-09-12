@@ -30,6 +30,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self._blocked():
             self.send_error(404, "Not found")
             return
+        # ریشه مستقیم می‌برد روی GUI — فهرست پوشه‌ها هنوز در /gui/../ قابل مرور است
+        if self.path in ("/", ""):
+            self.send_response(302)
+            self.send_header("Location", "/gui/")
+            self.end_headers()
+            return
         return super().do_GET()
 
     def end_headers(self):
