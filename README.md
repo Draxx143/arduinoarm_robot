@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.43-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.43-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.44-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.44-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -336,6 +336,20 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 
 ## اگر برد وصل نمی‌شود: 🩺 عیب‌یابِ اتصال
 
+> **ریشه‌ی شایع‌ترین حالت («پورت شناسایی می‌شود، خطایی نمی‌آید، ولی RX صفر
+> می‌ماند»)** در خودِ پلِ سریال بود و در نسخه‌ی ۱.۰.۴۴ اصلاح شد:
+> برای ریستِ خودکارِ آردوینو یک پالسِ DTR می‌زنیم. در بردهای **Rev3**
+> (Uno/Mega) خطِ RESET با یک **جفت ترانزیستور** از DTR و RTS هدایت می‌شود و
+> تا وقتی این دو در **سطحِ متفاوت** باشند AVR در ریست **نگه داشته می‌شود**.
+> پالسِ قبلی با `DTR=1, RTS=0` تمام می‌شد — یعنی برد برای کلِ نشست در ریست
+> می‌ماند: پورت بدون خطا باز می‌شد، بایت‌های TX را کرنل می‌پذیرفت، و هیچ
+> بایتی برنمی‌گشت. حالا پالس با **هر دو خط در یک سطح** (`DTR=RTS=1`) تمام
+> می‌شود؛ همان وضعیتی که Arduino IDE و pyserial رها می‌کنند و برای بردهای
+> USB بومی (32u4/ESP32) هم لازم است تا «میزبان وصل است» را ببینند و
+> `Serial.print`شان دور ریخته نشود. تستِ `tools/test_reset_lines.py`
+> (مرحله‌ی ۱۰/۱۰) همین را روی فایلِ واقعیِ پل پین می‌کند.
+
+
 «پورت شناسایی می‌شود ولی اتصال برقرار نمی‌شود» چند علتِ کاملاً متفاوت دارد.
 به‌جای حدس زدن، دو ابزار داری که **علتِ واقعی را با راه‌حلش** می‌گویند:
 
@@ -360,7 +374,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 | چه دیدی | یعنی | کار |
 |---|---|---|
 | `AXIS-5 Firmware v1.0.41` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
-| هیچ بایتی نیامد | برد ساکت است | LED چشمک‌زنِ فریم‌ور روشن/خاموش می‌شود؟ کابلِ **دیتا**؟ تغذیه‌ی خارجی؟ baud؟ |
+| هیچ بایتی نیامد | برد ساکت است | عیب‌یاب خودش ۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰ را امتحان می‌کند و می‌گوید کدام جواب داد؛ بعد LED چشمک‌زن، کابلِ **دیتا** و تغذیه‌ی خارجی را چک کن |
 | متنِ به‌هم‌ریخته | baud اشتباه | با ۹۶۰۰ امتحان کن؛ فریم‌ور روی ۱۱۵۲۰۰ است |
 | `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |
 | `Resource busy` | خواننده‌ی دوم | Arduino IDE / Serial Monitor / اپِ دوم را ببند |
@@ -370,7 +384,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs nine stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs ten stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -402,10 +416,16 @@ GUI sources** (no hardware needed):
    against a **fake board** (`tools/fake_board.py`) and verifies it correctly
    diagnoses a healthy board + firmware version, an old firmware, a missing
    device, an already-connected app, a missing `dialout` group, missing python3
-   and a second process holding the port.
+   and a second process holding the port — plus the **automatic baud probe**:
+   a board that is silent at 115200 but answers at 9600 is found and named.
+10. **Reset pulse** (`tools/test_reset_lines.py`): runs the real
+    `bridge/serial_bridge.py` on a pty with a stubbed `fcntl` and asserts the
+    DTR/RTS sequence ends with **both lines at the same level**, so the board is
+    left running instead of held in reset (the classic RX=0 cause). The same
+    rule is checked in `tools/diagnose-linux.sh`.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی نه مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی ده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

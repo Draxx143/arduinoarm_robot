@@ -4,7 +4,13 @@
 # https://github.com/Draxx143/arduinoarm_robot
 """بردِ جعلی برای تست — روی یک pty، دقیقاً مثلِ فریم‌ورِ واقعی جواب می‌دهد.
 
-    python3 tools/fake_board.py [VERSION]
+    python3 tools/fake_board.py [VERSION] [--only-baud N]
+
+`--only-baud N` بردِ ساکت را شبیه‌سازی می‌کند: تا وقتی پورت با سرعتِ دیگری
+باز باشد هیچ نمی‌گوید (دقیقاً همان «RX=0» در دنیای واقعی). این اجازه
+می‌دهد کاوشِ خودکارِ baud در عیب‌یاب واقعاً تست شود — سرعتِ slave روی
+masterِ pty هم دیده می‌شود، پس بردِ جعلی می‌تواند بفهمد اپ با چه baud
+بازش کرده است.
 
 چرا لازم است: عیب‌یابِ اتصال (desktop-app/main/doctor.js) باید روی چیزی
 آزمایش شود که واقعاً مثلِ برد رفتار کند — بنرِ بوت با نسخه، بلوکِ کاملِ
@@ -19,11 +25,20 @@ import os
 import pty
 import select
 import sys
+import termios
 import threading
 import time
 import tty
 
-FW_VERSION = sys.argv[1] if len(sys.argv) > 1 else "1.0.41"
+FW_VERSION = "1.0.41"
+ONLY_BAUD = 0
+_args = sys.argv[1:]
+_i = 0
+while _i < len(_args):
+    if _args[_i] == "--only-baud":
+        ONLY_BAUD = int(_args[_i + 1]); _i += 2
+    else:
+        FW_VERSION = _args[_i]; _i += 1
 
 mfd, sfd = pty.openpty()
 tty.setraw(mfd)
@@ -41,7 +56,22 @@ buf = ""
 banner_sent = False
 
 
+def host_baud():
+    """سرعتی که میزبان (پل) روی این tty گذاشته است."""
+    try:
+        return termios.tcgetattr(mfd)[4]
+    except Exception:
+        return 0
+
+
+BAUD_NAMES = {getattr(termios, n): int(n[1:])
+              for n in dir(termios) if n.startswith("B") and n[1:].isdigit()}
+
+
 def send(text):
+    # بردِ «فقط-9600» با سرعتِ اشتباه هیچ نمی‌گوید — مثلِ بردِ واقعی
+    if ONLY_BAUD and BAUD_NAMES.get(host_baud(), 0) != ONLY_BAUD:
+        return True
     try:
         os.write(mfd, text.encode("utf-8"))
         return True

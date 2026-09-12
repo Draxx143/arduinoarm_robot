@@ -9,6 +9,8 @@
  *   · پورتِ ناموجود       → باید بگوید دستگاه وجود ندارد + راه‌حل
  *   · اپ از قبل متصل است  → دست‌دادن باید **رد** شود (نه اینکه پورت را بدزدد)
  *   · کاربر در dialout نیست → باید راه‌حلِ usermod را بدهد
+ *   · برد فقط با ۹۶۰۰ جواب می‌دهد → عیب‌یاب باید خودش baud درست را پیدا کند
+ *   · بردِ کاملاً ساکت → باید بگوید فریم‌ور اجرا نمی‌شود (نه اینکه حدس بزند)
  *
  * اجرا: node tools/test_doctor.js     (نیاز: python3)
  * ============================================================ */
@@ -29,9 +31,10 @@ function ok(cond, msg) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* بردِ جعلی را بالا بیاور و مسیرِ pty را بگیر */
-function startFakeBoard(version) {
-  const child = spawn("python3", [path.join(__dirname, "fake_board.py"), version || "1.0.41"],
-                      { stdio: ["pipe", "pipe", "pipe"] });
+function startFakeBoard(version, onlyBaud) {
+  const args = [path.join(__dirname, "fake_board.py"), version || "1.0.41"];
+  if (onlyBaud) args.push("--only-baud", String(onlyBaud));
+  const child = spawn("python3", args, { stdio: ["pipe", "pipe", "pipe"] });
   let buf = "", first = null;
   const ready = new Promise((res) => {
     child.stdout.on("data", (c) => {
@@ -135,6 +138,34 @@ async function main() {
   ok(find(rep, "free").ok === false, "free ✗ — خواننده‌ی دوم شناسایی شد");
   ok(/4242/.test(find(rep, "free").detail || "") && /Arduino IDE|Serial Monitor/i.test(find(rep, "free").fix || ""),
      "PID و راه‌حلش (بستنِ IDE/مانیتور) گفته شد");
+  fb.quit();
+  await sleep(300);
+
+  /* ---------- ۷) برد فقط با ۹۶۰۰ حرف می‌زند (رایج‌ترین علتِ RX=0) ---------- */
+  console.log("\n-- بردی که روی ۱۱۵۲۰۰ ساکت است و فقط با ۹۶۰۰ جواب می‌دهد --");
+  fb = startFakeBoard("1.0.41", 9600);
+  slave = await fb.ready;
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge, sh: makeSh(),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 400 });
+  const bd = find(rep, "bauds");
+  ok(bd.ok === false && /FOUND IT/.test(bd.detail || ""),
+     "bauds ✗ با پیامِ «پیدا شد» — عیب‌یاب خودش baud درست را پیدا کرد: " + (bd.detail || ""));
+  ok(/9600/.test(bd.detail || ""), "در گزارش، عددِ ۹۶۰۰ آمده");
+  ok(/9600/.test(bd.fix || ""), "راه‌حلش تنظیمِ baud روی ۹۶۰۰ است: " + (bd.fix || ""));
+  ok(find(rep, "firmware").ok === true, "firmware ✓ — نسخه از پاسخِ همان ۹۶۰۰ خوانده شد");
+  fb.quit();
+  await sleep(400);
+
+  /* ---------- ۸) بردِ کاملاً ساکت (فریم‌ور اجرا نمی‌شود) ---------- */
+  console.log("\n-- بردی که در هیچ baud ای حرف نمی‌زند --");
+  fb = startFakeBoard("1.0.41", 1234567);   /* baud ای که اپ هرگز امتحانش نمی‌کند */
+  slave = await fb.ready;
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge, sh: makeSh(),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 300 });
+  ok(find(rep, "rx").ok === false, "rx ✗ — سکوتِ برد گزارش شد");
+  ok(find(rep, "bauds").ok === false, "bauds ✗ — هیچ baud ای جواب نداد");
+  ok(/heartbeat LED|reflash|data cable/i.test(find(rep, "bauds").fix || ""),
+     "راه‌حلِ واقعی داده شد (LED/کابلِ دیتا/فلش): " + (find(rep, "bauds").fix || "").slice(0, 70));
   fb.quit();
   await sleep(300);
   pybridge.closeAll();

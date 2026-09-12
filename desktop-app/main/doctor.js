@@ -13,6 +13,7 @@
  *   handshake    بازکردنِ واقعیِ پورت با همان پلی که اپ استفاده می‌کند،
  *                پالسِ DTR، فرستادنِ status/pos و شمارشِ بایت‌های برگشتی
  *   rx           آیا برد اصلاً چیزی فرستاد؟
+ *   bauds        اگر ساکت بود: کاوشِ خودکارِ ۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰
  *   firmware     کدام نسخه روی برد است (باید v1.0.41 باشد)
  *
  * این ماژول عمداً به electron وابسته نیست تا با Nodeِ خالی قابلِ تست باشد
@@ -114,33 +115,73 @@ async function runDoctor(o) {
     return { port: p, baud: b, checks };
   }
 
-  const rx = [];
-  const res = await o.pybridge.openBridge({
-    portPath: p, baud: b, timeoutMs: 8000,
-    send: (ch, payload) => {
-      if (ch === "serialport:data") {
-        try { rx.push(Buffer.from(payload, "base64").toString("utf8")); } catch (e) {}
-      }
-    },
-  });
-  if (res.err) {
-    add("handshake", false, "the bridge could not open the port: " + res.err, "");
+  /* یک دست‌دادنِ کامل با یک baud مشخص. هر بار پورت را از نو باز می‌کند،
+     پس پالسِ ریست هم زده می‌شود (بعضی بردها فقط بعدِ ریست حرف می‌زنند). */
+  const probe = async (baud, quick) => {
+    const rx = [];
+    const res = await o.pybridge.openBridge({
+      portPath: p, baud, timeoutMs: 8000,
+      send: (ch, payload) => {
+        if (ch === "serialport:data") {
+          try { rx.push(Buffer.from(payload, "base64").toString("utf8")); } catch (e) {}
+        }
+      },
+    });
+    if (res.err) return { err: res.err, text: "" };
+    await nap(H || (quick ? 1200 : 2600));                /* بنرِ بوت بعد از پالسِ ریست */
+    o.pybridge.writeTo(res.id, "status\n");
+    await nap(H || (quick ? 900 : 1600));
+    o.pybridge.writeTo(res.id, "pos\n");
+    await nap(H || (quick ? 400 : 900));
+    const text = rx.join("");
+    o.pybridge.closeSession(res.id);
+    await nap(H ? 50 : 250);
+    return { text };
+  };
+
+  const first = await probe(b, false);
+  if (first.err) {
+    add("handshake", false, "the bridge could not open the port: " + first.err, "");
     return { port: p, baud: b, checks };
   }
+  let text = first.text;
 
-  await nap(H || 2600);                                   /* بنرِ بوت بعد از پالسِ ریست */
-  o.pybridge.writeTo(res.id, "status\n");
-  await nap(H || 1600);
-  o.pybridge.writeTo(res.id, "pos\n");
-  await nap(H || 900);
-  const text = rx.join("");
-  o.pybridge.closeSession(res.id);
-  await nap(H ? 50 : 250);
+  /* ---- برد ساکت است؟ خودمان baud های محتمل را امتحان می‌کنیم ----
+     رایج‌ترین علتِ «RX=0» بعد از ریستِ برد، سرعتِ اشتباه است: فریم‌وری که
+     با Config.h قدیمی (۹۶۰۰) فلش شده، یا بردی که بوت‌لودرش ۹۶۰۰ است.
+     به‌جای اینکه فقط بگوییم «۹۶۰۰ را امتحان کن»، خودمان امتحان می‌کنیم. */
+  const ALTS = [9600, 57600, 38400].filter((x) => x !== b);
+  let altHit = null;
+  if (!text.length) {
+    for (const alt of ALTS) {
+      const r = await probe(alt, true);
+      if (r.err) continue;
+      if (r.text.length) { altHit = { baud: alt, text: r.text }; break; }
+    }
+    if (altHit) text = altHit.text;      /* بگذار بررسی‌های بعدی همان را ببینند */
+  }
 
   add("rx", text.length > 0, `${text.length} byte(s) came back from the board`,
       text.length ? "" :
-        "the board is silent: is the firmware's heartbeat LED blinking? try another baud (9600), " +
-        "and make sure the USB cable carries data (charge-only cables are very common)");
+        "the board is silent at every baud we tried: is the firmware's heartbeat LED blinking? " +
+        "make sure the USB cable carries data (charge-only cables are very common), and that " +
+        "nothing else (Arduino IDE / Serial Monitor) is holding the port");
+
+  /* نتیجه‌ی کاوشِ baud — هم وقتی پیدا شد، هم وقتی نشد */
+  if (!first.text.length) {
+    /* در هر دو حالت یک «مشکلِ عملی» است: یا baud اشتباه است و باید عوض
+       شود، یا برد اصلاً فریم‌ور را اجرا نمی‌کند. پس ✗ — ولی با دو پیامِ
+       کاملاً متفاوت، چون راه‌حلشان زمین تا آسمان فرق دارد. */
+    add("bauds", false,
+        altHit
+          ? `FOUND IT — the board is silent at ${b} but answers at ${altHit.baud} baud`
+          : `no reply at ${b}, ${ALTS.join(", ")} baud (the port opens fine, so the board itself is silent)`,
+        altHit
+          ? `set the app's baud rate to ${altHit.baud} and reconnect — or reflash the firmware ` +
+            `whose Config.h uses SERIAL_BAUD ${b}`
+          : "the board is not running the firmware: check the heartbeat LED, the data cable, " +
+            "and reflash firmware/RobotArm_Firmware/ with the Arduino IDE");
+  }
 
   const ver = (text.match(/(?:FW: v|Firmware v)(\d+\.\d+\.\d+)/) || [])[1] || "";
   if (ver) {

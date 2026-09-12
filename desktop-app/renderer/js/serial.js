@@ -183,6 +183,7 @@ class IpcSerialLink {
     this.txCount = 0;
     this.rxCount = 0;
     this._pend = new Uint8Array(0);
+    this._early = null;      /* بایت‌هایی که پیش از connected شدن رسیدند */
     this._bound = false;
     this._activeLabel = null;
     this.transport = "system";
@@ -206,20 +207,32 @@ class IpcSerialLink {
     if (!IpcSerialLink.supported) throw new Error("system serial bridge unavailable");
     if (this.connected) throw new Error("Already connected");
     this.baud = baud || FW.BAUD;
+    this._pend = new Uint8Array(0);
+    /* FIX: listener ها **پیش از** open بسته شوند. پل به محضِ بازکردنِ پورت
+     * یک پالسِ ریست به برد می‌زند و بنرِ بوت می‌تواند چند صد میلی‌ثانیه بعد
+     * برسد — یعنی پیش از آنکه این promise حل شود و onData ثبت گردد. رویدادِ
+     * IPC بدونِ listener برای همیشه دور ریخته می‌شد، پس کاربر بنرِ بوت و نسخه‌ی
+     * فریم‌ور را نمی‌دید (و اگر برد فقط یک‌بار حرف می‌زد، RX=0 می‌ماند). */
+    this._early = [];
+    this._bind();
     const res = await this.bridge.open(String(portPath), this.baud);
-    if (res && res.err) throw new Error(res.err);
+    if (res && res.err) { this._early = null; throw new Error(res.err); }
     this.id = res.id;
     this.connected = true;
     this._activeLabel = String(portPath);
-    this._pend = new Uint8Array(0);
-    this._bind();
+    const early = this._early || [];
+    this._early = null;
+    early.forEach((b64) => this._feed(b64));   /* هیچ بایتی گم نمی‌شود */
     if (this.onConnect) this.onConnect(this.baud);
   }
 
   _bind() {
     if (this._bound) return;
     this._bound = true;
-    this.bridge.onData((b64) => { if (this.connected) this._feed(b64); });
+    this.bridge.onData((b64) => {
+      if (this.connected) this._feed(b64);
+      else if (this._early) this._early.push(b64);   /* حینِ open: نگهش دار */
+    });
     this.bridge.onClosed(() => {
       if (this.connected) {
         this.connected = false;

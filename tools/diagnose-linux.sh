@@ -169,12 +169,19 @@ except termios.error as e:
 try:
     TIOCMGET, TIOCMSET = 0x5415, 0x5418
     DTR, RTS = 0x002, 0x004
-    b = fcntl.ioctl(fd, TIOCMGET, 0)
-    fcntl.ioctl(fd, TIOCMSET, b & ~DTR & ~RTS)
-    time.sleep(0.12)
-    fcntl.ioctl(fd, TIOCMSET, (b & ~RTS) | DTR)
-    time.sleep(0.05)
-    print("  \033[32m✓\033[0m پالسِ DTR زده شد (برد باید ریست شود و بنرِ بوت را بفرستد)")
+    def lines(dtr, rts):
+        b = fcntl.ioctl(fd, TIOCMGET, 0)
+        b = (b | DTR) if dtr else (b & ~DTR)
+        b = (b | RTS) if rts else (b & ~RTS)
+        fcntl.ioctl(fd, TIOCMSET, b)
+    # ترتیبِ avrdude — و مهم‌تر از همه: پایان با هر دو خط در یک سطح.
+    # در بردهای Rev3 تا وقتی DTR و RTS متفاوت‌اند AVR در ریست می‌ماند،
+    # یعنی پورت باز می‌شود ولی هیچ بایتی برنمی‌گردد (RX=0).
+    lines(1, 1); time.sleep(0.05)
+    lines(1, 0); time.sleep(0.12)
+    lines(1, 1); time.sleep(0.05)
+    print("  \033[32m✓\033[0m پالسِ ریست زده شد و خطوط در سطحِ یکسان رها شدند"
+          " (برد باید ریست شود و بنرِ بوت را بفرستد)")
 except Exception as e:
     print(f"  \033[33m!\033[0m کنترلِ خطوطِ مودم ممکن نشد: {e}")
 

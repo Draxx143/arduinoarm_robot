@@ -43,19 +43,38 @@ def main():
         termios.tcsetattr(fd, termios.TCSANOW, attrs)
     except termios.error as e:
         die("termios failed: " + str(e))
-    # Arduino auto-reset: pulse DTR (deassert 120 ms -> assert), like the IDE/avrdude.
-    # Without this edge a running board never reboots, so no boot banner appears.
-    try:
+    # ---- Arduino auto-reset (avrdude's classic DTR/RTS sequence) -------------
+    # On Rev3 Uno/Mega the reset line is driven by a transistor PAIR: RESET is
+    # pulled low whenever DTR and RTS sit at DIFFERENT levels. So the pulse must
+    # END with both lines at the SAME level. Ending with DTR=1/RTS=0 (what this
+    # bridge used to do) keeps the AVR held in reset for the whole session: the
+    # port opens without any error, TX bytes are accepted by the kernel, and RX
+    # stays 0 forever — "the board is detected but never answers".
+    # Final level DTR=RTS=1 is also what the IDE/pyserial leave behind, and it
+    # is what native-USB boards (32u4 / ESP32) need to treat the host as
+    # "connected" — otherwise every Serial.print() is silently dropped.
+    # Boards with only the 100 nF cap reset on the edge and ignore the level.
+    def set_lines(dtr, rts):
         import fcntl
         TIOCMGET, TIOCMSET = 0x5415, 0x5418
         TIOCM_DTR, TIOCM_RTS = 0x002, 0x004
         bits = fcntl.ioctl(fd, TIOCMGET, 0)
-        fcntl.ioctl(fd, TIOCMSET, bits & ~TIOCM_DTR & ~TIOCM_RTS)
-        time.sleep(0.12)
-        fcntl.ioctl(fd, TIOCMSET, (bits & ~TIOCM_RTS) | TIOCM_DTR)
+        bits = (bits | TIOCM_DTR) if dtr else (bits & ~TIOCM_DTR)
+        bits = (bits | TIOCM_RTS) if rts else (bits & ~TIOCM_RTS)
+        fcntl.ioctl(fd, TIOCMSET, bits)
+
+    try:
+        set_lines(True, True)     # idle, same level -> board running
         time.sleep(0.05)
+        set_lines(True, False)    # levels differ -> RESET pulled low
+        time.sleep(0.12)          # hold reset (bootloaders want >= 50 ms)
     except Exception:
-        pass  # ports/ptys without modem-control ioctls: just continue
+        pass                      # ptys/ports without modem-control ioctls
+    try:
+        set_lines(True, True)     # ALWAYS release: same level -> board boots
+    except Exception:
+        pass
+    time.sleep(0.05)
     sys.stdout.write("R:\n")
     sys.stdout.flush()
 
