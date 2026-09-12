@@ -859,6 +859,44 @@ async function toggleSerial() {
   }
 }
 
+/* 🩺 Connection doctor — asks the main process to check every reason a board
+   may fail to link, and prints the findings (with the exact fix) to the serial
+   console. Runs on demand and automatically when RX stays at 0 after connect,
+   so "it detects the board but never really connects" stops being a guessing
+   game. In a plain browser there is no such access — use tools/diagnose-linux.sh. */
+async function runPortDoctor(auto) {
+  if (!(window.electronAPI && window.electronAPI.portDoctor)) {
+    if (!auto) toast("The doctor needs the desktop app — in a browser run tools/diagnose-linux.sh", "warn", 7000);
+    return;
+  }
+  const picked = ($("hdrPort") && $("hdrPort").value) || (S.serial && S.serial.activeLabel) || "";
+  const baud = parseInt($("selBaud").value, 10) || FW.BAUD;
+  let devPath = picked;
+  try { devPath = (await resolvePortPath(picked)) || picked; } catch (e) {}
+  const btn = $("btnDoctor");
+  if (btn) { btn.disabled = true; btn.textContent = "🩺 …"; }
+  addConsole("sys", `[DOCTOR] checking ${devPath || "(no port)"} @ ${baud} baud …`);
+  try {
+    const rep = await window.electronAPI.portDoctor(devPath, baud);
+    let bad = 0;
+    (rep && rep.checks ? rep.checks : []).forEach((c) => {
+      const mark = c.ok === null ? "…" : (c.ok ? "✓" : "✗");
+      addConsole(c.ok === false ? "err" : "sys", `[DOCTOR] ${mark} ${c.name}: ${c.detail}`);
+      if (c.fix) addConsole("warn", `[DOCTOR]     → fix: ${c.fix}`);
+      if (c.ok === false) bad++;
+    });
+    const hint = $("portHint");
+    if (hint) hint.innerHTML = bad
+      ? `<b>🩺 Doctor found ${bad} problem${bad > 1 ? "s" : ""}</b> — the console shows each one with its fix.`
+      : `<b>🩺 Doctor: all clear</b> — port, permissions and the board's reply are fine.`;
+    if (!auto || bad) toast(bad ? `🩺 Doctor: ${bad} problem(s) — see the console` : "🩺 Doctor: all clear ✓", bad ? "err" : "ok", 7000);
+  } catch (e) {
+    addConsole("err", "[DOCTOR] !! " + ((e && e.message) || e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "🩺 Doctor"; }
+  }
+}
+
 /* ACK toggle — state is synced from the board's own reply */
 function setAckUI(on) {
   const b = $("btnAck");
@@ -877,7 +915,7 @@ function bindLinkEvents(link) {
     try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
     setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
-    S._connAt = Date.now(); S._rxWarned = false;
+    S._connAt = Date.now(); S._rxWarned = false; S._doctorAuto = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
     /* second hello after the bootloader window: boards that reboot on open
@@ -1698,6 +1736,14 @@ function updateLinkStats() {
     /* zero data from the board? say it loudly, once */
     if (S.serial.rxCount === 0 && S._connAt && Date.now() - S._connAt > 6000 && !S._rxWarned) {
       S._rxWarned = true;
+      /* «وصل شد ولی برد چیزی نمی‌فرستد» — به‌جای حدس زدن، عیب‌یاب را یک بار
+         خودکار اجرا کن تا علتِ واقعی (python3، dialout، مجوز، خواننده‌ی دوم،
+         بردِ ساکت) با راه‌حلش در کنسول بیاید. */
+      if (!S._doctorAuto && S.mode === "serial") {
+        S._doctorAuto = true;
+        addConsole("warn", "[DOCTOR] RX is 0 — running the connection doctor automatically…");
+        setTimeout(() => { runPortDoctor(true).catch(() => {}); }, 400);
+      }
       const hint = $("portHint");
       if (hint) hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B after 6 s) &mdash; checking who else holds the port…";
       addConsole("warn", "!! no RX data 6 s after connect — checking port holders…");
@@ -2188,6 +2234,7 @@ function init() {
   $("hdrScan").onclick = async () => { S._sysPorts = null; await renderConnCard();
     addConsole("sys", "[SYS] port scan: " + Math.max(0, ($("hdrPort") ? $("hdrPort").length : 1) - 1) + " device(s)"); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
+  if ($("btnDoctor")) $("btnDoctor").onclick = () => runPortDoctor(false);
   if (window.electronAPI && window.electronAPI.onPortAdded) {
     window.electronAPI.onPortAdded(() => {
       if (S.mode === "off" && !S._scanActive) $("portHint").textContent = "New device detected — click Scan Ports.";

@@ -19,6 +19,11 @@ try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC 
  * در main/pybridge.js است — جدا و بدون وابستگی به electron، تا بتوان با
  * Node خالی تستش کرد (tools/test_pybridge.js). */
 const pybridge = require("./main/pybridge.js");
+const doctor = require("./main/doctor.js");
+
+/* نسخه‌ی فریم‌وری که این اپ انتظار دارد — باید با FIRMWARE_VERSION در
+ * firmware/RobotArm_Firmware/Config.h یکی باشد (تستِ مرحله‌ی ۵ چک می‌کند). */
+const EXPECTED_FW = "1.0.41";
 const openSerialPorts = new Map();
 let serialSeq = 0;
 
@@ -176,6 +181,25 @@ function createWindow() {
     });
   }));
   ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
+
+  /* ---- 🩺 عیب‌یابِ اتصال: منطقش در main/doctor.js است (بدون electron،
+     پس با Node خالی قابلِ تست است: tools/test_doctor.js) ---- */
+  ipcMain.handle("port:doctor", async (e, portPath, baud) => {
+    try {
+      return await doctor.runDoctor({
+        portPath: String(portPath || ""),
+        baud: Number(baud) || 115200,
+        pybridge,
+        busy: openSerialPorts.size > 0,
+        platform: process.platform,
+        expectedFw: EXPECTED_FW,
+      });
+    } catch (er) {
+      return { port: String(portPath || ""), baud: Number(baud) || 115200, checks: [
+        { name: "doctor", ok: false, detail: "the doctor itself failed: " + ((er && er.message) || er), fix: "" },
+      ] };
+    }
+  });
 
   /* ---- Main-process serial backend (bypasses Chromium Web Serial) ---- */
   ipcMain.handle("serialport:available", () => !!SerialPortC);

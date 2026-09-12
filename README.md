@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.42-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.42-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.43-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.43-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -334,9 +334,43 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 
 ---
 
+## اگر برد وصل نمی‌شود: 🩺 عیب‌یابِ اتصال
+
+«پورت شناسایی می‌شود ولی اتصال برقرار نمی‌شود» چند علتِ کاملاً متفاوت دارد.
+به‌جای حدس زدن، دو ابزار داری که **علتِ واقعی را با راه‌حلش** می‌گویند:
+
+**۱) داخلِ اپ دسکتاپ** — دکمه‌ی **🩺 Doctor** کنارِ کشوی انتخابِ پورت.
+این‌ها را بررسی می‌کند و نتیجه را در کنسولِ سریال می‌نویسد:
+`python3` (پلِ لینوکس به آن نیاز دارد) · عضویت در گروه `dialout` · وجودِ
+گرهِ دستگاه · مجوزِ خواندن/نوشتن · اینکه چه فرایندِ دیگری پورت را گرفته ·
+`dmesg` · و در آخر یک **دست‌دادنِ زنده** با برد (بازکردنِ پورت، پالسِ DTR،
+فرستادنِ `status` و `pos`، شمارشِ بایت‌های برگشتی و تشخیصِ نسخه‌ی فریم‌ور).
+اگر بعد از اتصال RX صفر بماند، خودکار یک بار اجرا می‌شود.
+
+**۲) از ترمینال** (بدونِ نیاز به اپ):
+
+```bash
+bash tools/diagnose-linux.sh              # خودش پورت را پیدا می‌کند
+bash tools/diagnose-linux.sh /dev/ttyUSB0 # یا پورتِ مشخص
+bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه باشد
+```
+
+خروجیِ همان بخشِ ۹ («دست‌دادنِ واقعی با برد») تعیین‌کننده است:
+
+| چه دیدی | یعنی | کار |
+|---|---|---|
+| `AXIS-5 Firmware v1.0.41` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
+| هیچ بایتی نیامد | برد ساکت است | LED چشمک‌زنِ فریم‌ور روشن/خاموش می‌شود؟ کابلِ **دیتا**؟ تغذیه‌ی خارجی؟ baud؟ |
+| متنِ به‌هم‌ریخته | baud اشتباه | با ۹۶۰۰ امتحان کن؛ فریم‌ور روی ۱۱۵۲۰۰ است |
+| `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |
+| `Resource busy` | خواننده‌ی دوم | Arduino IDE / Serial Monitor / اپِ دوم را ببند |
+| جواب می‌دهد ولی نسخه ندارد | فریم‌ورِ قدیمی روی برد | `firmware/RobotArm_Firmware/` را دوباره فلش کن |
+
+---
+
 ## Development
 
-`tools/hosttest/run_tests.sh` runs seven stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs nine stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -360,9 +394,18 @@ GUI sources** (no hardware needed):
    echoes* never reach the serial console while a manual `status`/`pos` prints
    exactly once, the slider lands on 0 after homing, and it then follows the
    position the simulated board reports.
+8. **Serial bridge** (`tools/test_pybridge.js`): opens `bridge/serial_bridge.py`
+   on a **real pty** (`tools/pty_holder.py`) and checks open → RX → TX → close,
+   plus every failure mode (missing port, non-tty file, no python3) — each must
+   return `{err}` fast instead of hanging the Connect button forever.
+9. **Connection doctor** (`tools/test_doctor.js`): runs `desktop-app/main/doctor.js`
+   against a **fake board** (`tools/fake_board.py`) and verifies it correctly
+   diagnoses a healthy board + firmware version, an old firmware, a missing
+   device, an already-connected app, a missing `dialout` group, missing python3
+   and a second process holding the port.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی هفت مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی نه مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

@@ -50,7 +50,7 @@ if [ ! -f "$SKETCH/RobotArm_Firmware.ino" ]; then
 fi
 
 echo
-echo "===== [1/8] compiling all modules ====="
+echo "===== [1/9] compiling all modules ====="
 OBJS=""
 for f in "$SKETCH"/*.cpp "$OUT/sketch.cpp" "$HT/stubs.cpp"; do
     b=$(basename "$f" | tr '.-' '__')
@@ -67,7 +67,7 @@ done
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [2/8] link + serial smoke test ====="
+    echo "===== [2/9] link + serial smoke test ====="
     printf "  %-24s " "compiling link_main"
     if g++ $CXXFLAGS $INC -c "$HT/link_main.cpp" -o "$OUT/link_main.o" 2> "$OUT/lm.log"; then echo OK; else echo FAIL; FAIL=1; fi
 
@@ -92,7 +92,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [3/8] behavioural simulation (homing order + backoff + motion) ====="
+    echo "===== [3/9] behavioural simulation (homing order + backoff + motion) ====="
     SIM_OBJS=""
     for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager; do
         SIM_OBJS="$SIM_OBJS $OUT/${m}_cpp.o"
@@ -121,7 +121,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [4/8] GUI -> firmware command conformance ====="
+    echo "===== [4/9] GUI -> firmware command conformance ====="
     if command -v node >/dev/null 2>&1; then
         printf "  %-24s " "generating GUI commands"
         if node "$ROOT/tools/gui_cmds.js" > "$OUT/gui_cmds.txt" 2> "$OUT/gui_cmds.err"; then
@@ -156,7 +156,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [5/8] POS sync channel (sliders follow the board) ====="
+    echo "===== [5/9] POS sync channel (sliders follow the board) ====="
     printf 'pos\ndeg 3 30\npos\nik 210 0 30\npos\nstatus\n' > "$OUT/pos_cmds.txt"
     if "$OUT/firmware" "$OUT/pos_cmds.txt" > "$OUT/pos_run.log" 2>&1; then
         N_POS=$(grep -c '^>> POS ' "$OUT/pos_run.log" || true)
@@ -191,10 +191,15 @@ if [ $FAIL -eq 0 ]; then
             echo "FAIL — انتظار «AXIS-5 Firmware v$FW_VER» و «FW: v$FW_VER»"; FAIL=1
         fi
 
-        printf "  %-34s " "both GUIs expect that version"
+        printf "  %-34s " "GUIs + app expect that version"
         N_EXP=$(grep -ho 'EXPECTED_FW: *"[0-9.]*"' "$ROOT/gui/js/firmware.js" \
                 "$ROOT/desktop-app/renderer/js/core.js" | grep -c "\"$FW_VER\"" || true)
-        if [ "$N_EXP" = "2" ]; then echo "OK — هر دو GUI: $FW_VER"; else echo "FAIL — $N_EXP از ۲"; FAIL=1; fi
+        N_MAIN=$(grep -c "EXPECTED_FW = \"$FW_VER\"" "$ROOT/desktop-app/main.js" || true)
+        if [ "$N_EXP" = "2" ] && [ "$N_MAIN" = "1" ]; then
+            echo "OK — هر دو GUI و عیب‌یابِ اپ: $FW_VER"
+        else
+            echo "FAIL — GUIها $N_EXP از ۲، main.js $N_MAIN از ۱"; FAIL=1
+        fi
     else
         echo "  RUNTIME FAIL"; FAIL=1
     fi
@@ -205,7 +210,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [6/8] kinematics: GUI math + IK parity with the firmware ====="
+    echo "===== [6/9] kinematics: GUI math + IK parity with the firmware ====="
     printf "  %-34s " "Go-to-XYZ reachable band / round-trip"
     if node "$ROOT/tools/test_goto.js" > "$OUT/goto.log" 2>&1; then
         echo "OK — $(tail -1 "$OUT/goto.log")"
@@ -227,7 +232,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [7/8] both GUIs in a real DOM (jsdom) ====="
+    echo "===== [7/9] both GUIs in a real DOM (jsdom) ====="
     printf "  %-34s " "layout + quiet console + POS sync"
     if node "$ROOT/tools/test_gui_dom.js" > "$OUT/gui_dom.log" 2>&1; then
         if grep -q "SKIP" "$OUT/gui_dom.log"; then
@@ -247,12 +252,29 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     echo
-    echo "===== [8/8] desktop serial bridge (real pty, no hang on failure) ====="
+    echo "===== [8/9] desktop serial bridge (real pty, no hang on failure) ====="
     printf "  %-34s " "openBridge resolves + pty RX/TX"
     if node "$ROOT/tools/test_pybridge.js" > "$OUT/pybridge.log" 2>&1; then
         echo "OK — $(grep -m1 'نتیجه:' "$OUT/pybridge.log")"
     else
         echo "FAIL"; sed 's/^/      /' "$OUT/pybridge.log" | tail -20; FAIL=1
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# ۹) عیب‌یابِ اتصال — همان چیزی که «شناسایی می‌شود ولی وصل نمی‌شود» را
+#    توضیح می‌دهد. روی یک بردِ جعلی (tools/fake_board.py) روی pty آزمایش
+#    می‌شود: بردِ سالم، فریم‌ورِ قدیمی، پورتِ ناموجود، اپِ متصل، نبودِ
+#    dialout، نبودِ python3 و خواننده‌ی دومِ پورت.
+# ---------------------------------------------------------------------
+if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    echo
+    echo "===== [9/9] connection doctor (fake board on a pty) ====="
+    printf "  %-34s " "diagnoses the real causes"
+    if node "$ROOT/tools/test_doctor.js" > "$OUT/doctor.log" 2>&1; then
+        echo "OK — $(grep -m1 'نتیجه:' "$OUT/doctor.log")"
+    else
+        echo "FAIL"; sed 's/^/      /' "$OUT/doctor.log" | tail -22; FAIL=1
     fi
 fi
 
