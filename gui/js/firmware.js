@@ -9,7 +9,7 @@ const FW = {
   BAUD: 115200,
 
   /* v1.0.38: حداقل نسخه‌ی فریم‌ور با همه‌ی فیکس‌ها */
-  EXPECTED_FW: "1.0.38",
+  EXPECTED_FW: "1.0.41",
 
   versionOk(reported) {
     if (!reported) return false;

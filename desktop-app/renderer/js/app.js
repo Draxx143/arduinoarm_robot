@@ -485,8 +485,25 @@ function send(text, opts = {}) {
     }
     return false;
   }
-  if (!auto) addConsole("tx", "» " + text);
+  if (!auto) {
+    addConsole("tx", "» " + text);
+    /* a manual command means the user wants to SEE its reply: drop any
+       suppression and give the poll a short pause so the reply is not
+       interleaved with (or swallowed by) a poll response */
+    S._pollBlock = false;
+    S.manualAt = Date.now();
+    if (/^pos\b/i.test(text.trim())) S._posManual = true;  /* show that one POS line */
+  }
   if (text === "status") S._statusFromPoll = auto; /* suppress the reply block only for polls */
+  if (auto) {
+    /* also hide the board's echo of our own poll ("> status" / "> pos") —
+       those echoes were what filled the console several times a second and
+       pushed the user's own commands off screen */
+    S._autoEcho = text.trim().toLowerCase();
+    S._autoEchoAt = Date.now();
+  } else {
+    S._autoEcho = null;   /* a manual command shows its echo */
+  }
   if (text !== "status") addFeed("tx", "» " + text);
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
@@ -521,6 +538,11 @@ function rxLine(line) {
   const RE_STATUS_HEADER = /^=*\s*System Status/;
   const RE_STATUS_FOOTER = /^={6,}$/;   /* any long '=' run closes the block */
   const RE_BLOCK_BREAKER = /^(Moving |>> |!!|Format:|Invalid|Unknown|Saved |Loaded |Slot )/;
+  /* the echo of a command the GUI sent itself (a poll), not of the user's */
+  const echoOf = /^>(?!>)\s*(.+)$/.exec(t);
+  const isAutoEcho = !!echoOf && S._autoEcho != null &&
+    Date.now() - (S._autoEchoAt || 0) < 1500 &&
+    echoOf[1].trim().toLowerCase() === S._autoEcho;
 
   if (RE_STATUS_HEADER.test(t)) {
     S.inStatus = true;
@@ -556,7 +578,12 @@ function rxLine(line) {
       return;
     }
     /* parsing only — no console spam */
-  } else if (!isPosSync) {
+  } else if (isAutoEcho) {
+    /* "> status" / "> pos" from our own poll: silent */
+  } else if (isPosSync) {
+    /* POS is never printed — except for one the user asked for by typing "pos" */
+    if (S._posManual) { S._posManual = false; addConsole("rx", line); }
+  } else {
     addConsole("rx", line);
   }
   if (/^>(?!>)/.test(t)) return; /* firmware echo */
@@ -830,7 +857,7 @@ function restartPoll() {
   if (S.posTimer) clearInterval(S.posTimer);
   S.posTimer = null;
   const v = parseInt($("selPoll").value, 10);
-  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status(), { auto: true }), v);
+  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(pollStatus, v);
   /* Slider sync, independent of the status rate: "pos" is one short line with
      no echo, so asking 3x a second costs nothing and the sliders now follow
      motion started anywhere else (typed console, teach, timer, macro). */
@@ -852,8 +879,16 @@ function disablePosIfUnsupported() {
   return true;
 }
 
+function pollStatus() {
+  if (S.mode === "off") return;
+  /* pause briefly after a manual command so its reply lands clean and readable */
+  if (Date.now() - (S.manualAt || 0) < 900) return;
+  send(Cmd.status(), { auto: true });
+}
+
 function pollPos() {
   if (S.mode === "off") return;
+  if (Date.now() - (S.manualAt || 0) < 900) return;
   /* drag-safe: never yank a value out from under the user's cursor */
   const ae = document.activeElement;
   if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
@@ -924,6 +959,12 @@ function buildJoints() {
        J5 = 90°: after homing it travels 90° forward and THAT spot is zero. */
     const offNote = ax.zeroOffsetDeg
       ? ` · zero ${ax.zeroOffsetDeg > 0 ? "+" : ""}${ax.zeroOffsetDeg}° from endstop` : "";
+    /* the blue "jCur" number is gone from this row: it always read 0 and
+       duplicated the J1..J5 cards. Live position rides the POS channel and
+       those cards. The row has EXACTLY four grid children — name | slider |
+       number box | buttons. Any extra node (even a stray comment) becomes an
+       implicit grid column and squashes the slider, so nothing else goes in
+       this template string. */
     row.innerHTML = `
       <div class="jl"><b style="color:${AXC[i]}">${ax.name} <span class="tiny">J${ax.joint} · ${ax.id}</span></b>
         <span>${lo}…${hi}${S.degMode ? "°" : " steps"}${offNote}</span></div>
@@ -932,8 +973,6 @@ function buildJoints() {
       <input type="number" id="jNum${i}" step="${S.degMode ? 0.5 : 1}"
         min="${lo}" max="${hi}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}">
-      /* the blue "jCur" number was removed: it always read 0 and duplicated
-         the J1..J5 cards above. Live position now rides the POS channel. */
       <div style="display:flex;gap:4px">
         <button class="btn small teal" id="jGo${i}" title="Send move">GO ➤</button>
         <button class="btn small" id="jHome${i}" title="Home this axis">⌂</button>

@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.40-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.40-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.41-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.41-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -290,13 +290,20 @@ cd desktop-app && npm install && npm start
 >> POS 0.0,36.9,20.9,0.0,-90.0
 ```
 
-GUI هر ~۳۳۰ میلی‌ثانیه آن را می‌پرسد (بدون echo، پس کنسول شلوغ نمی‌شود) و
-اسلایدرها را با موقعیت واقعی برد به‌روز می‌کند — یعنی اگر حرکت را از جای
-دیگری بدهی (تایپ در کنسول سریال، Teach، تایمر، ماکرو)، اسلایدرها دنبالش
-می‌روند. انتهای `status` هم همین خط می‌آید، پس poll موجودِ وضعیت هم کفایت
+GUI هر ~۳۳۰ میلی‌ثانیه آن را می‌پرسد و اسلایدرها را با موقعیت واقعی برد
+به‌روز می‌کند — یعنی اگر حرکت را از جای دیگری بدهی (تایپ در کنسول سریال،
+Teach، تایمر، ماکرو)، اسلایدرها دنبالش می‌روند. انتهای `status` هم همین خط می‌آید، پس poll موجودِ وضعیت هم کفایت
 می‌کند. موقع درگ کردن اسلایدر، همگام‌سازی موقتاً متوقف می‌شود تا عدد زیر
 دستت نپرد (drag-safe). بعد از `home` هم اسلایدرِ جوینت‌های هوم‌شده فوراً صفر
 می‌شود.
+
+**کنسول سریالِ GUI شلوغ نمی‌شود.** پرسش‌های خودکار (`status` با نرخِ انتخابی
+و `pos` سه بار در ثانیه) فرستاده و پردازش می‌شوند، ولی نه اکویشان (`> pos`) و
+نه پاسخشان در کنسول چاپ می‌شود — وگرنه دستوراتی که خودت تایپ می‌کنی در چند
+ثانیه از دید خارج می‌رفت. هر دستوری را که **خودت** بفرستی (تایپ در کنسول یا
+دکمه) کامل می‌بینی: `status` یک بلوکِ کاملِ همان لحظه و `pos` یک خطِ موقعیت.
+پیام‌های خودِ برد (هومینگ، `!! خطا`، `>> Move complete`) همیشه چاپ می‌شوند و
+هیچ‌وقت پنهان نمی‌مانند.
 
 ### برو به مختصات (Go to XYZ)
 
@@ -329,23 +336,38 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs four stages against the **real firmware
-sources** (no hardware needed):
+`tools/hosttest/run_tests.sh` runs seven stages against the **real firmware and
+GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
 2. **Link** them and feed **90 serial commands** through the actual handlers, so
    `undefined reference` and runtime crashes are caught before flashing.
 3. **Simulate** the 20 kHz step ISR behaviourally: homing priority and backoff,
    trapezoid timing accuracy, speed ceilings, estop, soft limits, mid-move
-   retargeting — 59 assertions.
+   retargeting, the J5 zero-offset phase, IK/FK sanity — **75 assertions**.
 4. **GUI ↔ firmware conformance**: `tools/gui_cmds.js` loads both GUIs' `Cmd`
-   tables, generates every command they can send (78 today), and the firmware
+   tables, generates every command they can send (**80 today**), and the firmware
    must recognise all of them — a GUI button can never silently send something
    the firmware answers with `Unknown command` again.
+5. **POS sync channel**: exact `>> POS` format, no echo, no `nan`, present at the
+   end of `status`, and the values follow a move.
+6. **Kinematics**: the Go-to-XYZ reachable band + IK/FK round-trip
+   (`tools/test_goto.js`) and GUI-vs-firmware IK parity over 9 points × 2 GUIs
+   (`tools/test_ik_parity.js`).
+7. **Both GUIs in a real DOM** (`tools/test_gui_dom.js`, jsdom): the slider rows
+   keep exactly four grid children and no stray text node (a comment that slips
+   into the row template silently squashes the slider), poll replies *and their
+   echoes* never reach the serial console while a manual `status`/`pos` prints
+   exactly once, the slider lands on 0 after homing, and it then follows the
+   position the simulated board reports.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # compile + link + smoke test + simulation
+bash tools/hosttest/run_tests.sh     # همه‌ی هفت مرحله
+cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
+
+مرحله‌ی ۷ بدون jsdom **SKIP** می‌شود (نه FAIL)، پس اسکریپت بدون `npm install`
+هم کامل اجرا می‌شود.
 
 `tools/sim_motion.py` simulates the exact motion math (old vs. new firmware)
 on a desktop, so speed regressions can be measured without hardware:

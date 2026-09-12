@@ -8,6 +8,13 @@
 // Number of Joints
 #define NUM_AXES 5
 
+// نسخه‌ی فریم‌ور. در بنرِ بوت («AXIS-5 Firmware v…») و در هر بلوکِ status
+// («FW: v…») چاپ می‌شود. GUI با همین عدد می‌فهمد برد فلشِ تازه دارد یا نه،
+// پس EXPECTED_FW در gui/js/firmware.js و desktop-app/renderer/js/core.js باید
+// دقیقاً همین باشد — وگرنه GUI بی‌دلیل هشدار «فریم‌ور قدیمی» می‌دهد.
+// تستِ مرحله‌ی ۵ در tools/hosttest/run_tests.sh همین تطابق را چک می‌کند.
+#define FIRMWARE_VERSION "1.0.41"
+
 // ============================================
 // موتور حرکت (Motion Engine)
 // ============================================

@@ -326,7 +326,9 @@ class SimFirmware {
     const cmd = raw.trim();
     if (!cmd) return;
     this.lastActivity = Date.now();
-    this.emit("> " + cmd);
+    /* «pos» مثل فریم‌ور echo ندارد (فریم‌ور: quietPoll) — وگرنه pollِ
+       سه‌بار‌در‌ثانیه، کنسول را با «> pos» پر می‌کرد. */
+    if (cmd.toLowerCase() !== "pos") this.emit("> " + cmd);
     if (this.logEnabled) {
       this.logRing.push({ time: this.millis(), msg: cmd.slice(0, 63) });
       if (this.logRing.length > FW.MAX_LOGS) this.logRing.shift();
@@ -356,6 +358,11 @@ class SimFirmware {
         this.homingQueue = [n - 1];
         this.homingPhase = null;
         this.setState("HOMING");
+        /* FIX: بدون این، هومِ تک‌محور هرگز شروع نمی‌شد — tick() فقط وقتی صف
+           **خالی** باشد _startHoming() را صدا می‌زند (که خودش صف را با
+           HOMING_ORDER پر می‌کند)، پس صفِ از پیش پُرِ [n-1] همان‌جا می‌ماند
+           و «home 3» بی‌اثر بود. حالا همان لحظه فازِ هومینگ شروع می‌شود. */
+        this._nextHomingAxis();
       } else this.emit("Invalid axis");
       return;
     }

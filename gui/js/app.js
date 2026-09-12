@@ -242,9 +242,24 @@ function send(text, opts = {}) {
     }
     return false;
   }
+  if (text.trim().toLowerCase() === "status") S._statusFromPoll = auto;
+  if (auto) {
+    /* اکوی خودِ دستورِ poll («> status» / «> pos») هم چاپ نشود — همان اکوها
+       بودند که کنسول را ثانیه‌ای چند خط پر می‌کردند و دستوراتِ کاربر را
+       از دید می‌بردند. */
+    S._autoEcho = text.trim().toLowerCase();
+    S._autoEchoAt = Date.now();
+  } else {
+    S._autoEcho = null;   /* دستورِ دستی: اکویش دیده شود */
+  }
   if (!auto) {
     addConsole("tx", "» " + text);
     addFeed("tx", "» " + text);
+    /* دستورِ دستی یعنی کاربر می‌خواهد جوابش را ببیند: هر بی‌صداکردنی را
+       بردار، و لحظه‌ای poll نکن تا پاسخِ خودش لای پاسخِ poll نپرد. */
+    S._pollBlock = false;
+    S.manualAt = Date.now();
+    if (/^pos\b/i.test(text.trim())) S._posManual = true;  /* همان یک خط POS را نشان بده */
   }
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
@@ -258,11 +273,25 @@ function send(text, opts = {}) {
 }
 
 function rxLine(line, fromSim = false) {
-  /* خط «>> POS ...» کانال همگام‌سازی است و چند بار در ثانیه می‌آید؛
-     کنسول را پر نکند (ولی پردازش شود تا اسلایدرها دنبال برد بروند). */
   const trimmed = line.trim();
   const isPosSync = /^>>\s*POS\s/.test(trimmed);
-  if (!isPosSync) addConsole("rx", line);
+
+  /* ---------- کنسول: فقط چیزی که خودِ کاربر خواسته ----------
+     پرسش‌های خودکار (status با نرخِ انتخابی + pos سه بار در ثانیه) همیشه
+     فرستاده می‌شوند و پاسخشان کامل **پردازش** می‌شود (اسلایدرها، کارت‌ها،
+     نقطه‌ی XYZ، وضعیت هوم) ولی **چاپ نمی‌شود**. وگرنه کنسول سریال هر
+     ثانیه با یک بلوکِ سیزده‌خطی و سه خط POS پر می‌شد و دستوراتی که خودِ
+     کاربر تایپ می‌کند فوراً از دید بیرون می‌رفت.
+     دستورِ دستی فرق دارد: اگر خودت «status» یا «pos» تایپ کنی، همان یک
+     پاسخِ همان لحظه کامل نشانت داده می‌شود. */
+  const RE_STATUS_HEADER = /^=*\s*System Status/;
+  const RE_STATUS_FOOTER = /^={6,}$/;   /* هر ردیفِ بلندِ «=» بلوک را می‌بندد */
+  const RE_BLOCK_BREAKER = /^(Moving |>> |!!|Format:|Invalid|Unknown|Saved |Loaded |Slot )/;
+  /* اکوی دستوری که خودِ GUI فرستاده (poll) — نه اکوی دستورِ کاربر */
+  const echoOf = /^>(?!>)\s*(.+)$/.exec(trimmed);
+  const isAutoEcho = !!echoOf && S._autoEcho != null &&
+    Date.now() - (S._autoEchoAt || 0) < 1500 &&
+    echoOf[1].trim().toLowerCase() === S._autoEcho;
 
   /* وقتی هومینگ تمام شد، اسلایدرِ جوینت‌های هوم‌شده فوراً صفر شود —
      بدون معطلی برای poll بعدی. (J5 هم صفر است: آفست ۹۰ درجه‌اش همان‌جا
@@ -275,15 +304,23 @@ function rxLine(line, fromSim = false) {
   if (line.trim().startsWith(">> Ack mode ON")) setAckUI(true);
   else if (line.trim().startsWith(">> Ack mode OFF")) setAckUI(false);
 
-  if (line.trim().startsWith("=== System Status")) {
+  if (RE_STATUS_HEADER.test(trimmed)) {
     S.inStatus = true;
+    /* بلوکی که poll خواسته چاپ نمی‌شود؛ بلوکی که کاربر خواسته چرا */
+    S._pollBlock = S._statusFromPoll === true;
+    S._statusFromPoll = false;
+    S._blockLines = 0;
+    if (!S._pollBlock) addConsole("rx", line);
     S.tmpDemo = null;
     S.tmpSleep = false;
     S.pendingSlots = null;
     return;
   }
-  if (line.trim() === "======================" && S.inStatus) {
+  if (S.inStatus && RE_STATUS_FOOTER.test(trimmed)) {
     S.inStatus = false;
+    const show = !S._pollBlock;
+    S._pollBlock = false;
+    if (show) addConsole("rx", line);
     S.demo = S.tmpDemo || { running: false, step: 0, total: FW.DEMO_MOVES.length };
     S.sleeping = S.tmpSleep;
     renderStats();
@@ -291,7 +328,26 @@ function rxLine(line, fromSim = false) {
     renderSlots();
     return;
   }
-  if (/^>(?!>)/.test(line.trim())) return; /* اکوی خود فریم‌ور (تک >) */
+  if (S.inStatus && S._pollBlock) {
+    /* داخلِ بلوکِ poll: فقط پردازش، بدون چاپ */
+    S._blockLines = (S._blockLines || 0) + 1;
+    if (S._blockLines > 30 || RE_BLOCK_BREAKER.test(trimmed)) {
+      /* سوپاپ اطمینان: یک پاسخِ واقعی (خطا/حرکت/…) یا بلوکِ بیش‌ازحد بلند
+         بی‌صداکردن را می‌شکند تا هیچ‌وقت چیزی پنهان نماند. */
+      S.inStatus = false;
+      S._pollBlock = false;
+      addConsole("rx", line);
+      return;
+    }
+  } else if (isAutoEcho) {
+    /* «> status» و «> pos» ی که poll فرستاده: بی‌صدا */
+  } else if (isPosSync) {
+    /* خط POS هیچ‌وقت چاپ نمی‌شود — مگر یک «pos» دستیِ خودِ کاربر */
+    if (S._posManual) { S._posManual = false; addConsole("rx", line); }
+  } else {
+    addConsole("rx", line);
+  }
+  if (/^>(?!>)/.test(trimmed)) return; /* اکوی خود فریم‌ور (تک >) */
   if (!ev) return;
 
   switch (ev.type) {
@@ -655,7 +711,7 @@ function restartPoll() {
   if (S.posTimer) clearInterval(S.posTimer);
   S.posTimer = null;
   const v = parseInt($("selPoll").value, 10);
-  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status(), { auto: true }), v);
+  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(pollStatus, v);
   /* همگام‌سازی اسلایدرها با برد، مستقل از نرخ status: «pos» یک خط کوچک
      است و echo ندارد، پس ۳ بار در ثانیه پرسیدنش کنسول را شلوغ نمی‌کند.
      این‌طور اگر حرکت را از جای دیگری بدهی (تایپ در کنسول، Teach، تایمر،
@@ -678,8 +734,17 @@ function disablePosIfUnsupported() {
   return true;
 }
 
+function pollStatus() {
+  if (S.mode === "off") return;
+  /* تا یک لحظه بعد از دستورِ دستیِ کاربر poll نکن: پاسخِ خودش باید کامل و
+     خوانا در کنسول بنشیند و با پاسخِ poll قاطی نشود. */
+  if (Date.now() - (S.manualAt || 0) < 900) return;
+  send(Cmd.status(), { auto: true });
+}
+
 function pollPos() {
   if (S.mode === "off") return;
+  if (Date.now() - (S.manualAt || 0) < 900) return;
   /* drag-safe: وسط کار با اسلایدر/کادر عدد، عدد زیر دست کاربر نپرد */
   const ae = document.activeElement;
   if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
@@ -875,6 +940,12 @@ function buildJoints() {
        برای J5 = ۹۰ درجه: بعد از هوم، ۹۰° جلو می‌رود و آنجا صفر می‌شود. */
     const offNote = ax.zeroOffsetDeg
       ? ` · صفر ${ax.zeroOffsetDeg > 0 ? "+" : ""}${ax.zeroOffsetDeg}° از endstop` : "";
+    /* عدد آبیِ «jCur» از این ردیف حذف شد: همیشه صفر نشان می‌داد و تکراریِ
+       کارت‌های J1..J5 بود. موقعیتِ زنده را هم خودِ اسلایدر (کانال POS)
+       دنبال می‌کند و هم آن کارت‌ها. ردیف حالا دقیقاً ۴ ستون دارد:
+       نام | اسلایدر | کادر عدد | دکمه‌ها — هر گره‌ی اضافه یک ستونِ
+       ضمنیِ گرید می‌سازد و اسلایدر را له می‌کند، پس هیچ متن/کامنتی
+       نباید داخل این رشته باشد. */
     row.innerHTML = `
       <div class="jl"><b style="color:${AXCOLORS[i]}">${ax.name} <span class="tiny">J${ax.joint}</span></b>
         <span>${ax.id} · ${lo}..${hi}${S.degMode ? "°" : " st"}${offNote}</span></div>
@@ -883,9 +954,6 @@ function buildJoints() {
       <input type="number" id="jNum${i}" step="${S.degMode ? 0.5 : 1}"
         min="${lo}" max="${hi}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}">
-      /* عدد آبیِ «jCur» حذف شد: همیشه صفر نشان می‌داد و تکراریِ
-         کارت‌های محور بالا بود. موقعیتِ زنده را هم اسلایدر دنبال می‌کند
-         (کانال POS) و هم کارت J1..J5 نشان می‌دهد. */
       <div style="display:flex;gap:4px">
         <button class="btn small cyan" id="jGo${i}" title="ارسال حرکت">GO ➤</button>
         <button class="btn small" id="jHome${i}" title="هوم این محور">🏠</button>

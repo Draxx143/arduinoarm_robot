@@ -30,7 +30,10 @@ jobs:
       - name: GUI constants must match firmware Config.h
         run: python3 tools/sync_gui_config.py --check
 
-      - name: Firmware host tests (compile + link + smoke + simulation + GUI conformance)
+      - name: Install jsdom (real-DOM GUI test)
+        run: cd tools && npm install --silent --no-audit --no-fund
+
+      - name: Firmware host tests (compile + sim + GUI conformance + POS + kinematics + real DOM)
         run: bash tools/hosttest/run_tests.sh
 
       - name: Upload failure logs

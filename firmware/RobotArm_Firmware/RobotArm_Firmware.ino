@@ -113,6 +113,7 @@ void setup() {
     delay(500);
     Serial.println(F("======================================"));
     Serial.println(F("5 DOF Robot Arm - TEST MODE (No ROS)"));
+    Serial.println(F("AXIS-5 Firmware v" FIRMWARE_VERSION));
     Serial.println(F("======================================"));
 
     pinMode(STATUS_LED_PIN, OUTPUT);
@@ -640,6 +641,10 @@ void printStatus() {
         Serial.print(DEMO_MOVE_COUNT);
         Serial.println(F(")"));
     }
+
+    // نسخه‌ی فریم‌ور در هر بلوکِ status — GUI با این خط می‌فهمد روی برد
+    // همان نسخه‌ای است که انتظار دارد (وگرنه «قدیمی» فرض می‌کند).
+    Serial.println(F("FW: v" FIRMWARE_VERSION));
 
     Serial.print(F("Profile: "));
     Serial.print(speedProfile.getProfileName());

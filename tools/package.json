@@ -1,0 +1,9 @@
+{
+  "name": "axis5-gui-tests",
+  "version": "1.0.41",
+  "private": true,
+  "description": "وابستگیِ تست‌های GUI — برای تستِ DOM واقعی: در همین پوشه `npm install` بزن و بعد `node test_gui_dom.js` (یا `bash hosttest/run_tests.sh`). بدون jsdom آن مرحله SKIP می‌شود.",
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
