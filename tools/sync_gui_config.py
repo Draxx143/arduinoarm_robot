@@ -73,8 +73,25 @@ def num(v):
     """تبدیل رشته‌ی ماکرو به عدد (int یا float)."""
     v = v.strip()
     v = re.sub(r"[uUlL]+$", "", v)      # پسوند‌های C: 20000L، 12000UL
+    m = re.match(r"^([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)[fF]$", v)
+    if m:                               # پسوند float: 90.0f
+        v = m.group(1)
     f = float(v)
     return int(f) if f == int(f) and "." not in v and "e" not in v.lower() else f
+
+
+def parse_float_array(cfg_text, name):
+    """یک ماکروی آرایه‌ی float مثل HOMING_ZERO_OFFSET_DEG را می‌خواند."""
+    m = re.search(r"#define\s+" + name + r"\s+\{([^}]*)\}", cfg_text)
+    if not m:
+        return None
+    out = []
+    for part in m.group(1).replace("\n", " ").split(","):
+        part = re.sub(r"/\*.*?\*/", "", part)
+        part = re.sub(r"//.*$", "", part).strip()
+        if part:
+            out.append(num(part))
+    return out
 
 
 def parse_deg_arrays(ino_text):
@@ -88,9 +105,13 @@ def parse_deg_arrays(ino_text):
 
 
 def firmware_axes():
-    cfg = parse_defines(read(os.path.join(FW, "Config.h")))
+    cfg_text = read(os.path.join(FW, "Config.h"))
+    cfg = parse_defines(cfg_text)
     ino = read(os.path.join(FW, "RobotArm_Firmware.ino"))
     deg_min, deg_max = parse_deg_arrays(ino)
+
+    # آفست نقطه‌ی صفر بعد از هومینگ (درجه) — برای J5 برابر ۹۰ است
+    zero_off = parse_float_array(cfg_text, "HOMING_ZERO_OFFSET_DEG") or [0] * len(AXIS_IDS)
 
     axes = []
     for i, a in enumerate(AXIS_IDS):
@@ -112,6 +133,7 @@ def firmware_axes():
             "homingSpeed": p("HOMING_SPEED"),
             "softMin": p("SOFT_MIN"),
             "softMax": p("SOFT_MAX"),
+            "zeroOffsetDeg": zero_off[i] if i < len(zero_off) else 0,
         })
     return axes, cfg
 
@@ -188,7 +210,8 @@ def render_axes_js(axes, humans, indent="  "):
             indent + f"    stepsPerDeg: {jsnum(ax['stepsPerDeg'])}, stepsPerRev: {jsnum(ax['stepsPerRev'])},"
                      f" microstep: {jsnum(ax['microstep'])}, gear: \"{ax['gear']}\",",
             indent + f"    maxSpeed: {jsnum(ax['maxSpeed'])}, accel: {jsnum(ax['accel'])},"
-                     f" backoff: {jsnum(ax['backoff'])}, homingSpeed: {jsnum(ax['homingSpeed'])},",
+                     f" backoff: {jsnum(ax['backoff'])}, homingSpeed: {jsnum(ax['homingSpeed'])},"
+                     f" zeroOffsetDeg: {jsnum(ax['zeroOffsetDeg'])},",
             indent + f"    soft: {{ min: {jsnum(ax['softMin'])}, max: {jsnum(ax['softMax'])} }},",
             indent + "    /* ---- end generated ---- */",
         ]

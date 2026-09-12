@@ -10,10 +10,15 @@ ISR(TIMER1_COMPA_vect) {
     }
 }
 
+// آفست نقطه‌ی صفر هر جوینت بعد از هومینگ (درجه) — از Config.h
+static const float ZERO_OFFSET_DEG[NUM_AXES] = HOMING_ZERO_OFFSET_DEG;
+
 MotorController::MotorController() {
     _allHomed = false;
     _homingInProgress = false;
     _currentHomingAxis = 0;
+    _zeroOffsetAxis = -1;
+    _singleHomingAxis = NUM_AXES;
     _estopActive = false;
     _estopDiv = 0;
     _idleDiv = 0;
@@ -254,6 +259,7 @@ bool MotorController::startHomingAxis(uint8_t axis) {
     _axes[axis]->clearHomingFault();
 
     _currentHomingAxis = 255;  // نشانگر حالت تک‌محوری
+    _singleHomingAxis = axis;  // تا فاز آفست صفر بداند روی کدام محور کار کند
     _allHomed = false;
 
     bool started = _axes[axis]->startHoming();
@@ -386,8 +392,15 @@ void MotorController::processHoming() {
         for (int i = 0; i < NUM_AXES; i++) {
             if (_axes[i]->isHoming()) return;   // هنوز در حال هوم شدن
         }
+        // همان تک‌محور هم آفست نقطه‌ی صفرش را می‌گیرد (مثلاً home 5)
+        if (_singleHomingAxis < NUM_AXES &&
+            !_axes[_singleHomingAxis]->homingFailed() &&
+            _axes[_singleHomingAxis]->isHomed()) {
+            if (runZeroOffsetPhase(_singleHomingAxis)) return;
+        }
         _homingInProgress = false;
         _currentHomingAxis = 0;
+        _singleHomingAxis = NUM_AXES;
 
         for (int i = 0; i < NUM_AXES; i++) {
             if (_axes[i]->homingFailed()) {
@@ -414,6 +427,11 @@ void MotorController::processHoming() {
 
     // این جوینت کامل شد: جست‌وجو + بک‌آف + تأیید آزاد شدن endstop
     if (!ax->isHoming() && ax->isHomed()) {
+        // اول آفست نقطه‌ی صفر (اگر در Config.h برای این جوینت هست): جلو
+        // می‌رود، می‌رسد، و همان‌جا صفر می‌شود. تا تمام نشده، جوینت بعدی
+        // شروع نمی‌شود (هومینگ همچنان کاملاً ترتیبی می‌ماند).
+        if (runZeroOffsetPhase(currentAxis)) return;
+
         Serial.print(F(">> ["));
         Serial.print(_currentHomingAxis + 1);
         Serial.print(F("/"));
@@ -462,6 +480,56 @@ void MotorController::abortHoming() {
     for (int i = 0; i < NUM_AXES; i++) _axes[i]->stop();
     _homingInProgress = false;
     _currentHomingAxis = 0;
+    _zeroOffsetAxis = -1;
+    _singleHomingAxis = NUM_AXES;
+}
+
+float MotorController::zeroOffsetDeg(uint8_t axis) const {
+    return (axis < NUM_AXES) ? ZERO_OFFSET_DEG[axis] : 0.0f;
+}
+
+int32_t MotorController::zeroOffsetSteps(uint8_t axis) const {
+    if (axis >= NUM_AXES) return 0;
+    float deg = ZERO_OFFSET_DEG[axis];
+    if (deg == 0.0f) return 0;
+    float v = deg * _axes[axis]->getStepsPerDegree();
+    return (int32_t)(v >= 0.0f ? v + 0.5f : v - 0.5f);
+}
+
+// بعد از تمام‌شدن هومِ یک جوینت اجرا می‌شود. اگر در Config.h برای آن
+// جوینت آفست صفر تعریف شده باشد، اول به اندازه‌ی آفست جلو می‌رود و بعد از
+// رسیدن، همان نقطه را صفر می‌کند.
+//   return true  -> هنوز درگیر این فاز است (processHoming باید صبر کند)
+//   return false -> آفستی نبود یا فاز تمام شد
+bool MotorController::runZeroOffsetPhase(uint8_t axis) {
+    if (axis >= NUM_AXES) return false;
+    Axis* ax = _axes[axis];
+    if (!ax) return false;
+
+    if (_zeroOffsetAxis < 0) {
+        int32_t off = zeroOffsetSteps(axis);
+        if (off == 0) return false;                 // این جوینت آفست ندارد
+        _zeroOffsetAxis = (int8_t)axis;
+        Serial.print(F(">> Joint "));
+        Serial.print(axis + 1);
+        Serial.print(F(" zero-offset: moving "));
+        Serial.print(ZERO_OFFSET_DEG[axis], 1);
+        Serial.println(F("° forward, that spot becomes the new 0 ..."));
+        ax->moveRelative(off);
+        return true;
+    }
+
+    if (_zeroOffsetAxis != (int8_t)axis) return false;   // فازِ محور دیگری است
+    if (ax->isMoving()) return true;                     // هنوز دارد می‌رود
+
+    ax->setPosition(0);                                  // ← صفرِ جدید اینجاست
+    _zeroOffsetAxis = -1;
+    Serial.print(F(">> Joint "));
+    Serial.print(axis + 1);
+    Serial.print(F(" zero re-set "));
+    Serial.print(ZERO_OFFSET_DEG[axis], 1);
+    Serial.println(F("° ahead of the endstop (position = 0)"));
+    return false;
 }
 
 bool MotorController::allHomed() const {

@@ -252,7 +252,17 @@ function send(text) {
 }
 
 function rxLine(line, fromSim = false) {
-  addConsole("rx", line);
+  /* خط «>> POS ...» کانال همگام‌سازی است و چند بار در ثانیه می‌آید؛
+     کنسول را پر نکند (ولی پردازش شود تا اسلایدرها دنبال برد بروند). */
+  const trimmed = line.trim();
+  const isPosSync = /^>>\s*POS\s/.test(trimmed);
+  if (!isPosSync) addConsole("rx", line);
+
+  /* وقتی هومینگ تمام شد، اسلایدرِ جوینت‌های هوم‌شده فوراً صفر شود —
+     بدون معطلی برای poll بعدی. (J5 هم صفر است: آفست ۹۰ درجه‌اش همان‌جا
+     صفر شده، پس عددِ برد هم صفر گزارش می‌شود.) */
+  if (/^>>\s*ALL JOINTS HOMED/i.test(trimmed)) zeroHomedSliders();
+
   const ev = Parse.line(line);
 
   /* بلوک status */
@@ -629,8 +639,150 @@ S.serial.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
 function restartPoll() {
   if (S.pollTimer) clearInterval(S.pollTimer);
   S.pollTimer = null;
+  if (S.posTimer) clearInterval(S.posTimer);
+  S.posTimer = null;
   const v = parseInt($("selPoll").value, 10);
   if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status()), v);
+  /* همگام‌سازی اسلایدرها با برد، مستقل از نرخ status: «pos» یک خط کوچک
+     است و echo ندارد، پس ۳ بار در ثانیه پرسیدنش کنسول را شلوغ نمی‌کند.
+     این‌طور اگر حرکت را از جای دیگری بدهی (تایپ در کنسول، Teach، تایمر،
+     ماکرو) اسلایدرها همان‌جا دنبالش می‌روند. */
+  if (S.mode !== "off") S.posTimer = setInterval(pollPos, 330);
+}
+
+function pollPos() {
+  if (S.mode === "off") return;
+  /* drag-safe: وسط کار با اسلایدر/کادر عدد، عدد زیر دست کاربر نپرد */
+  const ae = document.activeElement;
+  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
+  if (S.jHeld && S.jHeld.some(Boolean)) return;
+  if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
+  send(Cmd.pos());
+}
+
+/* ============================================================
+ * برو به مختصات (GO TO XYZ)
+ *
+ * مدل هندسی دقیقاً همانی است که فریم‌ور در IK.cpp حل می‌کند: ساعدِ مؤثر
+ * L2+L3، چون مچ صفر نگه داشته می‌شود و ابزار در امتداد ساعد است.
+ * Kin.ik در firmware.js هم همان مدل است، پس «فقط محاسبه» همان چیزی را
+ * نشان می‌دهد که برد انجام می‌دهد.
+ *
+ * نکته‌ی مهم: قبل از فرستادن، زوایای حل‌شده با محدوده‌ی درجه‌ی هر جوینت
+ * (Config.h) چک می‌شوند. قبلاً GUI مختصاتی را پیشنهاد می‌داد که فریم‌ور
+ * با «Axis 3 out of range» رد می‌کرد و از دید کاربر «کار نمی‌کرد».
+ * ============================================================ */
+/* بستن امن دکمه‌ها: اگر id نبود، به‌جای شکستنِ کل سیم‌کشی، هشدار بده */
+function bindClick(id, fn) {
+  const el = typeof id === "string" ? $(id) : id;
+  if (!el) { console.warn("[bind] id پیدا نشد:", id); return; }
+  el.addEventListener("click", fn);
+  return el;
+}
+
+function gotoGeom() {
+  const { L1, L2, L3 } = FW.LINKS;
+  const L2e = L2 + L3;                       /* ساعد مؤثر (مچ صفر) */
+  return { L1, L2e, max: L1 + L2e, min: Math.abs(L1 - L2e) };
+}
+
+/* حداقل فاصله‌ای که آرنج (J3) از سقف درجه‌اش رد نشود */
+function gotoMinReach() {
+  const g = gotoGeom();
+  const j3max = (FW.AXES[2].max * Math.PI) / 180;
+  const sq = g.L1 * g.L1 + g.L2e * g.L2e + 2 * g.L1 * g.L2e * Math.cos(j3max);
+  return Math.sqrt(Math.max(0, sq));
+}
+
+function gotoRead() {
+  const x = parseFloat($("gtX").value), y = parseFloat($("gtY").value), z = parseFloat($("gtZ").value);
+  if (![x, y, z].every((v) => isFinite(v))) {
+    toast("مختصات X/Y/Z را کامل و عددی وارد کن", "warn");
+    return null;
+  }
+  return { x, y, z };
+}
+
+/* بررسی کامل یک هدف: دسترس + محدوده‌ی هر جوینت */
+function gotoCheck(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z);
+  const lo = Math.max(g.min, gotoMinReach());
+  const base = { L, lo, hi: g.max };
+  if (L > g.max + 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `فاصله‌ی نوک تا پایه ${L.toFixed(0)}mm است؛ بیشترین امتداد بازو ${g.max.toFixed(0)}mm` });
+  }
+  if (L < lo - 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `فاصله‌ی نوک تا پایه ${L.toFixed(0)}mm است؛ کمتر از ${lo.toFixed(0)}mm یعنی آرنج بیش از ${FW.AXES[2].max}° خم می‌شود` });
+  }
+  const ang = Kin.ik(t.x, t.y, t.z);
+  if (!ang) return Object.assign(base, { ok: false, why: "خارج از فضای کاری بازو" });
+  const bad = [];
+  ang.forEach((d, i) => {
+    const a = FW.AXES[i];
+    if (d < a.min - 0.001 || d > a.max + 0.001) bad.push(`J${i + 1}=${d.toFixed(1)}° (مجاز ${a.min}..${a.max}°)`);
+  });
+  if (bad.length) {
+    return Object.assign(base, { ok: false, ang, why: "خارج از محدوده‌ی جوینت: " + bad.join(" · ") });
+  }
+  return Object.assign(base, { ok: true, ang });
+}
+
+/* نزدیک‌ترین نقطه‌ی قابل‌دسترس در همان جهت (با حفظ زاویه‌ی پایه و ارتفاع) */
+function gotoNearest(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z) || 1e-6;
+  const lo = Math.max(g.min, gotoMinReach()) + 1.0;
+  const hi = g.max - 1.0;
+  const Lc = Math.max(lo, Math.min(hi, L));
+  const k = Lc / L;
+  return { x: t.x * k, y: t.y * k, z: t.z * k };
+}
+
+function gotoShow(res, t) {
+  const box = $("gotoResult");
+  if (!box) return;
+  if (!res.ok) {
+    box.innerHTML = `<b style="color:var(--red,#ff9b9e)">✖ ${res.why}</b><br>` +
+      (res.ang ? `زوایا: ${res.ang.map((d, i) => `J${i + 1}=${d.toFixed(1)}°`).join(" · ")}` : "") +
+      `<br><span class="tiny">«↔ نزدیک‌ترین نقطه» هدف را در همان جهت به بازه‌ی مجاز می‌آورد.</span>`;
+    return;
+  }
+  box.innerHTML =
+    `<b style="color:var(--ok,#7ee787)">✔ قابل‌دسترس</b> — فاصله تا پایه ${res.L.toFixed(1)}mm<br>` +
+    res.ang.map((d, i) => `J${i + 1}=<b>${d.toFixed(1)}°</b>`).join(" · ") +
+    `<br><span class="tiny">دستور: <code>ik ${t.x.toFixed(1)} ${t.y.toFixed(1)} ${t.z.toFixed(1)}</code></span>`;
+}
+
+function gotoCalc() {
+  const t = gotoRead();
+  if (!t) return null;
+  const res = gotoCheck(t);
+  gotoShow(res, t);
+  return res.ok ? { t, res } : null;
+}
+
+function gotoInit() {
+  const g = gotoGeom();
+  const lo = Math.max(g.min, gotoMinReach());
+  const h = $("gotoHint");
+  if (h) {
+    h.innerHTML = `بازه‌ی قابل‌دسترس: فاصله‌ی نوک از پایه بین <b>${lo.toFixed(0)}</b> و <b>${g.max.toFixed(0)}</b> میلی‌متر` +
+      ` (L1=${g.L1}mm، ساعد مؤثر L2+L3=${g.L2e}mm). زیرِ ${lo.toFixed(0)}mm آرنج از ${FW.AXES[2].max}° بیشتر خم می‌شود و فریم‌ور حرکت را رد می‌کند.`;
+  }
+}
+
+/* اسلایدر/کارت جوینت‌های هوم‌شده را صفر می‌کند */
+function zeroHomedSliders() {
+  const d = S.axes.map((a) => (a.homed ? 0 : a.deg));
+  applyJointPos(d);
+  S.axes.forEach((a, i) => {
+    if (!a.homed) return;
+    a.deg = 0; a.steps = 0;
+    renderAxisCard(i);
+  });
 }
 
 /* ============================================================
@@ -690,15 +842,21 @@ function buildJoints() {
     const hi = S.degMode ? ax.max : ax.soft.max;
     const row = document.createElement("div");
     row.className = "joint-row";
+    /* آفست نقطه‌ی صفر این جوینت (Config.h: HOMING_ZERO_OFFSET_DEG).
+       برای J5 = ۹۰ درجه: بعد از هوم، ۹۰° جلو می‌رود و آنجا صفر می‌شود. */
+    const offNote = ax.zeroOffsetDeg
+      ? ` · صفر ${ax.zeroOffsetDeg > 0 ? "+" : ""}${ax.zeroOffsetDeg}° از endstop` : "";
     row.innerHTML = `
       <div class="jl"><b style="color:${AXCOLORS[i]}">${ax.name} <span class="tiny">J${ax.joint}</span></b>
-        <span>${ax.id} · ${lo}..${hi}${S.degMode ? "°" : " st"}</span></div>
+        <span>${ax.id} · ${lo}..${hi}${S.degMode ? "°" : " st"}${offNote}</span></div>
       <input type="range" id="jSlider${i}" min="${lo}" max="${hi}" step="${S.degMode ? 0.5 : 1}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}" style="--axc:${AXCOLORS[i]}">
       <input type="number" id="jNum${i}" step="${S.degMode ? 0.5 : 1}"
         min="${lo}" max="${hi}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}">
-      <span class="jval" id="jCur${i}">${deg.toFixed(1)}°</span>
+      /* عدد آبیِ «jCur» حذف شد: همیشه صفر نشان می‌داد و تکراریِ
+         کارت‌های محور بالا بود. موقعیتِ زنده را هم اسلایدر دنبال می‌کند
+         (کانال POS) و هم کارت J1..J5 نشان می‌دهد. */
       <div style="display:flex;gap:4px">
         <button class="btn small cyan" id="jGo${i}" title="ارسال حرکت">GO ➤</button>
         <button class="btn small" id="jHome${i}" title="هوم این محور">🏠</button>
@@ -749,14 +907,21 @@ function applyJointPos(deg5) {
     const sl = $("jSlider" + i);
     if (!sl) continue;
     if (document.activeElement === sl) continue;
-    const num = $("jNum" + i), cur = $("jCur" + i);
+    const num = $("jNum" + i);
     const ax = FW.AXES[i];
     const deg = Math.max(ax.min, Math.min(ax.max, deg5[i]));
     const v = S.degMode ? deg : Kin.degToSteps(i, deg);
     sl.value = v;
     sl.style.setProperty("--val", (((v - +sl.min) / (+sl.max - +sl.min)) * 100) + "%");
     if (num && document.activeElement !== num) num.value = S.degMode ? deg.toFixed(1) : Math.round(v);
-    if (cur) cur.textContent = deg.toFixed(1) + "°";
+    /* کارت محور هم از همین کانال به‌روز شود (نه فقط از status)، تا عددِ
+       روی کارت با اسلایدر یکی بماند. */
+    const a = S.axes[i];
+    if (a && Math.abs(a.deg - deg) > 0.05) {
+      a.deg = deg;
+      a.steps = Math.round(Kin.degToSteps(i, deg));
+      renderAxisCard(i);
+    }
     if (S.viz) viz.setAngles(deg5);
   }
 }
@@ -1202,6 +1367,26 @@ function bindActions() {
     calcFKLocal();
   };
 
+  /* برو به مختصات */
+  bindClick("btnGotoCalc", () => gotoCalc());
+  bindClick("btnGotoGo", () => {
+    const r = gotoCalc();
+    if (!r) return;
+    if (send(Cmd.ik(r.t.x, r.t.y, r.t.z))) {
+      toast(`رفتن به (${r.t.x.toFixed(0)}, ${r.t.y.toFixed(0)}, ${r.t.z.toFixed(0)}) mm`, "ok");
+    }
+  });
+  bindClick("btnGotoNear", () => {
+    const t = gotoRead();
+    if (!t) return;
+    const n = gotoNearest(t);
+    $("gtX").value = n.x.toFixed(1);
+    $("gtY").value = n.y.toFixed(1);
+    $("gtZ").value = n.z.toFixed(1);
+    const r = gotoCalc();
+    if (r) toast("هدف به نزدیک‌ترین نقطه‌ی قابل‌دسترس منتقل شد", "ok");
+  });
+
   /* حافظه */
   $("btnListPos").onclick = () => send(Cmd.listPos());
   $("btnTeachStart").onclick = () => { S.teachLocal = []; renderTeachTimeline(); send(Cmd.teachStart()); toast("ضبط شروع شد — با اسلایدرها حرکت بده و «ثبت استپ» بزن", "info"); };
@@ -1346,6 +1531,7 @@ function init() {
   window.__armPanelInit = true;
   showVersion();
   buildAxisCards();
+  gotoInit();
   buildJoints();
   buildMoveAll();
   buildFkInputs();

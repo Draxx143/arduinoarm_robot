@@ -28,6 +28,12 @@ public:
     // Homing
     bool startHoming();
     bool startHomingAxis(uint8_t axis);
+
+    // آفست نقطه‌ی صفر بعد از هومینگ (Config.h: HOMING_ZERO_OFFSET_DEG).
+    // برای جوینت ۵ برابر ۹۰ درجه است: بعد از هوم، ۹۰ درجه جلو می‌رود و
+    // همان‌جا شمارنده‌ی موقعیت دوباره صفر می‌شود.
+    float   zeroOffsetDeg(uint8_t axis) const;
+    int32_t zeroOffsetSteps(uint8_t axis) const;
     void smartHoming();                    // هوم هوشمند همه
     void smartHomingAxis(uint8_t axis);    // هوم هوشمند یک محور
     void backoffAllFromEndstops();         // گزارش وضعیت endstop ها
@@ -82,6 +88,11 @@ private:
     uint8_t _currentHomingAxis;
     uint8_t _homingOrder[NUM_AXES];   // ترتیب اولویت هومینگ
     void printHomingFailure(uint8_t axis) const;
+
+    // فاز «آفست صفر»: بعد از پایان هوم یک جوینت اجرا می‌شود
+    int8_t  _zeroOffsetAxis;          // محوری که در این فاز است (-1 = هیچ)
+    uint8_t _singleHomingAxis;        // هوم تک‌محوری: کدام محور (NUM_AXES = هیچ)
+    bool runZeroOffsetPhase(uint8_t axis);
 
     volatile bool _estopActive;
     volatile uint8_t _estopDiv;

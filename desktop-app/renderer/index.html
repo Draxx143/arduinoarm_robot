@@ -83,6 +83,27 @@
           </div>
         </div>
 
+        <div class="card">
+          <h3>Go to XYZ<span class="en">CARTESIAN TARGET</span></h3>
+          <div class="card-body">
+            <p class="muted" style="margin-bottom:8px">Give the <b>tool tip</b> position in millimetres. The five joint
+              angles are solved, <b>checked against every joint limit first</b>, then <code>ik x y z</code> is sent.
+              The wrist (J4/J5) stays at zero in the current solve.</p>
+            <div class="row">
+              <div class="field"><label>X (mm)</label><input type="number" id="gtX" value="230" step="5"></div>
+              <div class="field"><label>Y (mm)</label><input type="number" id="gtY" value="0" step="5"></div>
+              <div class="field"><label>Z (mm)</label><input type="number" id="gtZ" value="60" step="5"></div>
+            </div>
+            <div class="row" style="margin-top:10px">
+              <button class="btn big teal" id="btnGotoGo" style="flex:1">🎯 Go to this point</button>
+              <button class="btn" id="btnGotoCalc">🔍 Solve only</button>
+              <button class="btn" id="btnGotoNear" title="If the target is unreachable or a joint would exceed its limit, find the nearest reachable point in the same direction">↔ Nearest point</button>
+            </div>
+            <div class="ik-result" id="gotoResult" style="margin-top:10px">—</div>
+            <p class="tiny" id="gotoHint" style="margin-top:6px"></p>
+          </div>
+        </div>
+
         <div class="grid2">
           <div class="card">
             <h3>Move All Axes<span class="en">MOVEALL — 5 JOINTS</span></h3>

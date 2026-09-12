@@ -9,6 +9,8 @@
 #include "Arduino.h"
 #include "MotorController.h"
 #include "SpeedProfile.h"
+#include "IK.h"
+#include <math.h>
 
 static const uint8_t STEP_PIN[NUM_AXES] = {
     AXIS_X_STEP_PIN, AXIS_Y_STEP_PIN, AXIS_Z_STEP_PIN,
@@ -163,7 +165,12 @@ static void runHomingWithOrder(double maxSeconds = 200.0) {
             globalController->processHoming();
             watchHomingOrder();
         }
-        if (g_doneCount >= NUM_AXES) break;
+        // تا وقتی خودِ توالی هومینگ بسته نشده بیرون نرو: بعد از اینکه
+        // آخرین جوینت «هوم‌شده» علامت خورد، هنوز فاز آفستِ نقطه‌ی صفر
+        // (برای J5 = ۹۰ درجه جلو رفتن و صفر شدن) در جریان است. اگر اینجا
+        // با g_doneCount بیرون برویم، هومینگ بعدی روی _homingInProgress=true
+        // می‌خورد و بی‌صدا رد می‌شود.
+        if (g_doneCount >= NUM_AXES && !globalController->isHoming()) break;
         if (!globalController->isHoming() && i > 1000) break;
     }
     globalController->processHoming();
@@ -520,6 +527,125 @@ int main() {
     }
     check(profTime[0] > profTime[1] && profTime[1] > profTime[2],
           "slow کندتر از normal و normal کندتر از fast است");
+
+    // ------------------------------------------------------------------
+    header("تست ۱۵: آفست نقطه‌ی صفر J5 — بعد از هوم ۹۰° جلو، همان‌جا صفر");
+    // ------------------------------------------------------------------
+    // Config.h: HOMING_ZERO_OFFSET_DEG = {0,0,0,0,90}
+    // یعنی جوینت ۵ بعد از هومینگ ۹۰ درجه جلو می‌رود و آنجا نقطه‌ی صفرش
+    // می‌شود؛ در نتیجه endstop دقیقاً در ۹۰- درجه می‌نشیند و دامنه‌ی مچ
+    // قرینه است.
+    {
+        static const float ZOD[NUM_AXES] = HOMING_ZERO_OFFSET_DEG;
+        freshStart();
+        for (int i = 0; i < NUM_AXES; i++) g_switchAt[i] = -2000 - 300 * i;
+        runHomingWithOrder();
+        check(g_doneCount == NUM_AXES, "هومینگ کامل شد (۵ جوینت)");
+        check(!globalController->isHoming(),
+              "توالی هومینگ بعد از فاز آفست بسته شد");
+
+        Axis* a5 = globalController->getAxis(4);
+        float spd5 = a5->getStepsPerDegree();
+        int32_t wantOff = (int32_t)(ZOD[4] * spd5 + 0.5f);
+        uint64_t extra5 = g_steps[4] - g_searchSteps[4] - g_backoffSteps[4];
+        printf("   J5: stepsPerDeg=%.2f  استپِ آفست=%llu  انتظار=%d\n",
+               spd5, (unsigned long long)extra5, wantOff);
+        check(a5->getCurrentPosition() == 0,
+              "J5 بعد از آفست دقیقاً روی صفرِ جدید است");
+        check((int32_t)extra5 == wantOff,
+              "J5 واقعاً ۹۰ درجه جلو رفت (نه فقط شمارنده صفر شد)");
+
+        bool othersClean = true;
+        for (int i = 0; i < 4; i++) {
+            uint64_t e = g_steps[i] - g_searchSteps[i] - g_backoffSteps[i];
+            if (e != 0) { othersClean = false; printf("   محور %d: %llu استپ اضافی\n", i + 1, (unsigned long long)e); }
+        }
+        check(othersClean, "جوینت‌های ۱ تا ۴ آفست نگرفتند (فقط J5)");
+
+        // ۹۰- درجه روی J5 باید دقیقاً همان نقطه‌ی endstopِ قدیمی باشد
+        a5->moveTo(-wantOff);
+        runFor(8.0);
+        printf("   J5 بعد از حرکت به ۹۰- درجه: %d استپ\n", (int)a5->getCurrentPosition());
+        check(a5->getCurrentPosition() == -wantOff,
+              "۹۰- درجه = نقطه‌ی endstop قبلی (صفرِ جدید ۹۰° جلوتر است)");
+        check(!a5->homingFailed(), "آفست صفر باعث خطای هومینگ نشد");
+    }
+
+    // ------------------------------------------------------------------
+    header("تست ۱۶: home 5 (تک‌محوری) هم آفست صفر می‌گیرد");
+    // ------------------------------------------------------------------
+    {
+        static const float ZOD[NUM_AXES] = HOMING_ZERO_OFFSET_DEG;
+        freshStart();
+        for (int i = 0; i < NUM_AXES; i++) g_switchAt[i] = -2000 - 300 * i;
+        resetCounters();
+        globalController->smartHomingAxis(4);
+        runFor(90.0);
+        Axis* a5 = globalController->getAxis(4);
+        int32_t wantOff = (int32_t)(ZOD[4] * a5->getStepsPerDegree() + 0.5f);
+        uint64_t extra5 = g_steps[4] - g_searchSteps[4] - g_backoffSteps[4];
+        printf("   home 5: استپِ آفست=%llu  انتظار=%d  موقعیت=%d\n",
+               (unsigned long long)extra5, wantOff, (int)a5->getCurrentPosition());
+        check(!globalController->isHoming(), "هوم تک‌محوری J5 تمام شد");
+        check(a5->isHomed(), "J5 هوم‌شده علامت خورد");
+        check(a5->getCurrentPosition() == 0, "home 5 هم روی صفرِ جدید نشست");
+        check((int32_t)extra5 == wantOff, "home 5 هم ۹۰ درجه جلو رفت");
+    }
+
+    // ------------------------------------------------------------------
+    header("تست ۱۷: IK/FK — بدون nan و یک مدل واحد با GUI");
+    // ------------------------------------------------------------------
+    {
+        // GUI (Kin.ik) ساعد مؤثر را L2+L3 می‌گیرد؛ فریم‌ور هم حالا همان را.
+        // قبلاً بین ۲۰۰ و ۲۵۰ میلی‌متر زاویه‌ی شانه «nan» می‌شد.
+        IK ik;
+        float ang[NUM_AXES];
+        struct { float x, y, z; } pts[] = {
+            {230.0f, 0.0f, 60.0f},   // داخل بازه‌ی قابل‌دسترس
+            {210.0f, 0.0f, 30.0f},   // قبلاً nan می‌داد
+            {245.0f, 20.0f, 10.0f},  // نزدیک بیشترین امتداد
+            {150.0f, 0.0f, 80.0f},   // پیش‌فرض قدیمی GUI
+            { 60.0f, 0.0f, 20.0f},   // نزدیک‌تر از حداقل دسترس
+        };
+        bool noNan = true, reachableSeen = false;
+        for (unsigned k = 0; k < sizeof(pts) / sizeof(pts[0]); k++) {
+            bool ok = ik.solveIK(pts[k].x, pts[k].y, pts[k].z, ang);
+            printf("   IK(%.0f,%.0f,%.0f) -> ", pts[k].x, pts[k].y, pts[k].z);
+            if (ok) {
+                reachableSeen = true;
+                for (int i = 0; i < NUM_AXES; i++) printf("J%d=%.1f° ", i + 1, ang[i]);
+                for (int i = 0; i < NUM_AXES; i++) if (isnan(ang[i])) noNan = false;
+            } else {
+                printf("خارج از دسترس (درست)");
+            }
+            printf("\n");
+        }
+        check(noNan, "هیچ زاویه‌ای nan نشد (باگ قدیمی acos)");
+        check(reachableSeen, "حداقل یک هدف قابل‌دسترس حل شد");
+
+        // IK باید هدفِ ۲۳۰,۰,۶۰ را داخل محدودیتِ درجه‌ی همه‌ی محورها بدهد
+        bool solved = ik.solveIK(230.0f, 0.0f, 60.0f, ang);
+        check(solved, "IK(230,0,60) حل شد");
+        if (solved) {
+            static const float DMIN[NUM_AXES] = {-110.0f, 0.0f, 0.0f, -90.0f, -90.0f};
+            static const float DMAX[NUM_AXES] = { 110.0f, 100.0f, 55.0f, 90.0f, 90.0f};
+            bool inRange = true;
+            for (int i = 0; i < NUM_AXES; i++) {
+                if (ang[i] < DMIN[i] || ang[i] > DMAX[i]) {
+                    inRange = false;
+                    printf("   J%d=%.1f° خارج از %.0f..%.0f\n", i + 1, ang[i], DMIN[i], DMAX[i]);
+                }
+            }
+            check(inRange, "زوایای IK(230,0,60) داخل محدوده‌ی همه‌ی جوینت‌هاست");
+
+            // FK باید همان نقطه را برگرداند (رفت و برگشت یکسان)
+            float fx, fy, fz;
+            ik.solveFK(ang, fx, fy, fz);
+            printf("   FK( IK(230,0,60) ) = %.1f, %.1f, %.1f\n", fx, fy, fz);
+            check(fabsf(fx - 230.0f) < 1.0f && fabsf(fy) < 1.0f && fabsf(fz - 60.0f) < 1.0f,
+                  "FK همان مختصات هدف را برمی‌گرداند (L3/نوک حساب می‌شود)");
+        }
+    }
 
     // ------------------------------------------------------------------
     printf("\n################################################################\n");

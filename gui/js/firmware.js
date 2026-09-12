@@ -53,7 +53,7 @@ const FW = {
       /* ---- generated from firmware Config.h by tools/sync_gui_config.py ---- */
       min: -110, max: 110,
       stepsPerDeg: 44.44, stepsPerRev: 200, microstep: 16, gear: "1:5",
-      maxSpeed: 2000, accel: 6000, backoff: 5200, homingSpeed: 900,
+      maxSpeed: 2000, accel: 6000, backoff: 5200, homingSpeed: 900, zeroOffsetDeg: 0,
       soft: { min: -4888, max: 4888 },
       /* ---- end generated ---- */
       pins: { step: "A0", dir: "A1", enable: "38", endstop: "3" },
@@ -63,7 +63,7 @@ const FW = {
       /* ---- generated from firmware Config.h by tools/sync_gui_config.py ---- */
       min: 0, max: 100,
       stepsPerDeg: 53.33, stepsPerRev: 200, microstep: 16, gear: "1:6",
-      maxSpeed: 2000, accel: 5000, backoff: 300, homingSpeed: 900,
+      maxSpeed: 2000, accel: 5000, backoff: 300, homingSpeed: 900, zeroOffsetDeg: 0,
       soft: { min: 0, max: 5333 },
       /* ---- end generated ---- */
       pins: { step: "A6", dir: "A7", enable: "A2", endstop: "14" },
@@ -73,7 +73,7 @@ const FW = {
       /* ---- generated from firmware Config.h by tools/sync_gui_config.py ---- */
       min: 0, max: 55,
       stepsPerDeg: 71.11, stepsPerRev: 200, microstep: 16, gear: "1:8",
-      maxSpeed: 1000, accel: 3000, backoff: 200, homingSpeed: 600,
+      maxSpeed: 1000, accel: 3000, backoff: 200, homingSpeed: 600, zeroOffsetDeg: 0,
       soft: { min: 0, max: 3911 },
       /* ---- end generated ---- */
       pins: { step: "46", dir: "48", enable: "A8", endstop: "18" },
@@ -83,7 +83,7 @@ const FW = {
       /* ---- generated from firmware Config.h by tools/sync_gui_config.py ---- */
       min: -90, max: 90,
       stepsPerDeg: 26.67, stepsPerRev: 200, microstep: 16, gear: "1:3",
-      maxSpeed: 1000, accel: 4000, backoff: 3000, homingSpeed: 700,
+      maxSpeed: 1000, accel: 4000, backoff: 3000, homingSpeed: 700, zeroOffsetDeg: 0,
       soft: { min: -2400, max: 2400 },
       /* ---- end generated ---- */
       pins: { step: "26", dir: "28", enable: "24", endstop: "2" },
@@ -93,7 +93,7 @@ const FW = {
       /* ---- generated from firmware Config.h by tools/sync_gui_config.py ---- */
       min: -90, max: 90,
       stepsPerDeg: 22.22, stepsPerRev: 200, microstep: 16, gear: "1:2.5",
-      maxSpeed: 1000, accel: 4000, backoff: 200, homingSpeed: 700,
+      maxSpeed: 1000, accel: 4000, backoff: 200, homingSpeed: 700, zeroOffsetDeg: 90,
       soft: { min: -2000, max: 2000 },
       /* ---- end generated ---- */
       pins: { step: "36", dir: "34", enable: "30", endstop: "15" },
@@ -189,6 +189,10 @@ const Cmd = {
   homeAll: () => "home",
   homeAxis: (n) => `home ${n}`,
   status: () => "status",
+  /* کانال همگام‌سازی موقعیت: یک خط «>> POS j1,..,j5» برمی‌گرداند و echo
+     ندارد، پس می‌شود چند بار در ثانیه پرسیدش بدون اینکه کنسول پر شود.
+     با این، اسلایدرها حرکتی را که از کنسول/تایمر/تیچ داده شده دنبال می‌کنند. */
+  pos: () => "pos",
   enableAll: () => "enable",
   disableAll: () => "disable",
   enableAxis: (n) => `enable ${n}`,
@@ -248,7 +252,9 @@ const Fmt = {
 /* ---------- پارسر خروجی فریم‌ور ----------
  * هر خط دریافتی از پورت/شبیه‌ساز اینجا تحلیل و به رویداد تبدیل می‌شود. */
 const Parse = {
-  RX_AXIS: /^Axis\s+(\d):\s*(-?\d+)\s*\(\s*(-?[\d.]+)°\)\s*,\s*Homed=(\w)\s*,\s*En=(\w)\s*,\s*Mov=(\w)\s*,\s*ES=(\w+)/,
+  /* فریم‌ور بین Mov و ES فیلد سرعت هم چاپ می‌کند («, V=0/2000»)؛
+     قبلاً این regex آن را نمی‌شناخت و کارت محورها هرگز از برد به‌روز نمی‌شد. */
+  RX_AXIS: /^Axis\s+(\d):\s*(-?\d+)\s*\(\s*(-?[\d.]+)°\)\s*,\s*Homed=(\w)\s*,\s*En=(\w)\s*,\s*Mov=(\w)\s*(?:,\s*V=[-\d/.]+)?\s*,\s*ES=(\w+)/,
   RX_DEMO_STEP: /^>>\s*Demo step (\d+)\/(\d+)/,
   RX_STATE_EN: /^State:\s*(.+)$/,
   RX_PROFILE: /^Profile:\s*(.+)$/,

@@ -50,7 +50,7 @@ if [ ! -f "$SKETCH/RobotArm_Firmware.ino" ]; then
 fi
 
 echo
-echo "===== [1/3] compiling all modules ====="
+echo "===== [1/6] compiling all modules ====="
 OBJS=""
 for f in "$SKETCH"/*.cpp "$OUT/sketch.cpp" "$HT/stubs.cpp"; do
     b=$(basename "$f" | tr '.-' '__')
@@ -67,7 +67,7 @@ done
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [2/3] link + serial smoke test ====="
+    echo "===== [2/6] link + serial smoke test ====="
     printf "  %-24s " "compiling link_main"
     if g++ $CXXFLAGS $INC -c "$HT/link_main.cpp" -o "$OUT/link_main.o" 2> "$OUT/lm.log"; then echo OK; else echo FAIL; FAIL=1; fi
 
@@ -92,7 +92,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [3/3] behavioural simulation (homing order + backoff + motion) ====="
+    echo "===== [3/6] behavioural simulation (homing order + backoff + motion) ====="
     SIM_OBJS=""
     for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager; do
         SIM_OBJS="$SIM_OBJS $OUT/${m}_cpp.o"
@@ -121,7 +121,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [4/4] GUI -> firmware command conformance ====="
+    echo "===== [4/6] GUI -> firmware command conformance ====="
     if command -v node >/dev/null 2>&1; then
         printf "  %-24s " "generating GUI commands"
         if node "$ROOT/tools/gui_cmds.js" > "$OUT/gui_cmds.txt" 2> "$OUT/gui_cmds.err"; then
@@ -148,6 +148,58 @@ if [ $FAIL -eq 0 ]; then
         fi
     else
         echo "  (node پیدا نشد — این بخش رد شد)"
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# ۵) کانال همگام‌سازی POS — اسلایدرها باید حرکتِ برد را دنبال کنند
+# ---------------------------------------------------------------------
+if [ $FAIL -eq 0 ]; then
+    echo
+    echo "===== [5/6] POS sync channel (sliders follow the board) ====="
+    printf 'pos\ndeg 3 30\npos\nik 210 0 30\npos\nstatus\n' > "$OUT/pos_cmds.txt"
+    if "$OUT/firmware" "$OUT/pos_cmds.txt" > "$OUT/pos_run.log" 2>&1; then
+        N_POS=$(grep -c '^>> POS ' "$OUT/pos_run.log" || true)
+        N_OK=$(grep -cE '^>> POS -?[0-9]+\.[0-9],-?[0-9]+\.[0-9],-?[0-9]+\.[0-9],-?[0-9]+\.[0-9],-?[0-9]+\.[0-9]$' "$OUT/pos_run.log" || true)
+        N_ECHO=$(grep -c '^> pos$' "$OUT/pos_run.log" || true)
+        N_NAN=$(grep -ci 'nan' "$OUT/pos_run.log" || true)
+
+        printf "  %-34s " "lines with the exact POS format"
+        if [ "$N_POS" -ge 4 ] && [ "$N_POS" = "$N_OK" ]; then echo "OK — $N_POS/$N_OK"; else echo "FAIL ($N_OK از $N_POS)"; FAIL=1; fi
+
+        printf "  %-34s " "'pos' is not echoed (quiet poll)"
+        if [ "$N_ECHO" = "0" ]; then echo "OK"; else echo "FAIL — $N_ECHO echo"; FAIL=1; fi
+
+        printf "  %-34s " "no nan/inf anywhere"
+        if [ "$N_NAN" = "0" ]; then echo "OK"; else echo "FAIL — $N_NAN مورد"; FAIL=1; fi
+
+        printf "  %-34s " "status also ends with a POS line"
+        if awk '/^======================$/{f=1;next} f&&/^>> POS /{found=1} END{exit !found}' "$OUT/pos_run.log"; then echo "OK"; else echo "FAIL"; FAIL=1; fi
+
+        printf "  %-34s " "POS follows a move (deg 3 30)"
+        if grep -qE '^>> POS [^,]*,[^,]*,(0\.[1-9]|[1-9])' "$OUT/pos_run.log"; then echo "OK"; else echo "FAIL — J3 تکان نخورد"; FAIL=1; fi
+    else
+        echo "  RUNTIME FAIL"; FAIL=1
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# ۶) کینماتیک: ریاضی GUI + برابریِ آن با فریم‌ور
+# ---------------------------------------------------------------------
+if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
+    echo
+    echo "===== [6/6] kinematics: GUI math + IK parity with the firmware ====="
+    printf "  %-34s " "Go-to-XYZ reachable band / round-trip"
+    if node "$ROOT/tools/test_goto.js" > "$OUT/goto.log" 2>&1; then
+        echo "OK — $(tail -1 "$OUT/goto.log")"
+    else
+        echo "FAIL"; sed 's/^/      /' "$OUT/goto.log"; FAIL=1
+    fi
+    printf "  %-34s " "GUI IK == firmware IK (both GUIs)"
+    if node "$ROOT/tools/test_ik_parity.js" "$OUT/firmware" > "$OUT/ik_parity.log" 2>&1; then
+        echo "OK — $(tail -1 "$OUT/ik_parity.log")"
+    else
+        echo "FAIL"; sed 's/^/      /' "$OUT/ik_parity.log" | tail -12; FAIL=1
     fi
 fi
 

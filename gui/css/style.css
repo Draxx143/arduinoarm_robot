@@ -299,7 +299,9 @@ body.col-dragging { cursor: col-resize; user-select: none; }
 /* ---------- اسلایدرها ---------- */
 .joint-row {
   display: grid;
-  grid-template-columns: 118px minmax(0, 1fr) 76px 66px auto;
+  /* ستونِ عدد آبیِ jval حذف شد (همیشه صفر نشان می‌داد و تکراریِ کارت‌های
+     J1..J5 بود)؛ جای خالی‌اش به کادر عدد و اسلایدر رسید. */
+  grid-template-columns: 118px minmax(0, 1fr) 96px auto;
   gap: 10px; align-items: center;
   padding: 9px 6px;
   border-bottom: 1px dashed rgba(148, 163, 184, 0.12);
@@ -308,11 +310,7 @@ body.col-dragging { cursor: col-resize; user-select: none; }
 .joint-row .jl { display: flex; flex-direction: column; }
 .joint-row .jl b { font-size: 13px; }
 .joint-row .jl span { font-family: var(--mono); font-size: 10px; color: var(--faint); direction: ltr; text-align: right; }
-.joint-row .jval {
-  font-family: var(--mono); font-size: 13.5px; font-weight: 700; direction: ltr; text-align: center;
-  color: var(--cyan); background: rgba(15, 23, 42, 0.6);
-  border: 1px solid var(--line); border-radius: 8px; padding: 6px 4px;
-}
+/* .jval حذف شد — موقعیت زنده را کارت‌های J1..J5 و خودِ اسلایدر نشان می‌دهند */
 
 input[type="range"] {
   direction: ltr;
@@ -542,7 +540,7 @@ kbd {
 }
 @media (max-width: 640px) {
   .joint-row { grid-template-columns: 90px minmax(0,1fr) 64px; }
-  .joint-row .btn.small, .joint-row .jval { display: none; }
+  .joint-row .btn.small { display: none; }
   header { padding: 8px 10px; }
   .layout { padding: 10px; }
 }

@@ -501,6 +501,10 @@ function send(text, opts = {}) {
 
 function rxLine(line) {
   const t = line.trim();
+  /* ">> POS ..." is the slider-sync channel: it arrives several times a
+     second, so it is parsed but never printed (the console would drown). */
+  const isPosSync = /^>>\s*POS\s/.test(t);
+  if (/^>>\s*ALL JOINTS HOMED/i.test(t)) zeroHomedSliders();
   /* firmware complaints ("!! ...") must be impossible to miss */
   if (/^!!/.test(t)) {
     const now = Date.now();
@@ -552,7 +556,7 @@ function rxLine(line) {
       return;
     }
     /* parsing only — no console spam */
-  } else {
+  } else if (!isPosSync) {
     addConsole("rx", line);
   }
   if (/^>(?!>)/.test(t)) return; /* firmware echo */
@@ -816,8 +820,24 @@ bindLinkEvents(S.serial);
 function restartPoll() {
   if (S.pollTimer) clearInterval(S.pollTimer);
   S.pollTimer = null;
+  if (S.posTimer) clearInterval(S.posTimer);
+  S.posTimer = null;
   const v = parseInt($("selPoll").value, 10);
   if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(() => send(Cmd.status(), { auto: true }), v);
+  /* Slider sync, independent of the status rate: "pos" is one short line with
+     no echo, so asking 3x a second costs nothing and the sliders now follow
+     motion started anywhere else (typed console, teach, timer, macro). */
+  if (S.mode !== "off") S.posTimer = setInterval(pollPos, 330);
+}
+
+function pollPos() {
+  if (S.mode === "off") return;
+  /* drag-safe: never yank a value out from under the user's cursor */
+  const ae = document.activeElement;
+  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
+  if (S.jHeld && S.jHeld.some(Boolean)) return;
+  if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
+  send(Cmd.pos(), { auto: true });
 }
 
 /* ============================================================
@@ -877,15 +897,20 @@ function buildJoints() {
     const hi = S.degMode ? ax.max : ax.soft.max;
     const row = document.createElement("div");
     row.className = "joint-row";
+    /* Zero-offset for this joint (Config.h: HOMING_ZERO_OFFSET_DEG).
+       J5 = 90°: after homing it travels 90° forward and THAT spot is zero. */
+    const offNote = ax.zeroOffsetDeg
+      ? ` · zero ${ax.zeroOffsetDeg > 0 ? "+" : ""}${ax.zeroOffsetDeg}° from endstop` : "";
     row.innerHTML = `
       <div class="jl"><b style="color:${AXC[i]}">${ax.name} <span class="tiny">J${ax.joint} · ${ax.id}</span></b>
-        <span>${lo}…${hi}${S.degMode ? "°" : " steps"}</span></div>
+        <span>${lo}…${hi}${S.degMode ? "°" : " steps"}${offNote}</span></div>
       <input type="range" id="jSlider${i}" min="${lo}" max="${hi}" step="${S.degMode ? 0.5 : 1}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}" style="--axc:${AXC[i]}">
       <input type="number" id="jNum${i}" step="${S.degMode ? 0.5 : 1}"
         min="${lo}" max="${hi}"
         value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}">
-      <span class="jval" id="jCur${i}">${deg.toFixed(1)}°</span>
+      /* the blue "jCur" number was removed: it always read 0 and duplicated
+         the J1..J5 cards above. Live position now rides the POS channel. */
       <div style="display:flex;gap:4px">
         <button class="btn small teal" id="jGo${i}" title="Send move">GO ➤</button>
         <button class="btn small" id="jHome${i}" title="Home this axis">⌂</button>
@@ -940,14 +965,125 @@ function applyJointPos(deg5) {
     const sl = $("jSlider" + i);
     if (!sl) continue;
     if (document.activeElement === sl) continue;
-    const num = $("jNum" + i), cur = $("jCur" + i);
+    const num = $("jNum" + i);
     const ax = FW.AXES[i];
     const deg = Math.max(ax.min, Math.min(ax.max, deg5[i]));
     const v = S.degMode ? deg : Kin.degToSteps(i, deg);
     sl.value = v;
     sl.style.setProperty("--val", (((v - +sl.min) / (+sl.max - +sl.min)) * 100) + "%");
     if (num && document.activeElement !== num) num.value = S.degMode ? deg.toFixed(1) : Math.round(v);
-    if (cur) cur.textContent = deg.toFixed(1) + "°";
+    /* keep the J-cards on the same channel, so card and slider never disagree */
+    const a = S.axes[i];
+    if (a && Math.abs(a.deg - deg) > 0.05) {
+      a.deg = deg;
+      a.steps = Math.round(Kin.degToSteps(i, deg));
+      renderAxisCard(i);
+    }
+  }
+}
+
+/* Zero the sliders/cards of the joints that just finished homing — straight
+   away, without waiting for the next poll. (J5 reads zero too: its 90°
+   offset spot IS the new zero, and that is what the board reports.) */
+function zeroHomedSliders() {
+  applyJointPos(S.axes.map((a) => (a.homed ? 0 : a.deg)));
+  S.axes.forEach((a, i) => {
+    if (!a.homed) return;
+    a.deg = 0; a.steps = 0;
+    renderAxisCard(i);
+  });
+}
+
+/* ============================================================
+ * Go to XYZ — same geometry the firmware solves in IK.cpp
+ * (effective forearm L2+L3 because the wrist stays at zero).
+ * Kin.ik in core.js uses the identical model, so "Solve only"
+ * shows exactly what the board will do.
+ * ============================================================ */
+function gotoGeom() {
+  const { L1, L2, L3 } = FW.LINKS;
+  const L2e = L2 + L3;
+  return { L1, L2e, max: L1 + L2e, min: Math.abs(L1 - L2e) };
+}
+
+/* closest distance at which the elbow (J3) still fits inside its degree limit */
+function gotoMinReach() {
+  const g = gotoGeom();
+  const j3max = (FW.AXES[2].max * Math.PI) / 180;
+  const sq = g.L1 * g.L1 + g.L2e * g.L2e + 2 * g.L1 * g.L2e * Math.cos(j3max);
+  return Math.sqrt(Math.max(0, sq));
+}
+
+function gotoRead() {
+  const x = parseFloat($("gtX").value), y = parseFloat($("gtY").value), z = parseFloat($("gtZ").value);
+  if (![x, y, z].every((v) => isFinite(v))) { toast("Enter numeric X/Y/Z", "warn"); return null; }
+  return { x, y, z };
+}
+
+function gotoCheck(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z);
+  const lo = Math.max(g.min, gotoMinReach());
+  const base = { L, lo, hi: g.max };
+  if (L > g.max + 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `tip is ${L.toFixed(0)}mm from the base; the arm fully stretched reaches ${g.max.toFixed(0)}mm` });
+  }
+  if (L < lo - 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `tip is ${L.toFixed(0)}mm from the base; closer than ${lo.toFixed(0)}mm the elbow bends past ${FW.AXES[2].max}°` });
+  }
+  const ang = Kin.ik(t.x, t.y, t.z);
+  if (!ang) return Object.assign(base, { ok: false, why: "outside the workspace" });
+  const bad = [];
+  ang.forEach((d, i) => {
+    const a = FW.AXES[i];
+    if (d < a.min - 0.001 || d > a.max + 0.001) bad.push(`J${i + 1}=${d.toFixed(1)}° (allowed ${a.min}..${a.max}°)`);
+  });
+  if (bad.length) return Object.assign(base, { ok: false, ang, why: "joint limits: " + bad.join(" · ") });
+  return Object.assign(base, { ok: true, ang });
+}
+
+/* nearest reachable point in the same direction (base angle and elevation kept) */
+function gotoNearest(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z) || 1e-6;
+  const lo = Math.max(g.min, gotoMinReach()) + 1.0;
+  const hi = g.max - 1.0;
+  const k = Math.max(lo, Math.min(hi, L)) / L;
+  return { x: t.x * k, y: t.y * k, z: t.z * k };
+}
+
+function gotoShow(res, t) {
+  const box = $("gotoResult");
+  if (!box) return;
+  if (!res.ok) {
+    box.innerHTML = `<b style="color:#ff9b9e">&#10006; ${res.why}</b><br>` +
+      (res.ang ? `angles: ${res.ang.map((d, i) => `J${i + 1}=${d.toFixed(1)}°`).join(" · ")}` : "") +
+      `<br><span class="tiny">"&#8596; Nearest point" pulls the target into the reachable band, same direction.</span>`;
+    return;
+  }
+  box.innerHTML =
+    `<b style="color:#7ee787">&#10004; reachable</b> — ${res.L.toFixed(1)}mm from the base<br>` +
+    res.ang.map((d, i) => `J${i + 1}=<b>${d.toFixed(1)}°</b>`).join(" · ") +
+    `<br><span class="tiny">command: <code>ik ${t.x.toFixed(1)} ${t.y.toFixed(1)} ${t.z.toFixed(1)}</code></span>`;
+}
+
+function gotoCalc() {
+  const t = gotoRead();
+  if (!t) return null;
+  const res = gotoCheck(t);
+  gotoShow(res, t);
+  return res.ok ? { t, res } : null;
+}
+
+function gotoInit() {
+  const g = gotoGeom();
+  const lo = Math.max(g.min, gotoMinReach());
+  const h = $("gotoHint");
+  if (h) {
+    h.innerHTML = `Reachable band: tip distance from the base between <b>${lo.toFixed(0)}</b> and <b>${g.max.toFixed(0)}</b> mm` +
+      ` (L1=${g.L1}mm, effective forearm L2+L3=${g.L2e}mm). Below ${lo.toFixed(0)}mm the elbow exceeds J3's ${FW.AXES[2].max}° and the firmware rejects the move.`;
   }
 }
 
@@ -1608,6 +1744,24 @@ function bindActions() {
     calcFKLocal();
     send(Cmd.fk([0, 1, 2, 3, 4].map((i) => parseFloat($("fkA" + i).value) || 0)));
   };
+  bindClick("btnGotoCalc", () => gotoCalc());
+  bindClick("btnGotoGo", () => {
+    const r = gotoCalc();
+    if (!r) return;
+    if (send(Cmd.ik(r.t.x, r.t.y, r.t.z))) {
+      toast(`Going to (${r.t.x.toFixed(0)}, ${r.t.y.toFixed(0)}, ${r.t.z.toFixed(0)}) mm`, "ok");
+    }
+  });
+  bindClick("btnGotoNear", () => {
+    const t = gotoRead();
+    if (!t) return;
+    const n = gotoNearest(t);
+    $("gtX").value = n.x.toFixed(1);
+    $("gtY").value = n.y.toFixed(1);
+    $("gtZ").value = n.z.toFixed(1);
+    if (gotoCalc()) toast("Target moved to the nearest reachable point", "ok");
+  });
+
   $("btnFKFromCurrent").onclick = () => {
     currentDegs().forEach((d, i) => ($("fkA" + i).value = d));
     calcFKLocal();
@@ -1716,6 +1870,7 @@ function init() {
   if (window.__armPanelInit) return;
   window.__armPanelInit = true;
   buildAxisCards();
+  gotoInit();
   buildJoints();
   buildMoveAll();
   buildFkInputs();

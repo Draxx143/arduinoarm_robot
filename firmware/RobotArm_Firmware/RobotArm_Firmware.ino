@@ -246,10 +246,14 @@ void handleSerialCommands() {
         command.trim();
         if (command.length() == 0) return;
 
-        Serial.print(F("> "));
-        Serial.println(command);
-
-        logger.log(command.c_str());
+        // «pos» کانال همگام‌سازی GUI است و چند بار در ثانیه پرسیده می‌شود؛
+        // اگر echo و لاگ داشت، کنسول و حلقه‌ی لاگ را پر می‌کرد.
+        bool quietPoll = (command == F("pos"));
+        if (!quietPoll) {
+            Serial.print(F("> "));
+            Serial.println(command);
+            logger.log(command.c_str());
+        }
 
         // ==================== Basic Commands ====================
         if (command == F("home")) {
@@ -284,6 +288,10 @@ void handleSerialCommands() {
         }
         else if (command == F("status")) {
             printStatus();
+        }
+        else if (command == F("pos")) {
+            // یک خط ماشین‌خوان برای همگام‌سازی اسلایدرهای GUI با برد
+            printPos();
         }
         else if (command == F("speeds")) {
             printSpeeds();
@@ -675,6 +683,34 @@ void printStatus() {
         Serial.println(axis->endstopPressed() ? F("Trig") : F("Open"));
     }
     Serial.println(F("======================"));
+
+    // خط همگام‌سازی موقعیت هم در status باشد: همان poll موجودِ GUI
+    // اسلایدرها را با برد هم‌زمان می‌کند، بدون اینکه دستور تازه‌ای لازم باشد.
+    printPos();
+}
+
+// ---------------------------------------------------------------------
+// کانال همگام‌سازی موقعیت (POS)
+//
+// قالب ثابت و ماشین‌خوان — GUI با همین regex می‌خواندش:
+//     >> POS <j1>,<j2>,<j3>,<j4>,<j5>        (درجه، یک رقم اعشار)
+//
+// چرا لازم است: اگر کاربر از جای دیگری حرکت بدهد (کنسول سریال، Teach،
+// تایمر، ماکرو یا دکمه‌ی روی دستگاه)، اسلایدرهای GUI بی‌خبر می‌ماندند و
+// عدد کنار دکمه‌ی GO همیشه صفر بود. حالا برد موقعیت واقعی را گزارش
+// می‌دهد و GUI اسلایدرها را دنبال می‌اندازد.
+// ---------------------------------------------------------------------
+void printPos() {
+    Serial.print(F(">> POS "));
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (i) Serial.print(F(","));
+        float degrees = 0.0f;
+        if (DEG_TO_STEPS[i] > 0.0f) {
+            degrees = (float)motorController->getAxis(i)->getCurrentPosition() / DEG_TO_STEPS[i];
+        }
+        Serial.print(degrees, 1);
+    }
+    Serial.println();
 }
 
 void handleMoveCommand(String command) {

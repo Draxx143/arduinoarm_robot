@@ -115,6 +115,25 @@
           <div id="jointsList"></div>
         </div>
 
+        <div class="card">
+          <h3>📍 برو به مختصات <span class="en">GO TO XYZ</span></h3>
+          <p class="muted" style="margin-bottom:8px">مختصات <b>نوک بازو</b> را میلی‌متر بده؛ زوایای پنج جوینت حل
+            می‌شود، <b>اول</b> بررسی می‌شود که همه داخل محدوده‌ی مجاز باشند، بعد دستور
+            <code>ik x y z</code> به برد می‌رود. در حلِ فعلی مچ (J4/J5) صفر می‌ماند.</p>
+          <div class="row">
+            <div class="field"><label>X (mm)</label><input type="number" id="gtX" value="230" step="5"></div>
+            <div class="field"><label>Y (mm)</label><input type="number" id="gtY" value="0" step="5"></div>
+            <div class="field"><label>Z (mm)</label><input type="number" id="gtZ" value="60" step="5"></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <button class="btn big cyan" id="btnGotoGo" style="flex:1">🎯 برو به این مختصات</button>
+            <button class="btn" id="btnGotoCalc">🔍 فقط محاسبه</button>
+            <button class="btn" id="btnGotoNear" title="اگر هدف خارج از دسترس یا خارج از محدوده‌ی جوینت است، نزدیک‌ترین نقطه‌ی ممکن را پیدا کن">↔ نزدیک‌ترین نقطه</button>
+          </div>
+          <div class="ik-result" id="gotoResult" style="margin-top:10px">—</div>
+          <p class="tiny" id="gotoHint" style="margin-top:6px"></p>
+        </div>
+
         <div class="grid2">
           <div class="card">
             <h3>🧩 حرکت همزمان ۵ محور <span class="en">MOVEALL</span></h3>

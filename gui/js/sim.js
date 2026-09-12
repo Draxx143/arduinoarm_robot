@@ -197,6 +197,17 @@ class SimFirmware {
         this.pos[hp.axis] = 0;
         this.target[hp.axis] = 0;
         this.emit(`>> Axis ${hp.axis + 1} (${a.id}) homed, backed off ${a.backoff} steps (park position = 0 deg)`);
+        /* آفست نقطه‌ی صفر (Config.h: HOMING_ZERO_OFFSET_DEG) — برای J5 = ۹۰°.
+           اول به اندازه‌ی آفست جلو می‌رود و بعد همان‌جا صفر می‌شود؛ تا تمام
+           نشده جوینت بعدی هوم نمی‌شود (دقیقاً مثل فریم‌ور). */
+        if (a.zeroOffsetDeg) {
+          this.homingPhase = {
+            phase: "offset", axis: hp.axis,
+            steps: Math.round(a.zeroOffsetDeg * a.stepsPerDeg),
+          };
+          this.emit(`>> Joint ${hp.axis + 1} zero-offset: moving ${(+a.zeroOffsetDeg).toFixed(1)}° forward, that spot becomes the new 0 ...`);
+          return;
+        }
         if (hp.axis === 1 && !this._nudgeDone) {
           this._nudgeDone = true;
           this.nudge = { stage: "out" };
@@ -212,6 +223,20 @@ class SimFirmware {
           this.homingPhase = null;   /* hand control to _tickNudge */
           return;
         }
+        this._nextHomingAxis();
+      } else {
+        this.pos[hp.axis] += step;
+      }
+    } else if (hp.phase === "offset") {
+      /* حرکت به نقطه‌ی صفرِ جدید و صفر کردن دوباره‌ی شمارنده */
+      const diff = hp.steps - this.pos[hp.axis];
+      const v = a.maxSpeed * this.mult();
+      const step = v * 0.05 * Math.sign(diff);
+      if (Math.abs(step) >= Math.abs(diff)) {
+        this.pos[hp.axis] = 0;
+        this.target[hp.axis] = 0;
+        this.emit(`>> Joint ${hp.axis + 1} zero re-set ${(+a.zeroOffsetDeg).toFixed(1)}° ahead of the endstop (position = 0)`);
+        this.emitPosCurrent();
         this._nextHomingAxis();
       } else {
         this.pos[hp.axis] += step;
@@ -292,7 +317,7 @@ class SimFirmware {
     const origEmit = this.emit;
     this.emit = (m) => { if (String(m) === "Unknown command") known = false; origEmit.call(this, m); };
     try { this._dispatch(raw); } finally { this.emit = origEmit; }
-    if (!silent && known && raw.trim().toLowerCase() !== "status") {
+    if (!silent && known && raw.trim().toLowerCase() !== "status" && raw.trim().toLowerCase() !== "pos") {
       this.emit(">> ACK: " + raw.trim() + " - executed");
     }
   }
@@ -337,6 +362,10 @@ class SimFirmware {
 
     /* --- وضعیت --- */
     if (lower === "status") { this._printStatus(); return; }
+    /* کانال همگام‌سازی موقعیت — دقیقاً مثل فریم‌ور: یک خط «>> POS ...»
+       بدون echo، تا GUI بتواند چند بار در ثانیه بپرسد و اسلایدرها را
+       با برد (یا با همین شبیه‌ساز) هم‌زمان نگه دارد. */
+    if (lower === "pos") { this.emitPosCurrent(); return; }
 
     /* --- موتورها --- */
     if (lower === "enable") { this.enabled = this.enabled.map(() => true); this.emit("All motors enabled"); return; }
@@ -650,6 +679,9 @@ class SimFirmware {
     }
     L.push("======================");
     this.emitMany(L);
+    /* فریم‌ور هم انتهای status یک خط POS می‌فرستد؛ پس poll موجودِ status
+       خودش اسلایدرها را همگام می‌کند. */
+    this.emitPosCurrent();
   }
 
   _stateEn() {

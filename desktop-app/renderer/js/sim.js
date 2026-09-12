@@ -199,6 +199,17 @@ class SimFirmware {
         this.pos[hp.axis] = 0;
         this.target[hp.axis] = 0;
         this.emit(`>> Axis ${hp.axis + 1} (${a.id}) homed, backed off ${a.backoff} steps (park position = 0 deg)`);
+        /* Zero-offset (Config.h: HOMING_ZERO_OFFSET_DEG) — 90° for J5:
+           travel forward by the offset, then that spot becomes the new zero.
+           The next joint does not start until this finishes (firmware parity). */
+        if (a.zeroOffsetDeg) {
+          this.homingPhase = {
+            phase: "offset", axis: hp.axis,
+            steps: Math.round(a.zeroOffsetDeg * a.stepsPerDeg),
+          };
+          this.emit(`>> Joint ${hp.axis + 1} zero-offset: moving ${(+a.zeroOffsetDeg).toFixed(1)}° forward, that spot becomes the new 0 ...`);
+          return;
+        }
         /* v1.0.36: J2/J3 choreography — J2 forward 250, J3 homes, J2 returns */
         if (hp.axis === 1 && !this._nudgeDone) {
           this._nudgeDone = true;
@@ -215,6 +226,20 @@ class SimFirmware {
           this.homingPhase = null;   /* hand control to _tickNudge */
           return;
         }
+        this._nextHomingAxis();
+      } else {
+        this.pos[hp.axis] += step;
+      }
+    } else if (hp.phase === "offset") {
+      /* travel to the new zero spot, then re-zero the counter */
+      const diff = hp.steps - this.pos[hp.axis];
+      const v = a.maxSpeed * this.mult();
+      const step = v * 0.05 * Math.sign(diff);
+      if (Math.abs(step) >= Math.abs(diff)) {
+        this.pos[hp.axis] = 0;
+        this.target[hp.axis] = 0;
+        this.emit(`>> Joint ${hp.axis + 1} zero re-set ${(+a.zeroOffsetDeg).toFixed(1)}° ahead of the endstop (position = 0)`);
+        this.emitPosCurrent();
         this._nextHomingAxis();
       } else {
         this.pos[hp.axis] += step;
@@ -295,7 +320,7 @@ class SimFirmware {
     const origEmit = this.emit;
     this.emit = (m) => { if (String(m) === "Unknown command") known = false; origEmit.call(this, m); };
     try { this._dispatch(raw); } finally { this.emit = origEmit; }
-    if (!silent && known && raw.trim().toLowerCase() !== "status") {
+    if (!silent && known && raw.trim().toLowerCase() !== "status" && raw.trim().toLowerCase() !== "pos") {
       this.emit(">> ACK: " + raw.trim() + " - executed");
     }
   }
@@ -340,6 +365,10 @@ class SimFirmware {
 
     /* --- وضعیت --- */
     if (lower === "status") { this._printStatus(); return; }
+    /* POS sync channel — same as the firmware: one ">> POS ..." line with no
+       echo, so the GUI can poll it a few times a second and keep the sliders
+       glued to the board (or to this simulator). */
+    if (lower === "pos") { this.emitPosCurrent(); return; }
 
     /* --- موتورها --- */
     if (lower === "enable") { this.enabled = this.enabled.map(() => true); this.emit("All motors enabled"); return; }
@@ -663,6 +692,9 @@ class SimFirmware {
     }
     L.push("======================");
     this.emitMany(L);
+    /* the firmware also ends status with a POS line, so the existing status
+       poll syncs the sliders by itself */
+    this.emitPosCurrent();
   }
 
   _stateEn() {

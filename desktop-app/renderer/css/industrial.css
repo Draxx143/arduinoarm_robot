@@ -379,7 +379,9 @@ body.win-resizing, body.win-resizing * { cursor: nwse-resize !important; user-se
 /* ================= Jog sliders ================= */
 .joint-row {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) 84px 70px auto;
+  /* the blue jval column is gone (it always read 0 and duplicated the J1..J5
+     cards); the freed space goes to the slider and the number box */
+  grid-template-columns: 150px minmax(0, 1fr) 104px auto;
   gap: 11px; align-items: center;
   padding: 10px 4px;
   border-bottom: 1px dashed #232c39;
@@ -387,11 +389,7 @@ body.win-resizing, body.win-resizing * { cursor: nwse-resize !important; user-se
 .joint-row:last-child { border-bottom: none; }
 .joint-row .jl b { font-size: 13px; letter-spacing: 0.04em; }
 .joint-row .jl span { font-family: var(--mono); font-size: 10px; color: var(--faint); }
-.joint-row .jval {
-  font-family: var(--mono); font-size: 13px; font-weight: 700; text-align: center;
-  color: var(--teal2); background: var(--inset);
-  border: 1px solid var(--line); border-radius: 4px; padding: 6px 4px;
-}
+/* .jval removed — live position lives in the J1..J5 cards and the slider */
 
 input[type="range"] {
   -webkit-appearance: none; appearance: none;
@@ -632,7 +630,7 @@ kbd {
 }
 @media (max-width: 640px) {
   .joint-row { grid-template-columns: 100px minmax(0,1fr) 70px; }
-  .joint-row .btn.small, .joint-row .jval { display: none; }
+  .joint-row .btn.small { display: none; }
 }
 
 /* ================= Sequencer ================= */
