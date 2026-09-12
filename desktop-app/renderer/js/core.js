@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * core.js — Firmware mirror: constants, command builder,
  * output parser and kinematics (mirrors RobotArm_Firmware.ino)

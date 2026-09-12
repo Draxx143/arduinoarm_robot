@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+# https://github.com/Draxx143/arduinoarm_robot
 # -*- coding: utf-8 -*-
 """
 مقایسه‌ی «کد قبل از اصلاح» با «کد بعد از اصلاح» برای موتور حرکت بازوی ۵ محوره.

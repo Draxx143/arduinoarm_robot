@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * viz.js — بصری‌سازی زنده‌ی بازو روی Canvas
  * دو نما: بغل (Side) و بالا (Top) + رد حرکت + بازوی هدف شبح‌وار

@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.41-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.41-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.42-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.42-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -382,3 +382,31 @@ limits, degree ranges, homing order) identical to `Config.h`:
 ```bash
 python3 tools/sync_gui_config.py --check   # exits 1 if a GUI drifted
 ```
+
+---
+
+## مجوز و نسبت‌دادن / License & Attribution — MIT
+
+کلِ این پروژه — فریم‌ور، GUI وب، اپ دسکتاپ، ابزارها و مستندات — تحتِ مجوزِ
+**MIT** منتشر شده است. متنِ کامل: [`LICENSE`](LICENSE).
+
+یعنی هر کسی آزاد است از این فایل‌ها استفاده کند، تغییرشان بدهد، منتشر کند و
+حتی بفروشد، **به یک شرط**: اعلانِ حقِ نشر همراهشان بماند:
+
+> Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+> https://github.com/Draxx143/arduinoarm_robot
+
+برای اینکه حتی اگر کسی **فقط یک فایل** را برداشت صاحبِ اثر و نشانیِ پروژه با
+آن برود، سرِ همه‌ی ۴۹ فایلِ اصلیِ پروژه هم این دو خط آمده است:
+
+```text
+SPDX-License-Identifier: MIT
+Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm · https://github.com/Draxx143/arduinoarm_robot
+```
+
+این پروژه «همان‌طور که هست» و بدون هیچ ضمانتی ارائه می‌شود (بندِ سلبِ
+مسئولیتِ MIT را ببین).
+
+اگر ترجیح می‌دهی استفاده‌ی دیگران **مشروط** شود — یعنی نسخه‌ی تغییر‌یافته هم
+باید با همان مجوزِ باز منتشر شود (copyleft) — می‌شود مجوز را به **GPL-3.0**
+عوض کرد؛ و اگر محافظتِ حقِ اختراع هم می‌خواهی، **Apache-2.0** گزینه‌ی بهتری است.

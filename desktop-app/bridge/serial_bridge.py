@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+# https://github.com/Draxx143/arduinoarm_robot
 """AXIS-5 serial bridge: raw termios read/write over a tty, talking
 base64 lines on stdin/stdout. Protocol (stdout): R: ready | D:<b64> data |
 E:<b64> error | X: exiting. stdin: W:<b64> write | C: close."""

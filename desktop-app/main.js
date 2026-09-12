@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * main.js — AXIS-5 Robot Control (Electron main process)
  * Handles: window, Web Serial permissions & port chooser bridge
@@ -12,23 +15,12 @@ const path = require("path");
  * Used when Chromium's Web Serial enumeration comes back empty. */
 let SerialPortC = null;
 try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC = null; }
+/* نشست‌های درایورِ node-serialport (مسیرِ ویندوز). پلِ پایتونِ Linux/macOS
+ * در main/pybridge.js است — جدا و بدون وابستگی به electron، تا بتوان با
+ * Node خالی تستش کرد (tools/test_pybridge.js). */
+const pybridge = require("./main/pybridge.js");
 const openSerialPorts = new Map();
 let serialSeq = 0;
-
-/* python bridge script path (unpacked from asar so python3 can exec it) */
-function bridgeScriptPath() {
-  const p = path.join(__dirname, "bridge", "serial_bridge.py");
-  return p.includes("app.asar")
-    ? path.join(__dirname.replace("app.asar", "app.asar.unpacked"), "bridge", "serial_bridge.py")
-    : p;
-}
-function cleanupPy(id) {
-  const rec = openSerialPorts.get(id);
-  if (!rec || rec.done) return;
-  rec.done = true;
-  try { rec.child.kill(); } catch (e) {}
-  openSerialPorts.delete(id);
-}
 
 let win = null;
 let pendingPortCallback = null;
@@ -156,6 +148,8 @@ function createWindow() {
   ipcMain.handle("serialport:stats", () => {
     let rx = 0, kind = "none";
     openSerialPorts.forEach((r) => { rx += r.rx || 0; kind = r.kind || "?"; });
+    const py = pybridge.stats();
+    if (py.count) { rx += py.rx; kind = "py"; }
     return { mainRx: rx, kind };
   });
 
@@ -186,7 +180,17 @@ function createWindow() {
   /* ---- Main-process serial backend (bypasses Chromium Web Serial) ---- */
   ipcMain.handle("serialport:available", () => !!SerialPortC);
   ipcMain.handle("serialport:list", async () => {
-    if (!SerialPortC) return { err: "driver unavailable" };
+    if (!SerialPortC) {
+      /* درایورِ native (serialport) بارگذاری نشد — مثلاً bindingِ N-API برای
+       * این ABI در بسته نیست. کاربر نباید به‌خاطرِ آن پورت‌هایش را نبیند:
+       * فهرستِ سطحِ سیستم دقیقاً همان چیزی است که ls و Arduino IDE می‌بینند.
+       * بدون این، کارتِ اتصال خالی می‌ماند یا فقط پورت‌های Web Serial را
+       * نشان می‌دهد و «اتصال» بی‌نتیجه می‌ماند. */
+      try {
+        const names = await listSystemPorts();
+        return { ports: (names || []).map((n) => ({ path: n, friendly: "OS serial device", vid: "", pid: "" })) };
+      } catch (er) { return { err: "driver unavailable" }; }
+    }
     try {
       const list = await SerialPortC.list();
       return { ports: list.map((p) => ({
@@ -197,54 +201,19 @@ function createWindow() {
     } catch (e) { return { err: String(e.message || e) }; }
   });
   ipcMain.handle("serialport:open", (e, portPath, baud) => new Promise((resolve) => {
-    /* ---- python bridge (preferred on Linux/macOS — same path `cat` proved working) ---- */
+    /* ---- Linux/macOS: پلِ پایتون (ترموسِ خام + پالسِ DTR، بدون وابستگی) ----
+       pybridge تضمین می‌کند این promise در **هر** شرایطی یک بار حل شود:
+       پورت وجود ندارد / مجوز نیست / پورت دستِ برنامه‌ی دیگری است / python3
+       نصب نیست / پل وسطِ کار مرد. قبلاً هیچ‌کدام resolve نمی‌شد و دکمه‌ی
+       «اتصال» برای همیشه روی «opening …» می‌ماند بدون هیچ پیامِ خطایی. */
     if (process.platform !== "win32") {
-      let child;
-      try {
-        child = spawn("python3", [bridgeScriptPath(), String(portPath), String(Number(baud) || 115200)],
-          { stdio: ["pipe", "pipe", "pipe"] });
-      } catch (er) {
-        return resolve({ err: "bridge spawn failed: " + er.message });
-      }
-      const id = ++serialSeq;
-      const rec = { kind: "py", child, rx: 0, path: String(portPath), ready: false, done: false };
-      openSerialPorts.set(id, rec);
-      let buf = "";
-      child.on("error", (er) => {
-        if (!rec.ready && !rec.done) { rec.done = true; openSerialPorts.delete(id); resolve({ err: "python3: " + er.message }); }
-      });
-      child.stdout.on("data", (chunk) => {
-        buf += chunk.toString("utf8");
-        let i;
-        while ((i = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, i).trim();
-          buf = buf.slice(i + 1);
-          if (!line) continue;
-          if (line.startsWith("R:")) {
-            rec.ready = true;
-            if (!rec.done) resolve({ id });
-          } else if (line.startsWith("D:")) {
-            rec.rx += Buffer.from(line.slice(2), "base64").length;
-            if (win && !win.isDestroyed()) win.webContents.send("serialport:data", line.slice(2));
-          } else if (line.startsWith("E:")) {
-            if (win && !win.isDestroyed()) win.webContents.send("serialport:error", Buffer.from(line.slice(2), "base64").toString("utf8"));
-          } else if (line.startsWith("X:")) {
-            if (!rec.done) { rec.done = true; openSerialPorts.delete(id); if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id); }
-          }
-        }
-      });
-      child.stderr.on("data", (c) => {
-        if (!rec.ready && !rec.done) {
-          rec.done = true; openSerialPorts.delete(id);
-          resolve({ err: "bridge: " + c.toString().slice(0, 180) });
-        }
-      });
-      child.on("exit", () => {
-        if (!rec.done) { rec.done = true; openSerialPorts.delete(id); if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id); }
-      });
-      setTimeout(() => {
-        if (!rec.ready && !rec.done) { cleanupPy(id); resolve({ err: "bridge timeout (is python3 installed?)" }); }
-      }, 5000);
+      pybridge.openBridge({
+        portPath: String(portPath),
+        baud: Number(baud) || 115200,
+        send: (channel, payload) => {
+          if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+        },
+      }).then(resolve);
       return;
     }
     if (!SerialPortC) return resolve({ err: "driver unavailable" });
@@ -254,16 +223,22 @@ function createWindow() {
     sp.open((err) => {
       if (err) return resolve({ err: String(err.message || err) });
       const id = ++serialSeq;
+      /* FIX: رکورد **پیش از** سیم‌کشیِ رویدادها ثبت شود. قبلاً rec0 قبل از
+       * openSerialPorts.set() خوانده می‌شد، پس undefined بود و اولین بایتِ
+       * دریافتی داخلِ لیسنرِ 'data' استثنا می‌داد (TypeError) → در فرایندِ
+       * main یک uncaughtException و در عمل RX هرگز به renderer نمی‌رسید:
+       * «بورد شناسایی می‌شود ولی وصل نمی‌شود». */
+      const rec0 = { sp, pump: null, rx: 0, path: String(portPath) };
+      openSerialPorts.set(id, rec0);
       /* RX: BOTH mechanisms at once —
        *  1) 'data' event (works when the stream flows)
        *  2) 15 ms read() pump (works in paused mode)
        * whichever fires, the renderer gets the bytes. */
-      const rec0 = openSerialPorts.get(id);
       sp.on("data", (buf) => {
         rec0.rx += buf.length;
         if (win && !win.isDestroyed()) win.webContents.send("serialport:data", buf.toString("base64"));
       });
-      const pump = setInterval(() => {
+      rec0.pump = setInterval(() => {
         try {
           let chunk;
           while ((chunk = sp.read()) !== null) {
@@ -272,9 +247,8 @@ function createWindow() {
           }
         } catch (er2) {}
       }, 15);
-      openSerialPorts.set(id, { sp, pump, rx: 0, path: String(portPath) });
       sp.on("close", () => {
-        clearInterval(pump);
+        clearInterval(rec0.pump);
         openSerialPorts.delete(id);
         if (win && !win.isDestroyed()) win.webContents.send("serialport:closed", id);
       });
@@ -285,24 +259,15 @@ function createWindow() {
     });
   }));
   ipcMain.handle("serialport:write", (e, id, text) => {
+    if (pybridge.has(id)) return Promise.resolve(pybridge.writeTo(id, text));
     const rec = openSerialPorts.get(Number(id));
     if (!rec) return Promise.resolve({ err: "port not open" });
-    if (rec.kind === "py") {
-      try {
-        rec.child.stdin.write("W:" + Buffer.from(String(text), "utf8").toString("base64") + "\n");
-        return Promise.resolve({});
-      } catch (er) { return Promise.resolve({ err: String(er.message || er) }); }
-    }
     return new Promise((resolve) => rec.sp.write(String(text), (err) => resolve(err ? { err: String(err.message || err) } : {})));
   });
   ipcMain.handle("serialport:close", (e, id) => {
+    if (pybridge.has(id)) { pybridge.closeSession(id); return Promise.resolve({}); }
     const rec = openSerialPorts.get(Number(id));
     if (!rec) return Promise.resolve({});
-    if (rec.kind === "py") {
-      try { rec.child.stdin.write("C:\n"); } catch (e2) {}
-      setTimeout(() => cleanupPy(Number(id)), 500);
-      return Promise.resolve({});
-    }
     clearInterval(rec.pump);
     return new Promise((resolve) => rec.sp.close((err) => resolve(err ? { err: String(err.message || err) } : {})));
   });

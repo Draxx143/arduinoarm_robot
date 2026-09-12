@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * تست DOM واقعیِ GUI — با jsdom صفحه‌ی واقعی بارگذاری می‌شود و
  * شبیه‌سازِ خودِ GUI کار می‌کند. سه چیزی را بررسی می‌کند که با

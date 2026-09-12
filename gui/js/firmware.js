@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * firmware.js — آینه‌ی ثابت‌ها و پروتکل فریم‌ور RobotArm_Firmware.ino
  * تمام مقادیر از Config.h و فایل‌های فریم‌ور استخراج شده‌اند.

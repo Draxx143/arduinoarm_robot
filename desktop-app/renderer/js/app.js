@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * app.js — AXIS-5 Robot Control, main UI logic
  * Transport: Web Serial (browser) / Electron bridge / Simulator
@@ -229,6 +232,14 @@ const BUSY_TROUBLE_HTML =
 function connErrorHint(e, portPath) {
   const m = e && e.message ? e.message : String(e);
   const pp = portPath ? " (" + portPath + ")" : "";
+  /* پلِ Linux/macOS به python3 نیاز دارد — بدون آن «اتصال» فقط شکست می‌خورد */
+  if (/cannot run python|python3|bridge spawn|bridge timeout/i.test(m))
+    return { html: `<b>python3 is missing</b>${pp} &mdash; the Linux/macOS serial bridge runs on it:<div><code>sudo apt install python3</code></div>then Disconnect &amp; Connect again.`,
+             plain: "python3 is required for the serial bridge — install it (sudo apt install python3), then reconnect." };
+  /* برچسب/مسیری که اصلاً در سیستم وجود ندارد (کابل کشیده شده، یا برچسبِ Web Serial) */
+  if (/port not found|termios failed|before the port opened/i.test(m))
+    return { html: `<b>No device at that path</b>${pp} &mdash; replug the USB cable, press &#8635; Scan and pick the path that appears (for example <code>/dev/ttyUSB0</code>). If it still fails, check <code>dmesg | tail</code> right after plugging in.`,
+             plain: "No device at that path" + pp + " — replug, rescan, and pick the real /dev/… path." };
   if (/busy|lock|EBUSY|resource temporarily|device is/i.test(m))
     return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>`,
              plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app), then retry." };
@@ -415,15 +426,53 @@ async function scanPorts() {
   await renderConnCard();
 }
 
+/* The dropdown can hold either a real device path (/dev/ttyUSB0, COM3) or a
+ * Web Serial *label* ("USB 2341:0042", "Arduino Mega"). The system bridge needs
+ * a PATH — feeding it a label used to fail (and, before the pybridge fix, to
+ * hang the Connect button forever with no message at all). Translate first. */
+const looksLikeDevPath = (n) => /^\/dev\/|^COM\d+$/i.test(String(n || "").trim());
+
+async function resolvePortPath(name) {
+  const n = String(name || "").trim();
+  if (!n) return null;
+  if (looksLikeDevPath(n)) return n;
+  try {
+    const res = window.electronAPI && window.electronAPI.ipcSerial
+      ? await window.electronAPI.ipcSerial.list() : null;
+    const ports = (res && res.ports) || [];
+    if (!ports.length) return null;
+    const byPath = ports.find((p) => p.path === n);
+    if (byPath) return byPath.path;
+    const byName = ports.find((p) => {
+      const f = String(p.friendly || "");
+      return (f && (f.includes(n) || n.includes(f))) || n.includes(p.path);
+    });
+    if (byName) return byName.path;
+    /* nothing matched the label — if the system shows exactly one (likely)
+       candidate, use it rather than refusing to connect at all */
+    const likely = ports.filter((p) =>
+      /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.path + " " + (p.friendly || "")));
+    if (ports.length === 1) return ports[0].path;
+    if (likely.length === 1) return likely[0].path;
+  } catch (e) { /* scan failed — fall back to the chooser below */ }
+  return null;
+}
+
 /* connect to an OS-level device path (e.g. /dev/ttyUSB0, COM3).
- * Preferred: node-serialport driver in the main process (always works).
+ * Preferred: the python/system bridge in the main process (always works).
  * Fallback: Web Serial chooser auto-resolved by port name in main.js. */
 async function connectSystemPort(name) {
   if (S.mode === "serial") return;
   stopSim();
   const baud = parseInt($("selBaud").value, 10);
 
-  if (IpcSerialLink.supported) {
+  const devPath = IpcSerialLink.supported ? await resolvePortPath(name) : null;
+  if (IpcSerialLink.supported && !devPath) {
+    addConsole("warn", `[SYS] "${name}" is not a device path and could not be matched to one — falling back to the port chooser`);
+  }
+
+  if (IpcSerialLink.supported && devPath) {
+    name = devPath;
     const link = new IpcSerialLink();
     bindLinkEvents(link);
     S.serial = link;

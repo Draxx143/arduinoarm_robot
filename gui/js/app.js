@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * app.js — منطق اصلی کنترل‌پنل
  * اتصال (Web Serial / شبیه‌ساز) + همه‌ی اجزای UI + پارس پاسخ‌ها

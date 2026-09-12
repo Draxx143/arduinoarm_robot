@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+# https://github.com/Draxx143/arduinoarm_robot
 # ======================================================================
 #  AXIS-5 Robot Control — نصب/پاک‌سازی کامل از ترمینال لینوکس
 #

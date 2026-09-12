@@ -1,3 +1,6 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-5 Robot Arm
+ * https://github.com/Draxx143/arduinoarm_robot */
 /* ============================================================
  * sim.js — In-app firmware simulator for RobotArm_Firmware.ino
  * Behaviour and message formats are identical to the Arduino code so
