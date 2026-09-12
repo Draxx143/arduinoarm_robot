@@ -92,8 +92,35 @@ class SerialLink {
     this.port = port;
     this.connected = true;
     this._buff = "";
+    await this._assertLines(port);
     if (this.onConnect) this.onConnect(this.baud);
     this._readLoop();
+  }
+
+  /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند و این دو
+   * پیامدِ جدی دارد:
+   *   · بردهای USB بومی (32u4/ESP32) تا وقتی DTR asserted نباشد «میزبان وصل
+   *     نیست» فرض می‌کنند و هر Serial.print را **بی‌صدا دور می‌ریزند** → RX=0؛
+   *   · بردهای Rev3 لبه‌ی ریست را نمی‌گیرند، پس بنرِ بوت و نسخه‌ی فریم‌ور
+   *     هرگز نمی‌آید و اپ نمی‌داند آن سوی سیم چه چیزی هست.
+   * پس همان پالسِ avrdude را می‌زنیم که پلِ دسکتاپ می‌زند، با همان قانونِ
+   * حیاتی: پایان با **هر دو خط در یک سطح**. در Rev3 خطِ RESET با جفت
+   * ترانزیستور از DTR/RTS هدایت می‌شود و تا وقتی این دو متفاوت باشند AVR در
+   * ریست **نگه داشته می‌شود** — یعنی پورت باز است، TX می‌رود، RX صفر می‌ماند. */
+  async _assertLines(port) {
+    if (!port || typeof port.setSignals !== "function") return;
+    const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+    const both = { dataTerminalReady: true, requestToSend: true };
+    try {
+      await port.setSignals(both);                                       /* میزبان وصل است */
+      await nap(50);
+      await port.setSignals({ dataTerminalReady: true, requestToSend: false }); /* تفاوت → RESET پایین */
+      await nap(120);
+      await port.setSignals(both);                                       /* یکسان → برد آزاد و در حالِ بوت */
+      await nap(50);
+    } catch (e) {
+      /* برخی مبدل‌ها setSignals را پس می‌زنند — نباید اتصال را بشکند */
+    }
   }
 
   _removeElectronHandler() {

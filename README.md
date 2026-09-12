@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.44-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.44-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.45-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.45-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -336,6 +336,24 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 
 ## اگر برد وصل نمی‌شود: 🩺 عیب‌یابِ اتصال
 
+اپ از نسخه‌ی ۱.۰.۴۵ **خودش** سه کار را انجام می‌دهد تا «کامل وصل نمی‌شود»
+بدونِ دخالتِ تو حل شود:
+
+1. دکمه‌ی **اتصال** در اپِ دسکتاپ همیشه از **پلِ سیستمی** می‌رود (ترموسِ خام
+   + پالسِ ریستِ درست + عیب‌یاب)، حتی وقتی کشوی پورت خالی است — در آن حالت
+   خودش تنها پورتِ واقعیِ سیستم (`/dev/ttyACM*` یا `/dev/ttyUSB*`) را
+   برمی‌دارد. قبلاً با کشوی خالی به وب‌سریالِ کرومیوم می‌افتاد: مسیری که نه
+   پالسِ ریستِ درست دارد، نه عیب‌یاب، نه راهنما.
+2. مسیرِ وب‌سریال هم حالا خطوطِ مودم را کنترل می‌کند (`setSignals`) — بدونِ
+   آن، بردهای USB بومی (Leonardo/Micro/ESP32) «میزبان وصل نیست» فرض می‌کنند
+   و هر `Serial.print` را بی‌صدا دور می‌ریزند.
+3. اگر بعد از اتصال **RX صفر** بماند، اپ خودش نردبانِ baud را می‌رود
+   (۹۶۰۰ ← ۵۷۶۰۰ ← ۳۸۴۰۰ ← ۱۹۲۰۰ ← ۲۳۰۴۰۰). اگر برد با سرعتِ دیگری حرف
+   زد، **همان‌جا متصل می‌ماند** و کشوی baud را به‌روز می‌کند؛ اگر هیچ‌کدام
+   جواب نداد، به baudِ اول برمی‌گردد، صریح می‌گوید «برد ساکت است» و 🩺
+   عیب‌یاب را اجرا می‌کند.
+
+
 > **ریشه‌ی شایع‌ترین حالت («پورت شناسایی می‌شود، خطایی نمی‌آید، ولی RX صفر
 > می‌ماند»)** در خودِ پلِ سریال بود و در نسخه‌ی ۱.۰.۴۴ اصلاح شد:
 > برای ریستِ خودکارِ آردوینو یک پالسِ DTR می‌زنیم. در بردهای **Rev3**
@@ -384,7 +402,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs ten stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs eleven stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -423,9 +441,15 @@ GUI sources** (no hardware needed):
     DTR/RTS sequence ends with **both lines at the same level**, so the board is
     left running instead of held in reset (the classic RX=0 cause). The same
     rule is checked in `tools/diagnose-linux.sh`.
+11. **Connect paths** (`tools/test_connect_paths.js`): loads the desktop
+    renderer in jsdom with a mock `electronAPI` and pins the three things that
+    used to cause RX=0 — Web Serial must pulse DTR/RTS and end with both lines
+    at the same level, the Connect button must use the **system bridge** even
+    with an empty port dropdown, and a board that only answers at 9600 must be
+    found by the automatic baud ladder (which also updates the baud selector).
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی ده مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی یازده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

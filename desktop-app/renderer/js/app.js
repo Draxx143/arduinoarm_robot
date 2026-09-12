@@ -458,6 +458,26 @@ async function resolvePortPath(name) {
   return null;
 }
 
+/* وقتی کاربر پورتی انتخاب نکرده، خودمان از فهرستِ سطحِ سیستم برمی‌داریم:
+   اگر یکی هست همان؛ اگر چند تا هست، اولی از میانِ ttyACM/ttyUSB/COM و بقیه
+   در کنسول گفته می‌شوند تا کاربر بداند می‌تواند عوضش کند. */
+async function autoPickPort() {
+  try {
+    if (!(window.electronAPI && window.electronAPI.ipcSerial)) return null;
+    const res = await window.electronAPI.ipcSerial.list();
+    const paths = (((res && res.ports) || []).map((p) => p && p.path)).filter(Boolean);
+    const real = paths.filter((p) => /ttyACM|ttyUSB|COM\d/i.test(p));
+    const cand = real.length ? real : paths;
+    if (!cand.length) return null;
+    if (cand.length > 1) {
+      addConsole("warn", `[SYS] several ports found (${cand.join(", ")}) — using ${cand[0]}; pick another in the dropdown if that one is wrong`);
+    }
+    const sel = $("hdrPort");
+    if (sel && !sel.value) sel.value = cand[0];
+    return cand[0];
+  } catch (e) { return null; }
+}
+
 /* connect to an OS-level device path (e.g. /dev/ttyUSB0, COM3).
  * Preferred: the python/system bridge in the main process (always works).
  * Fallback: Web Serial chooser auto-resolved by port name in main.js. */
@@ -833,12 +853,21 @@ async function toggleSerial() {
     await S.serial.disconnect();
     return;
   }
-  /* a port picked in the header? dial it directly (Electron driver path) */
-  const picked = ($("hdrPort") && $("hdrPort").value) || "";
-  if (picked && IpcSerialLink.supported) {
-    stopSim();
-    await connectSystemPort(picked);
-    return;
+  /* پورتی در کشو انتخاب شده؟ مستقیم بگیرش (مسیرِ درایورِ سیستم).
+   * FIX: در اپِ دسکتاپ **همیشه** از پلِ سیستمی می‌رویم، حتی وقتی کشو خالی
+   * است. قبلاً در آن حالت به وب‌سریالِ کرومیوم می‌افتادیم — مسیری که نه
+   * پالسِ ریستِ درست دارد، نه عیب‌یاب، نه راهنمای خطا، نه کاوشِ baud.
+   * یعنی کاربری که فقط دکمه‌ی «اتصال» را می‌زد، بی‌سروصدا واردِ ضعیف‌ترین
+   * مسیرِ ممکن می‌شد و «کامل وصل نمی‌شد». */
+  if (IpcSerialLink.supported) {
+    const picked = ($("hdrPort") && $("hdrPort").value) || "";
+    const target = picked || await autoPickPort();
+    if (target) {
+      stopSim();
+      await connectSystemPort(target);
+      return;
+    }
+    addConsole("warn", "[SYS] the OS reports no serial device — falling back to the browser chooser (is the cable plugged in?)");
   }
   if (!SerialLink.supported) {
     toast("Web Serial is not available in this environment", "err", 5000);
@@ -857,6 +886,71 @@ async function toggleSerial() {
     addConsole("err", "!! " + msg);
     if (e.message !== "PORT_CANCELLED") toast(msg, "err");
   }
+}
+
+/* ---- بازیابیِ خودکارِ RX=0 -------------------------------------------
+ * «کامل وصل نمی‌شود» بیشترِ وقت‌ها یعنی: پورت باز شد، TX رفت، ولی هیچ
+ * بایتی برنگشت. رایج‌ترین علتِ باقی‌مانده بعد از پالسِ ریست، **سرعتِ
+ * اشتباه** است — فریم‌وری که با Config.h قدیمی روی ۹۶۰۰ فلش شده، یا بردی
+ * که بوت‌لودرش سرعتِ دیگری دارد. به‌جای اینکه فقط گزارش بدهیم، خودمان
+ * نردبانِ baud را می‌رویم و اگر برد با سرعتِ دیگری حرف زد، **همان‌جا
+ * متصل می‌مانیم** و کشوی baud را هم به‌روز می‌کنیم. */
+const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+const BAUD_LADDER = [9600, 57600, 38400, 19200, 230400];
+
+async function autoRecoverRx() {
+  if (S._recovering || !IpcSerialLink.supported) return false;
+  const link = S.serial;
+  const path = (link && link.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
+  if (!path || !looksLikeDevPath(path)) return false;   /* وب‌سریال: مسیرِ دستگاه نداریم */
+  const start = (link && link.baud) || parseInt($("selBaud").value, 10) || FW.BAUD;
+  const tries = BAUD_LADDER.filter((b) => b !== start);
+  S._recovering = true;
+  addConsole("warn", `[SYS] RX is still 0 @ ${start} baud — the board may be at another speed; trying ${tries.join(", ")} …`);
+  toast("Board is silent — auto-trying other baud rates…", "info", 6000);
+  for (const b of tries) {
+    let probe = null;
+    try {
+      try { await link.disconnect(); } catch (e) {}
+      await nap(250);                                  /* پل باید پورت را رها کند */
+      probe = new IpcSerialLink();
+      bindLinkEvents(probe);
+      S.serial = probe;
+      await probe.connectVia(path, b);
+      await nap(2800);                                 /* بنرِ بوت + اولین status */
+      if (probe.rxCount > 0) {
+        const sel = $("selBaud");
+        if (sel) sel.value = String(b);
+        addConsole("sys", `[SYS] ✓ the board answers at ${b} baud — staying connected (baud selector updated; the firmware is not at ${start})`);
+        toast(`✓ Connected at ${b} baud — firmware is not at ${start}`, "ok", 9000);
+        S._rxWarned = false; S._connAt = Date.now(); S._doctorAuto = false;
+        S._recovering = false;
+        renderConnCard();
+        return true;
+      }
+      addConsole("warn", `[SYS] ${b} baud: port opened, still no reply`);
+      await probe.disconnect();
+      probe = null;
+    } catch (e) {
+      addConsole("err", `!! ${b} baud: ${e.message}`);
+      if (probe) { try { await probe.disconnect(); } catch (e2) {} }
+      probe = null;
+    }
+  }
+  /* هیچ baud ای جواب نداد → پورت را به وضعیتِ اول برگردان و عیب‌یاب را صدا کن */
+  try {
+    const back = new IpcSerialLink();
+    bindLinkEvents(back);
+    S.serial = back;
+    await back.connectVia(path, start);
+    addConsole("sys", `[SYS] back to ${start} baud — no baud rate produced any reply, so the board itself is silent`);
+  } catch (e) {
+    addConsole("err", "!! could not reopen the port: " + e.message);
+  }
+  S._recovering = false;
+  setMode("serial");
+  renderConnCard();
+  return false;
 }
 
 /* 🩺 Connection doctor — asks the main process to check every reason a board
@@ -916,6 +1010,7 @@ function bindLinkEvents(link) {
     setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
     S._connAt = Date.now(); S._rxWarned = false; S._doctorAuto = false;
+    S._recoveredAuto = false; S._recovering = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
     /* second hello after the bootloader window: boards that reboot on open
@@ -1739,7 +1834,21 @@ function updateLinkStats() {
       /* «وصل شد ولی برد چیزی نمی‌فرستد» — به‌جای حدس زدن، عیب‌یاب را یک بار
          خودکار اجرا کن تا علتِ واقعی (python3، dialout، مجوز، خواننده‌ی دوم،
          بردِ ساکت) با راه‌حلش در کنسول بیاید. */
-      if (!S._doctorAuto && S.mode === "serial") {
+      /* ترتیب مهم است: اول سعی کن درستش کنی (نردبانِ baud)، بعد — اگر
+         درست نشد — عیب‌یاب را اجرا کن. عیب‌یاب وقتی پورت دستِ اپ است
+         دست‌دادن را رد می‌کند، پس باید بعد از بسته‌شدنِ نشست‌ها بیاید. */
+      if (!S._recoveredAuto && S.mode === "serial") {
+        S._recoveredAuto = true;
+        setTimeout(() => {
+          autoRecoverRx().then((fixed) => {
+            if (!fixed && !S._doctorAuto && S.mode === "serial") {
+              S._doctorAuto = true;
+              addConsole("warn", "[DOCTOR] RX is still 0 — running the connection doctor…");
+              setTimeout(() => { runPortDoctor(true).catch(() => {}); }, 600);
+            }
+          }).catch(() => {});
+        }, 300);
+      } else if (!S._doctorAuto && S.mode === "serial") {
         S._doctorAuto = true;
         addConsole("warn", "[DOCTOR] RX is 0 — running the connection doctor automatically…");
         setTimeout(() => { runPortDoctor(true).catch(() => {}); }, 400);
