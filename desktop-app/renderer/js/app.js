@@ -70,13 +70,32 @@ function syncJointInputs() {
 function addConsole(cls, text) {
   const box = $("consoleBox");
   const near = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+  /* یک خطای تکراری (مثلِ «[Errno 5] Input/output error» که در لاگِ کاربر
+     بیست بار پشتِ سرِ هم آمد) کنسول را پر می‌کند و پیام‌های مهم را بیرون
+     می‌اندازد. خطاهای پشتِ سرِ همِ یکسان را در یکی با شمارنده جمع می‌کنیم. */
+  if (cls === "err" || cls === "warn") {
+    const last = box.lastElementChild;
+    if (last && last.dataset && last.dataset.msg === text) {
+      const n = (parseInt(last.dataset.dup, 10) || 1) + 1;
+      last.dataset.dup = String(n);
+      const badge = last.querySelector(".dup");
+      if (badge) badge.textContent = "  (×" + n + ")";
+      if (near) box.scrollTop = box.scrollHeight;
+      return;
+    }
+  }
   const div = document.createElement("div");
   div.className = "ln " + cls;
+  div.dataset.msg = String(text);
+  div.dataset.dup = "1";
   const ts = document.createElement("span");
   ts.className = "ts";
   ts.textContent = Fmt.time(Date.now());
   div.appendChild(ts);
   div.appendChild(document.createTextNode(text));
+  const dup = document.createElement("span");
+  dup.className = "dup";
+  div.appendChild(dup);
   box.appendChild(div);
   if (++S.consoleLines > 600) { box.removeChild(box.firstChild); S.consoleLines--; }
   if (near) box.scrollTop = box.scrollHeight;
@@ -232,6 +251,13 @@ const BUSY_TROUBLE_HTML =
 function connErrorHint(e, portPath) {
   const m = e && e.message ? e.message : String(e);
   const pp = portPath ? " (" + portPath + ")" : "";
+  /* «[Errno 5] Input/output error» یعنی مبدلِ USB از کار افتاد — دستگاه از
+     BUS بیرون افتاده. این هرگز باگِ نرم‌افزار نیست: EMIِ موتورِ استپ، افتِ
+     تغذیه، یا کابلِ بلند/بی‌کیفیت. در dmesg به شکلِ
+     «disabled by hub (EMI?), re-enabling» و «USB disconnect» دیده می‌شود. */
+  if (/Errno 5|Input\/output error|\bEIO\b/i.test(m))
+    return { html: `<b>The USB device dropped off the bus</b>${pp} &mdash; the kernel returned an I/O error, so the CH340 stopped answering. This is electrical, not software: run <code>sudo dmesg | tail -30</code> and look for <code>disabled by hub (EMI?), re-enabling</code> or repeated <code>USB disconnect</code>.<div><b>Fixes, in order:</b> a shorter <b>shielded</b> USB cable &rarr; a rear motherboard port (no hub/front panel) &rarr; <b>common ground</b> between the motor supply and the Arduino &rarr; keep the USB cable away from the stepper wiring &rarr; a USB isolator.</div>`,
+             plain: "USB I/O error — the device dropped off the bus (EMI from the motors, a power dip, or a thin/long cable). Try a short shielded cable, a rear USB port, and tie the motor supply ground to the Arduino ground." };
   /* پلِ Linux/macOS به python3 نیاز دارد — بدون آن «اتصال» فقط شکست می‌خورد */
   if (/cannot run python|python3|bridge spawn|bridge timeout/i.test(m))
     return { html: `<b>python3 is missing</b>${pp} &mdash; the Linux/macOS serial bridge runs on it:<div><code>sudo apt install python3</code></div>then Disconnect &amp; Connect again.`,
@@ -859,7 +885,9 @@ function stopSim() {
 
 async function toggleSerial() {
   if (S.mode === "serial") {
+    S._userClosed = true;          /* قطعِ دستی → وصلِ دوباره‌ی خودکار نه */
     await S.serial.disconnect();
+    S._userClosed = false;
     return;
   }
   /* پورتی در کشو انتخاب شده؟ مستقیم بگیرش (مسیرِ درایورِ سیستم).
@@ -895,6 +923,71 @@ async function toggleSerial() {
     addConsole("err", "!! " + msg);
     if (e.message !== "PORT_CANCELLED") toast(msg, "err");
   }
+}
+
+/* ---- وصلِ دوباره‌ی خودکار بعد از افتِ USB ----------------------------
+ * لاگِ کاربر نشان داد برد مدام از BUS بیرون می‌افتد و برمی‌گردد
+ * («disabled by hub (EMI?), re-enabling…» و «USB disconnect» در dmesg) و
+ * گره‌ی دستگاه هم اسم عوض می‌کند: ttyUSB0 → ttyUSB1 → ttyUSB0. اپ قبلاً در
+ * اولین افت، [Errno 5] چاپ می‌کرد و تسلیم می‌شد. حالا منتظرِ برگشتِ برد
+ * می‌ماند، گره‌ی تازه را **خودش پیدا می‌کند** (چون کرنل ممکن است اسمش را
+ * عوض کند) و با همان سرعتِ قبلی وصل می‌شود. */
+async function findLiveNode(preferred) {
+  try {
+    const names = (await window.electronAPI.listSystemPorts()) || [];
+    const real = names.filter((n) => /tty(USB|ACM)\d|rfcomm\d/i.test(String(n)));
+    if (real.indexOf(preferred) !== -1) return { node: preferred, renamed: false };
+    if (real.length) return { node: real[0], renamed: true };
+    return { node: null, renamed: false };
+  } catch (e) { return { node: null, renamed: false }; }
+}
+
+async function autoReconnect(path, baud) {
+  if (S._reconnecting) return false;
+  S._reconnecting = true;
+  const ATTEMPTS = 10;
+  const waits = [400, 800, 1500, 2500];
+  addConsole("warn", `[RECONNECT] the link dropped — watching for the board to come back on ${path} (a USB drop-out is usually electrical: EMI or a power dip)`);
+  toast("Board dropped off USB — waiting for it to come back…", "warn", 6000);
+  let node = path;
+  for (let i = 1; i <= ATTEMPTS; i++) {
+    if (S._userClosed || S.mode === "serial") break;
+    await nap(waits[Math.min(i - 1, waits.length - 1)]);
+    if (S._userClosed || S.mode === "serial") break;
+    const live = await findLiveNode(node);
+    if (!live.node) {
+      addConsole("warn", `[RECONNECT] no serial device in the system — waiting for the board to re-enumerate (${i}/${ATTEMPTS})…`);
+      continue;
+    }
+    if (live.renamed && live.node !== node) {
+      addConsole("warn", `[RECONNECT] the kernel re-enumerated the board as ${live.node} (it was ${node}) — using the new node`);
+      node = live.node;
+      const sel = $("hdrPort");
+      if (sel) sel.value = node;
+    }
+    try {
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      await link.connectVia(node, baud);
+      addConsole("sys", `[RECONNECT] ✓ linked again on ${node} @ ${baud} (attempt ${i}/${ATTEMPTS})`);
+      toast("✓ Reconnected to the board", "ok", 4000);
+      S._reconnecting = false;
+      renderConnCard();
+      return true;
+    } catch (e) {
+      const hint = connErrorHint(e, node);
+      addConsole("err", `[RECONNECT] !! attempt ${i}/${ATTEMPTS}: ${hint ? hint.plain : e.message}`);
+    }
+  }
+  S._reconnecting = false;
+  if (S.mode !== "serial" && !S._userClosed) {
+    addConsole("err", "[RECONNECT] ✗ the board did not come back — check the USB cable/port, the motor supply ground, and sudo dmesg | tail -30 for 'disabled by hub (EMI?)'");
+    const hint = $("portHint");
+    if (hint) hint.innerHTML = "<b>The board keeps dropping off the USB bus.</b> This is electrical: short shielded cable, rear USB port, common ground with the motor supply &mdash; then check <code>sudo dmesg | tail -30</code>.";
+    toast("Board did not come back — likely an EMI/power problem", "err", 9000);
+  }
+  return false;
 }
 
 /* ---- بازیابیِ خودکارِ RX=0 -------------------------------------------
@@ -1212,6 +1305,7 @@ function bindLinkEvents(link) {
     try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
     setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
+    S._userClosed = false;
     S._connAt = Date.now(); S._rxWarned = false; S._doctorAuto = false;
     S._recoveredAuto = false; S._recovering = false;
     S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
@@ -1222,12 +1316,28 @@ function bindLinkEvents(link) {
     setTimeout(() => send(Cmd.status(), { auto: true }), 3000);
   };
   link.onDisconnect = () => {
-    if (S.mode === "serial") setMode("off");
+    const was = S.mode === "serial";
+    if (was) setMode("off");
     addConsole("sys", "[SYS] link closed");
     renderConnCard();
+    /* افتِ ناگهانی (نه به خواستِ کاربر) → خودمان دنبالش می‌رویم */
+    const path = link.activeLabel || "";
+    if (was && !S._userClosed && IpcSerialLink.supported && looksLikeDevPath(path) &&
+        !S._reconnecting && !S._finding && !S._recovering) {
+      setTimeout(() => { autoReconnect(path, link.baud || FW.BAUD).catch(() => {}); }, 200);
+    }
   };
   link.onLine = (l) => rxLine(l);
-  link.onError = (m) => { addConsole("err", "!! " + m); toast(m, "err"); };
+  link.onError = (m) => {
+    addConsole("err", "!! " + m);
+    /* Errno 5 = دستگاه از BUS افتاد. اولین بار کامل توضیح بده، بعد خلاصه. */
+    if (/Errno 5|Input\/output error/i.test(String(m)) && !S._eioExplained) {
+      S._eioExplained = true;
+      addConsole("warn", "!! [Errno 5] means the CH340 stopped answering — the board dropped OFF THE USB BUS. It is electrical, not software: EMI from the stepper wiring, a power dip, or a long/thin cable. The app now waits for it to come back by itself.");
+      addConsole("warn", "   → confirm with: sudo dmesg | tail -30   (look for 'disabled by hub (EMI?), re-enabling' or repeated 'USB disconnect')");
+    }
+    toast(m, "err");
+  };
 }
 bindLinkEvents(S.serial);
 

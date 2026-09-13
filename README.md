@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.47-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.47-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.48-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.48-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -331,6 +331,48 @@ python3 tools/sync_gui_config.py            # GUI را از Config.h بازنو�
 python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم اجرا می‌شود)
 ```
 
+
+---
+
+## اگر برد وسطِ کار قطع می‌شود: افتِ USB (EMI)
+
+اگر در کنسول این را می‌بینی:
+
+```
+!! [Errno 5] Input/output error        (×20)
+[RECONNECT] the link dropped — watching for the board to come back…
+[RECONNECT] the kernel re-enumerated the board as /dev/ttyUSB1 (it was /dev/ttyUSB0)
+```
+
+و در `sudo dmesg | tail -30` این:
+
+```
+usb usb1-port2: disabled by hub (EMI?), re-enabling...
+usb 1-2: USB disconnect, device number 13
+usb 1-2: failed to send control message: -19
+ch341-uart ttyUSB0: ch341-uart converter now disconnected from ttyUSB0
+```
+
+یعنی برد **از BUSِ یو‌اس‌بی بیرون می‌افتد و برمی‌گردد**. این الکتریکی است،
+نه نرم‌افزاری — خودِ کرنل می‌نویسد «EMI?». شایع‌ترین علت‌ها در بازوی
+رباتیک: نویزِ موتورِ استپ روی کابلِ یو‌اس‌بی، نبودِ **زمینِ مشترک** بین
+تغذیه‌ی موتورها و آردوینو، کابلِ بلند/نازک، پورتِ پنلِ جلو یا هاب، و افتِ
+ولتاژ هنگامِ حرکتِ موتورها.
+
+به همین ترتیب درستش کن:
+
+1. کابلِ **کوتاه و شیلددار** (کمتر از ۱ متر) — نه کابلِ شارژرِ تلفن.
+2. پورتِ **پشتِ مادربرد**، مستقیم — بدونِ هاب و بدونِ پنلِ جلو.
+3. **زمینِ مشترک**: GNDِ منبعِ تغذیه‌ی موتورها را به GNDِ آردوینو وصل کن.
+4. کابلِ یو‌اس‌بی را از سیم‌کشیِ موتورها **دور** نگه دار (دسته‌بندی نکن؛ اگر
+   مجبوری، با زاویه‌ی ۹۰ درجه رد کن).
+5. خازنِ بزرگ (۴۷۰–۱۰۰۰µF) روی ریلِ تغذیه‌ی موتورها، نزدیکِ درایورها.
+6. هسته‌ی فریت روی کابلِ یو‌اس‌بی — و اگر باز هم افت داشت، **ایزولاتورِ USB**.
+
+اپ در این وضعیت خودش کار درست را می‌کند: منتظرِ برگشتِ برد می‌ماند، گره‌ی
+تازه‌ای که کرنل می‌سازد را **پیدا می‌کند** (چون اسمش بین `ttyUSB0` و
+`ttyUSB1` عوض می‌شود) و با همان سرعتِ قبلی وصل می‌شود. 🩺 عیب‌یاب هم اگر
+گره وسطِ دست‌دادن ناپدید شود، بررسیِ `usb ✗` را با همین راه‌حل‌ها می‌دهد.
 
 ---
 
@@ -421,7 +463,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs twelve stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs thirteen stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.

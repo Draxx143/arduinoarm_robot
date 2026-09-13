@@ -131,7 +131,14 @@ function installMock(w, board) {
     },
     portFindStop: () => {},
     onFindLog: (cb) => { board.findLog = cb; },
-    listSystemPorts: async () => ["/dev/ttyUSB0"],
+    listSystemPorts: async () => {
+      /* با portPlan می‌شود «برد از BUS افتاد و با اسمِ دیگری برگشت» را ساخت */
+      board.listCalls = (board.listCalls || 0) + 1;
+      if (Array.isArray(board.portPlan) && board.portPlan.length) {
+        return board.portPlan[Math.min(board.listCalls - 1, board.portPlan.length - 1)];
+      }
+      return ["/dev/ttyUSB0"];
+    },
     expectPort: () => {}, onPortList: () => {}, onPortAdded: () => {}, onPortRemoved: () => {},
     choosePort: () => {}, cancelChoose: () => {},
     versions: { electron: "test", node: "test", chrome: "test" },
@@ -392,6 +399,43 @@ async function main() {
      `${before} → ${board6.opened.length}`);
   ok(/busy/i.test(consoleText(dom)), "به کاربر گفت اپ مشغول است");
   w.eval("S._recovering = false");
+
+  /* ---------- ۹) افتِ USB: برد با اسمِ دیگری برمی‌گردد ---------- */
+  console.log("\n-- افتِ USB: گره ناپدید و به‌جایش /dev/ttyUSB1 پیدا می‌شود --");
+  const board7 = makeBoard();
+  board7.portPlan = [[], [], ["/dev/ttyUSB1"], ["/dev/ttyUSB1"], ["/dev/ttyUSB1"]];
+  dom = await loadApp(port, board7);
+  w = dom.window;
+  ok(w.eval("typeof autoReconnect") === "function", "autoReconnect وجود دارد");
+  ok(w.eval("typeof findLiveNode") === "function", "findLiveNode وجود دارد (یافتنِ گره‌ی تازه)");
+  w.document.getElementById("selBaud").value = "115200";
+  const back = await w.eval("autoReconnect('/dev/ttyUSB0', 115200)");
+  await sleep(400);
+  ok(back === true, "بعد از افتِ USB خودش دوباره وصل شد");
+  ok(board7.opened.some((o) => o.path === "/dev/ttyUSB1" && o.baud === 115200),
+     "گره‌ی تازه‌ای که کرنل ساخت را پیدا کرد و همان را باز کرد",
+     JSON.stringify(board7.opened.map((o) => o.path + "@" + o.baud)));
+  ok(/re-enumerated/.test(consoleText(dom)),
+     "به کاربر گفت که کرنل اسمِ گره را عوض کرده (ttyUSB0 → ttyUSB1)");
+  ok(w.eval("S.mode") === "serial", "اپ دوباره در وضعیتِ اتصال است");
+  ok(/dropped|USB drop-out|electrical/.test(consoleText(dom)),
+     "گفت علتِ افت، الکتریکی است (EMI/تغذیه)، نه نرم‌افزار");
+
+  /* ---------- ۱۰) پیامِ تکراری در کنسول جمع می‌شود ---------- */
+  console.log("\n-- ۲۰ بار «[Errno 5]» پشتِ سرِ هم: کنسول پر نمی‌شود --");
+  const cBefore = w.eval("document.getElementById('consoleBox').children.length");
+  w.eval(`for (let i = 0; i < 20; i++) addConsole("err", "!! [Errno 5] Input/output error")`);
+  const cAfter = w.eval("document.getElementById('consoleBox').children.length");
+  ok(cAfter - cBefore === 1, "بیست خطای یکسان در **یک** خط جمع شد",
+     `${cBefore} → ${cAfter}`);
+  ok(/×20/.test(consoleText(dom)), "شمارنده‌ی تکرار نشان داده شد (×20)");
+  w.eval(`addConsole("err", "!! [Errno 5] Input/output error")`);
+  ok(/×21/.test(consoleText(dom)), "با تکرارِ بعدی شمارنده بالا رفت");
+  const nBefore = w.eval("document.getElementById('consoleBox').children.length");
+  w.eval(`addConsole("err", "!! a DIFFERENT error"); addConsole("err", "!! a DIFFERENT error")`);
+  ok(w.eval("document.getElementById('consoleBox').children.length") - nBefore === 1,
+     "خطای متفاوت خطِ تازه می‌گیرد (جمع‌شدن فقط برای پشتِ سرِ همِ یکسان)");
+  dom.window.close();
 
   srv.close();
   console.log(`\n#  نتیجه: ${PASS} PASS / ${FAIL} FAIL`);

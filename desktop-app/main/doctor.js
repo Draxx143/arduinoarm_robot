@@ -76,6 +76,9 @@ async function runDoctor(o) {
   const platform = o.platform || process.platform;
   const expectedFw = String(o.expectedFw || "1.0.41");
   const sh = typeof o.sh === "function" ? o.sh : defaultSh;
+  /* برای تست: «ناپدید شدنِ گره» را می‌شود بدونِ سخت‌افزار شبیه‌سازی کرد */
+  const exists = typeof o.exists === "function" ? o.exists
+    : (q) => { try { fs.statSync(q); return true; } catch (e) { return false; } };
   const H = Number(o.handshakeMs) || 0;      /* 0 = زمان‌های واقعی */
   const checks = [];
   const add = (name, ok, detail, fix, skip) =>
@@ -152,7 +155,7 @@ async function runDoctor(o) {
         }
       },
     });
-    if (res.err) return { err: res.err, text: "" };
+    if (res.err) return { err: res.err, text: "", gone: !exists(p) };
     /* بنرِ بوت بعد از پالسِ ریست. ۵ ثانیه برایِ بردی که ریستِ خودکار ندارد
        (بسیاری از کلون‌های CH340) — تا کاربر فرصت داشته باشد دکمه‌ی RESET را
        بزند؛ رندر پیش از صداکردنِ عیب‌یاب همین را در کنسول می‌گوید. */
@@ -164,7 +167,9 @@ async function runDoctor(o) {
     const text = rx.join("");
     o.pybridge.closeSession(res.id);
     await nap(H ? 50 : 250);
-    return { text };
+    /* آیا گره‌ی دستگاه وسطِ آزمایش ناپدید شد؟ یعنی برد از BUS افتاده —
+       دقیقاً همان «disabled by hub (EMI?), re-enabling» در dmesg. */
+    return { text, gone: !exists(p) };
   };
 
   const first = await probe(b, false);
@@ -173,6 +178,18 @@ async function runDoctor(o) {
     return { port: p, baud: b, checks };
   }
   let text = first.text;
+
+  /* افتِ USB: مهم‌ترین چیزی که در لاگِ واقعیِ کاربر پیدا شد. همه‌چیز سبز
+     است، مجوز هست، برد هم سالم — ولی دستگاه وسطِ کار از BUS بیرون می‌افتد
+     و برمی‌گردد (و گاهی اسمش عوض می‌شود: ttyUSB0 ↔ ttyUSB1). */
+  if (first.gone) {
+    add("usb", false,
+        `the device node ${p} VANISHED during the handshake — the board dropped off the USB bus`,
+        "this is electrical, not software: run `sudo dmesg | tail -30` and look for " +
+        "'disabled by hub (EMI?), re-enabling' or repeated 'USB disconnect'. Then: a short " +
+        "SHIELDED usb cable → a rear motherboard port (no hub) → tie the motor supply GND to " +
+        "the Arduino GND → keep the USB cable away from the stepper wiring → a USB isolator");
+  }
 
   /* ---- برد ساکت است؟ خودمان baud های محتمل را امتحان می‌کنیم ----
      رایج‌ترین علتِ «RX=0» بعد از ریستِ برد، سرعتِ اشتباه است: فریم‌وری که

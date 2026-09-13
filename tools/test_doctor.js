@@ -208,6 +208,28 @@ async function main() {
      (bm.fix || "").slice(0, 70));
   fb.quit();
   await sleep(300);
+
+  /* ---------- ۱۱) گره وسطِ دست‌دادن ناپدید می‌شود (افتِ USB / EMI) ---------- */
+  console.log("\n-- بردی که وسطِ آزمایش از BUS بیرون می‌افتد --");
+  fb = startFakeBoard("1.0.41");
+  slave = await fb.ready;
+  let alive = true;
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge, sh: makeSh(),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 300,
+                          exists: () => alive });
+  ok(find(rep, "usb").ok !== false, "تا وقتی گره هست، ایرادِ USB گرفته نمی‌شود");
+  ok(find(rep, "rx").ok === true, "و برد سالم پاسخ داد");
+  alive = false;                     /* حالا برد از BUS می‌افتد */
+  rep = await runDoctor({ portPath: slave, baud: 115200, pybridge, sh: makeSh(),
+                          platform: "linux", expectedFw: "1.0.41", handshakeMs: 300,
+                          exists: () => alive });
+  const usb = find(rep, "usb");
+  ok(usb.ok === false, "usb ✗ — ناپدید شدنِ گره وسطِ دست‌دادن گرفته شد", usb.detail || "");
+  ok(/VANISHED|dropped off the USB bus/.test(usb.detail || ""), "می‌گوید برد از BUS افتاده");
+  ok(/EMI|dmesg/.test(usb.fix || ""), "راه‌حلِ واقعی داد: dmesg و EMI و کابل/تغذیه",
+     (usb.fix || "").slice(0, 60));
+  fb.quit();
+  await sleep(300);
   pybridge.closeAll();
 
   console.log(`\n#  نتیجه: ${PASS} PASS / ${FAIL} FAIL`);
