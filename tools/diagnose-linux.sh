@@ -109,6 +109,56 @@ else
     ok "کسِ دیگری پورت را نگرفته"
 fi
 
+# در لینوکس tty انحصاری نیست: یک خواننده‌ی دوم همه‌ی بایت‌های برد را می‌بلعد
+# درحالی‌که دستورهای اپ هنوز به برد می‌رسند. علامتش دقیقاً همین است:
+# «موتورها سفت می‌شوند / تکان می‌خورند ولی اپ هیچ پاسخی نمی‌بیند».
+OWNERSHIP_BAD=0
+hr "۶ب) دیمون‌هایی که پورتِ سریال را می‌قاپند (ModemManager / brltty)"
+if pgrep -x ModemManager >/dev/null 2>&1; then
+    bad "ModemManager در حالِ اجراست — هر tty تازه را با دستورِ AT کاوش می‌کند و DTR را تکان می‌دهد (→ ریستِ برد + بلعیدنِ بایت‌ها)"
+    OWNERSHIP_BAD=1
+else
+    ok "ModemManager اجرا نمی‌شود"
+fi
+BRL=""
+for f in /lib/udev/rules.d/85-brltty.rules /usr/lib/udev/rules.d/85-brltty.rules; do
+    [ -f "$f" ] && grep -qi '1a86' "$f" && BRL="$f"
+done
+if [ -n "$BRL" ] && [ ! -f /etc/udev/rules.d/85-brltty.rules ]; then
+    bad "brltty چیپِ CH340 (1a86:7523) را «نمایشگرِ بریل» می‌پندارد و دستگاه را busy می‌کند: $BRL"
+    OWNERSHIP_BAD=1
+elif [ -n "$BRL" ]; then
+    ok "ادعای brltty روی CH340 خنثی شده (/etc/udev/rules.d/85-brltty.rules)"
+else
+    ok "brltty ادعایی روی CH340 ندارد"
+fi
+ORPH=""
+command -v pgrep >/dev/null 2>&1 && ORPH=$(pgrep -f serial_bridge.py 2>/dev/null | tr '\n' ' ')
+if [ -n "$ORPH" ]; then
+    warn "پل(های) سریالِ زنده: $ORPH"
+    ps -o pid=,etime=,args= -p $(echo "$ORPH" | tr -s ' ' ',' | sed 's/^,//') 2>/dev/null | sed 's/^/      /'
+    info "اگر اپ باز نیست، این‌ها جامانده‌ی نشستِ قبلی‌اند و بایت‌ها را می‌بلعند → پیداکشان کن"
+else
+    ok "پلِ سریالِ جامانده‌ای نیست"
+fi
+if [ -f /etc/udev/rules.d/99-axis5-serial.rules ]; then
+    ok "قاعده‌ی udev پروژه نصب است (ModemManager چشم می‌پوشد + نامِ ثابت)"
+else
+    bad "قاعده‌ی udev پروژه نصب نیست: /etc/udev/rules.d/99-axis5-serial.rules"
+    OWNERSHIP_BAD=1
+fi
+if [ -e /dev/axis5 ]; then
+    ok "/dev/axis5 → $(readlink -f /dev/axis5 2>/dev/null) (نامِ ثابت؛ با افتِ USB عوض نمی‌شود)"
+else
+    info "/dev/axis5 وجود ندارد — بعد از نصبِ قاعده یک بار کابل را بکش و دوباره بزن"
+fi
+if [ "$OWNERSHIP_BAD" = 1 ]; then
+    echo
+    bad "ریشه‌ی «دستور می‌رود ولی جواب برنمی‌گردد» همین‌جاست. یک دستور درستش می‌کند:"
+    echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)"
+    echo "    بعد کابلِ USB را یک بار بکش و دوباره بزن."
+fi
+
 # ---------------------------------------------------------------- ۷ dmesg
 hr "۷) dmesg (اتصالِ USB)"
 if DMESG=$(dmesg 2>/dev/null | grep -iE 'usb|tty|ch340|ch341|cp210|ftdi|arduino' | tail -14); then

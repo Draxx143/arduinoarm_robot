@@ -207,6 +207,8 @@ class IpcSerialLink {
     this.onConnect = null;
     this.onDisconnect = null;
     this.onError = null;
+    this.onNotice = null;
+    this.lastOpen = null;
     this.txCount = 0;
     this.rxCount = 0;
     this._pend = new Uint8Array(0);
@@ -245,6 +247,7 @@ class IpcSerialLink {
     const res = await this.bridge.open(String(portPath), this.baud);
     if (res && res.err) { this._early = null; throw new Error(res.err); }
     this.id = res.id;
+    this.lastOpen = res;                       /* برای گزارش در کنسول */
     this.connected = true;
     this._activeLabel = String(portPath);
     const early = this._early || [];
@@ -268,6 +271,7 @@ class IpcSerialLink {
       }
     });
     this.bridge.onError((m) => { if (this.connected && this.onError) this.onError(m); });
+    if (this.bridge.onNotice) this.bridge.onNotice((m) => { if (this.onNotice) this.onNotice(m); });
   }
 
   _feed(b64) {

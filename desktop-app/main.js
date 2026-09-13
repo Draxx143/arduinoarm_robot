@@ -20,17 +20,10 @@ try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC 
  * Node خالی تستش کرد (tools/test_pybridge.js). */
 const pybridge = require("./main/pybridge.js");
 
-/* ---- پورت‌های واقعی در برابر پورت‌های شبحیِ مادربرد ---------------------
-   node-serialport روی لینوکس /dev/ttyS0..ttyS31 را هم فهرست می‌کند؛ هیچ‌کدام
-   برد نیستند و انتخاب‌کردن‌شان فقط «وصل نشد» می‌سازد. وقتی گره‌ی USB/بلوتوثِ
-   واقعی هست، ttyS*ها را دور می‌ریزیم. این بخشی از خودِ اتصال است (فهرستِ
-   پورت)، نه ابزارِ تشخیص. */
-function pickRealPorts(names, extra) {
-  const all = [...new Set([...(names || []), ...(extra || [])]
-    .map((x) => String(x || "").trim()).filter(Boolean))];
-  const hasUsb = all.some((p) => /tty(USB|ACM)\d|rfcomm\d|^COM\d+$/i.test(p));
-  return (hasUsb ? all.filter((p) => !/^\/dev\/ttyS\d+$/.test(p)) : all).sort();
-}
+/* نام‌گذاریِ پورت‌ها: حذفِ ttyS*های شبحی + ترجیحِ نامِ ثابتِ /dev/axis5
+   (منطقِ خالص در main/portnames.js است، پس با Nodeِ خالی تست می‌شود). */
+const portnames = require("./main/portnames.js");
+const pickRealPorts = portnames.pickRealPorts;
 
 /* نسخه‌ی فریم‌وری که این اپ انتظار دارد — باید با FIRMWARE_VERSION در
  * firmware/RobotArm_Firmware/Config.h یکی باشد (تستِ مرحله‌ی ۵ چک می‌کند). */
@@ -61,7 +54,11 @@ function listSystemPorts() {
     }
     execFile(cmd, args, { timeout: 4000 }, (err, stdout) => {
       const ports = String(stdout || "").split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean);
-      resolve(ports);
+      /* قاعده‌ی udev پروژه (/etc/udev/rules.d/99-axis5-serial.rules) یک
+       * symlinkِ ثابت به نامِ /dev/axis5 می‌سازد. با افتِ USB کرنل دستگاه را
+       * دوباره enumerate می‌کند و ممکن است نامش از ttyUSB0 به ttyUSB1 عوض
+       * شود؛ نامِ ثابت عوض نمی‌شود، پس اپ همیشه همان برد را باز می‌کند. */
+      resolve(portnames.preferStableNode(ports, portnames.stableTarget()));
     });
   });
 }
@@ -199,7 +196,11 @@ function createWindow() {
        * نشان می‌دهد و «اتصال» بی‌نتیجه می‌ماند. */
       try {
         const names = await listSystemPorts();
-        return { ports: (names || []).map((n) => ({ path: n, friendly: "OS serial device", vid: "", pid: "" })) };
+        return { ports: (names || []).map((n) => ({
+          path: n,
+          friendly: n === portnames.STABLE_NODE ? "AXIS-5 board (stable name)" : "OS serial device",
+          vid: "", pid: "", stable: n === portnames.STABLE_NODE,
+        })) };
       } catch (er) { return { err: "driver unavailable" }; }
     }
     try {
@@ -210,11 +211,15 @@ function createWindow() {
       let osNames = [];
       try { osNames = await listSystemPorts(); } catch (er) {}
       const keep = new Set(pickRealPorts(osNames, list.map((p) => p.path)));
-      return { ports: list.filter((p) => keep.has(p.path)).map((p) => ({
+      const stable = portnames.stableTarget();
+      const kept = list.filter((p) => keep.has(p.path)).map((p) => ({
         path: p.path,
         friendly: p.friendlyName || p.manufacturer || "",
         vid: p.vendorId || "", pid: p.productId || "",
-      })) };
+      }));
+      /* اگر /dev/axis5 هست، همان را نشانش بده (نه ttyUSB0 که با هر افتِ USB
+       * عوض می‌شود) — وگرنه کاربر دفعه‌ی بعد گره‌ی مرده را انتخاب می‌کند. */
+      return { ports: portnames.applyStableName(kept, stable) };
     } catch (e) { return { err: String(e.message || e) }; }
   });
   ipcMain.handle("serialport:open", (e, portPath, baud) => new Promise((resolve) => {
@@ -224,13 +229,20 @@ function createWindow() {
        نصب نیست / پل وسطِ کار مرد. قبلاً هیچ‌کدام resolve نمی‌شد و دکمه‌ی
        «اتصال» برای همیشه روی «opening …» می‌ماند بدون هیچ پیامِ خطایی. */
     if (process.platform !== "win32") {
-      pybridge.openBridge({
+      /* پیش از بازکردن: پل‌های یتیمِ نشست‌های قبلی را خلاص کن. tty در لینوکس
+       * انحصاری نیست، پس یک serial_bridge.pyِ جامانده همه‌ی بایت‌های برد را
+       * می‌بلعد: دستور می‌رود، جواب برنمی‌گردد، اپ «وصل‌نشده» به نظر می‌رسد. */
+      const openNow = (orphansKilled) => pybridge.openBridge({
         portPath: String(portPath),
         baud: Number(baud) || 115200,
         send: (channel, payload) => {
           if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
         },
-      }).then(resolve);
+      }).then((res) => resolve(res && !res.err && orphansKilled && orphansKilled.length
+        ? Object.assign({ orphansKilled }, res) : res));
+      pybridge.killOrphans({
+        log: (m) => { if (win && !win.isDestroyed()) win.webContents.send("serialport:notice", m); },
+      }).then(openNow, () => openNow([]));
       return;
     }
     if (!SerialPortC) return resolve({ err: "driver unavailable" });

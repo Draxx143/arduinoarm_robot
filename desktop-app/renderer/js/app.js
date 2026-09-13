@@ -267,8 +267,11 @@ function connErrorHint(e, portPath) {
     return { html: `<b>No device at that path</b>${pp} &mdash; replug the USB cable, press &#8635; Scan and pick the path that appears (for example <code>/dev/ttyUSB0</code>). If it still fails, check <code>dmesg | tail</code> right after plugging in.`,
              plain: "No device at that path" + pp + " — replug, rescan, and pick the real /dev/… path." };
   if (/busy|lock|EBUSY|resource temporarily|device is/i.test(m))
-    return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>`,
-             plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app), then retry." };
+    return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>
+      <div><b>On Linux the usual culprits are system daemons, not your apps:</b> <code>ModemManager</code> probes every new serial device with AT commands (and toggles DTR, which resets the board), and <code>brltty</code> mistakes the CH340 chip (1a86:7523) for a braille display. One command fixes both, permanently:
+      <div><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>
+      then replug the USB cable. It also creates a stable <code>/dev/axis5</code> name that survives USB drop-outs.</div>`,
+             plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app). On Linux also check ModemManager/brltty: run tools/fix-serial-port-ownership.sh, then replug." };
   if (/Permission|Access denie|Unauthorized/i.test(m))
     return { html: `<b>Permission denied</b>${pp} &mdash; run <code>sudo usermod -aG dialout $USER</code>, then <b>log out &amp; back in</b> (a reboot counts) and connect again.`,
              plain: "Permission denied" + pp + " — dialout group + logout/login required." };
@@ -935,7 +938,11 @@ async function toggleSerial() {
 async function findLiveNode(preferred) {
   try {
     const names = (await window.electronAPI.listSystemPorts()) || [];
-    const real = names.filter((n) => /tty(USB|ACM)\d|rfcomm\d/i.test(String(n)));
+    /* /dev/axis5 نامِ ثابتی است که قاعده‌ی udev می‌سازد: با افتِ USB و
+       شماره‌گذاریِ دوباره‌ی کرنل عوض نمی‌شود، پس اولویت با آن است. */
+    const real = names.filter((n) => /tty(USB|ACM)\d|rfcomm\d|^\/dev\/axis5$/i.test(String(n)));
+    const stable = real.find((n) => /\/axis5$/.test(n));
+    if (stable) return { node: stable, renamed: stable !== preferred };
     if (real.indexOf(preferred) !== -1) return { node: preferred, renamed: false };
     if (real.length) return { node: real[0], renamed: true };
     return { node: null, renamed: false };
@@ -1037,7 +1044,7 @@ async function autoCorrectBaud(from) {
   try {
     await link.connectVia(path, FW.BAUD);
     S._connAt = Date.now(); S._rxWarned = false; S._baudWarned = false;
-    S._sawBoardText = false; S._rxStage = 0;
+    S._sawBoardText = false; S._rxStage = 0; S._holdersChecked = false;
     renderConnCard();
     S._correcting = false;
     return true;
@@ -1068,6 +1075,7 @@ function bindLinkEvents(link) {
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
     S._userClosed = false;
     S._connAt = Date.now(); S._rxWarned = false; S._rxStage = 0;
+    S._holdersChecked = false;
     S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
     S._eioExplained = false;
     renderConnCard();
@@ -1089,6 +1097,11 @@ function bindLinkEvents(link) {
     }
   };
   link.onLine = (l) => rxLine(l);
+  link.onNotice = (m) => {
+    /* پل اطلاع می‌دهد که یک فرایندِ جامانده را متوقف کرد — همان چیزی که
+       «دستور می‌رود ولی جواب برنمی‌گردد» را می‌سازد، پس باید دیده شود. */
+    addConsole("sys", "[SYS] " + m);
+  };
   link.onError = (m) => {
     addConsole("err", "!! " + m);
     /* Errno 5 = دستگاه از BUS افتاد. اولین بار کامل توضیح بده، بعد خلاصه. */
@@ -1925,7 +1938,28 @@ function updateLinkStats() {
        CH340 خودش افتِ تغذیه و بیرون‌افتادن از BUS را بیشتر می‌کند. */
     const silentMs = (S._connAt && S.mode === "serial") ? Date.now() - S._connAt : 0;
     const busyNow = S._correcting || S._reconnecting;
-    if (S.serial.rxCount === 0 && silentMs > 6000 && S._rxStage === 0 && !busyNow) {
+    /* پله‌ی ۰ (۳.۵ ثانیه): اول ببین کسِ دیگری پورت را گرفته. در لینوکس tty
+       انحصاری نیست: یک خواننده‌ی دوم همه‌ی بایت‌های برد را می‌بلعد درحالی‌که
+       دستورهای اپ به برد می‌رسند — یعنی موتورها تکان می‌خورند ولی RX صفر
+       می‌ماند. تا این رد نشده، گفتنِ «RESET بزن» نشانه‌ی غلط است. */
+    if (S.serial.rxCount === 0 && silentMs > 3500 && !S._holdersChecked && !busyNow) {
+      S._holdersChecked = true;
+      const lbl = S.serial.activeLabel || "";
+      if (window.electronAPI && window.electronAPI.portHolders) {
+        window.electronAPI.portHolders(lbl).then((h) => {
+          if (!h || !h.procs || !h.procs.length) return;
+          S._rxStage = 3;                       /* علت پیدا شد — نصیحتِ RESET لازم نیست */
+          addConsole("err", "!! another program is holding this port: " + h.procs.join(", ") + " (PID " + h.pids.join(", ") + ")");
+          addConsole("warn", "   → on Linux a tty is NOT exclusive, so that program swallows every byte the board sends. Your commands still reach the board (that is why a motor moved) but no reply ever comes back.");
+          addConsole("warn", "   → close it: Arduino IDE / Serial Monitor / minicom / screen, a second copy of this app (pkill -f serial_bridge.py), or a system daemon — ModemManager probes the port and brltty claims the CH340 chip. Permanent one-line fix: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)");
+          toast("Port is held by " + h.procs.join(", ") + " — close it and reconnect", "err", 9000);
+          const hintH = $("portHint");
+          if (hintH) hintH.innerHTML = "<b>Another program is reading this port:</b> " + h.procs.map(escH).join(", ") +
+            " &mdash; <b>close it</b> and press Connect again. Two readers steal each other's bytes, so your commands reach the board but no reply comes back.";
+        }).catch(() => {});
+      }
+    }
+    if (S.serial.rxCount === 0 && silentMs > 6000 && S._rxStage === 0 && S._holdersChecked && !busyNow) {
       S._rxStage = 1; S._rxWarned = true;
       addConsole("warn", "👉 Nothing came from the board in 6 s — press the RESET button on the Arduino NOW and leave the app connected (this board has no auto-reset circuit, so it only starts talking after that).");
       toast("Press the board's RESET button", "info", 8000);
@@ -1934,11 +1968,13 @@ function updateLinkStats() {
       setTimeout(() => { try { send(Cmd.status(), { auto: true }); } catch (e) {} }, 500);
     } else if (S.serial.rxCount === 0 && silentMs > 16000 && S._rxStage === 1 && !busyNow) {
       S._rxStage = 2;
-      addConsole("err", "!! still nothing after RESET — the board is not transmitting on this port.");
-      addConsole("warn", "   → the usual cause is the board dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling' or repeated 'USB disconnect'. That is electrical: motors powered from USB, no common ground with the motor supply, or a long/thin cable.");
+      const label = S.serial.activeLabel || "";   /* پیش از هر استفاده‌ای */
+      addConsole("err", "!! still nothing after RESET — the board is not transmitting to the app.");
+      addConsole("warn", "   → on Linux a tty is NOT exclusive: another process can hold the same port and swallow every byte (your commands still reach the board, but no reply ever comes back). Check with: `sudo fuser -v " + (label || "/dev/ttyUSB0") + "` and `pgrep -af 'ModemManager|brltty|serial_bridge|screen|minicom'`.");
+      addConsole("warn", "   → one command fixes the usual culprits (ModemManager probing + brltty claiming the CH340): bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh) — then replug.");
+      addConsole("warn", "   → if nothing holds it, the board is dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling'. That is electrical: motors powered from USB, no common ground, or a long/thin cable.");
       const hintV = $("portHint");
-      if (hintV) hintV.innerHTML = "<b>The board is silent.</b> Check <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI), tie the motor supply <b>GND</b> to the Arduino <b>GND</b>, and use a short <b>shielded</b> cable on a rear port.";
-      const label = S.serial.activeLabel || "";
+      if (hintV) hintV.innerHTML = "<b>The board is silent.</b> First rule out a stolen port: <code>sudo fuser -v " + escH(label || "/dev/ttyUSB0") + "</code> and <code>pgrep -af 'ModemManager|brltty'</code> &mdash; on Linux a second reader swallows every reply while your commands still reach the board. Then check <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI) and tie the motor supply <b>GND</b> to the Arduino <b>GND</b>.";
       if (window.electronAPI && window.electronAPI.portHolders) {
         window.electronAPI.portHolders(label).then((h) => {
           if (h && h.procs && h.procs.length) {

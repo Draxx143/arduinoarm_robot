@@ -118,7 +118,8 @@ function installMock(w, board) {
     appVersion: "0.0.0-test",
     serialDriverAvailable: async () => false,
     serialStats: async () => ({ mainRx: board.rxSent, kind: "py" }),
-    portHolders: async () => ({ pids: [], procs: [] }),
+    /* با board.holders می‌شود «خواننده‌ی دوم پورت را گرفته» را ساخت */
+    portHolders: async () => board.holders || { pids: [], procs: [] },
     listSystemPorts: async () => {
       /* با portPlan می‌شود «برد از BUS افتاد و با اسمِ دیگری برگشت» را ساخت */
       board.listCalls = (board.listCalls || 0) + 1;
@@ -285,6 +286,37 @@ async function main() {
   ok(/dmesg/.test(consoleText(dom)) && /EMI/.test(consoleText(dom)),
      "علتِ واقعی را گفت: افتِ USB/EMI و راهِ تأییدش (sudo dmesg)");
   ok(w.eval("S.mode") === "serial", "اپ متصل می‌ماند تا کاربر RESET را بزند (قطع نمی‌شود)");
+  dom.window.close();
+
+  /* ---------- ۳ب) پورت دزدیده شده: دستور می‌رود، جواب برنمی‌گردد ---------- */
+  console.log("\n-- خواننده‌ی دوم پورت را گرفته (ModemManager/brltty/پلِ جامانده) --");
+  const boardStolen = makeBoard();
+  boardStolen.onlyBaud = -1;                      /* برد ساکت */
+  boardStolen.holders = { pids: [4242], procs: ["ModemManager"] };
+  dom = await loadApp(port, boardStolen);
+  w = dom.window;
+  w.document.getElementById("selBaud").value = "115200";
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");
+  await sleep(400);
+  const openedStolen = boardStolen.opened.length;
+  w.eval("S._connAt = Date.now() - 4000; updateLinkStats();");   /* پله‌ی ۰ */
+  await sleep(250);
+  ok(w.eval("S._holdersChecked") === true, "پیش از هر نصیحتی، مالکیتِ پورت بررسی شد");
+  ok(/another program is holding this port/i.test(consoleText(dom)) &&
+     /ModemManager/.test(consoleText(dom)),
+     "دزدِ پورت با نام و PID معرفی شد", consoleText(dom).slice(-200));
+  ok(/tty is NOT exclusive/i.test(consoleText(dom)),
+     "توضیح داد چرا دستور می‌رود ولی جواب برنمی‌گردد (tty انحصاری نیست)");
+  ok(/fix-serial-port-ownership/.test(consoleText(dom)),
+     "راه‌حلِ یک‌خطیِ دائمی را داد");
+  ok(w.eval("S._rxStage") === 3, "پله‌ی RESET رد شد — چون علت چیزِ دیگری بود");
+  w.eval("S._connAt = Date.now() - 7000; updateLinkStats();");
+  await sleep(200);
+  ok(!/press the RESET button/i.test(consoleText(dom)),
+     "به کاربر نگفت RESET بزند (نشانه‌ی غلط وقتی پورت دزدیده شده)");
+  ok(boardStolen.opened.length === openedStolen, "پورت هم دوباره باز نشد",
+     `${openedStolen} → ${boardStolen.opened.length}`);
+  ok(w.eval("S.mode") === "serial", "اپ متصل می‌ماند تا کاربر دزد را ببندد");
   dom.window.close();
 
   /* ---------- ۴) ابزارهای تشخیصی حذف شده‌اند و نباید برگردند ---------- */

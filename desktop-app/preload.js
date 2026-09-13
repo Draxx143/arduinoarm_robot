@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     onData: (cb) => { ipcRenderer.removeAllListeners("serialport:data"); ipcRenderer.on("serialport:data", (e, b64) => cb(b64)); },
     onClosed: (cb) => { ipcRenderer.removeAllListeners("serialport:closed"); ipcRenderer.on("serialport:closed", (e, id) => cb(id)); },
     onError: (cb) => { ipcRenderer.removeAllListeners("serialport:error"); ipcRenderer.on("serialport:error", (e, m) => cb(m)); },
+    /* اطلاعیه‌های پل (مثلاً «یک پلِ جامانده متوقف شد») */
+    onNotice: (cb) => { ipcRenderer.removeAllListeners("serialport:notice"); ipcRenderer.on("serialport:notice", (e, m) => cb(String(m))); },
   },
   listSystemPorts: () => ipcRenderer.invoke("serial:list-system-ports"),
   expectPort: (name) => ipcRenderer.send("serial:expect-port", name),

@@ -45,6 +45,37 @@ if [ -n "$APP_BIN" ]; then
   chmod 755 /usr/bin/axis5-robot-control 2>/dev/null || true
   echo "[axis5-after-install] wrapper installed: /usr/bin/axis5-robot-control -> $APP_BIN" >&2
 
+  # ---- free the serial port from ModemManager / brltty -----------------
+  # ModemManager probes every new tty with AT commands and toggles DTR (which
+  # resets the Arduino and eats its first bytes); brltty claims the CH340 chip
+  # (1a86:7523) as a braille display and makes the port busy. Symptom: pressing
+  # Connect stiffens the motors but the app never receives a single byte.
+  RULE_SRC=""
+  for cand in "$APP_DIR/99-axis5-serial.rules" /opt/*/99-axis5-serial.rules; do
+    [ -f "$cand" ] && { RULE_SRC="$cand"; break; }
+  done
+  if [ -n "$RULE_SRC" ]; then
+    install -m 0644 "$RULE_SRC" /etc/udev/rules.d/99-axis5-serial.rules 2>/dev/null \
+      && echo "[axis5-after-install] udev rule installed: /etc/udev/rules.d/99-axis5-serial.rules" >&2 \
+      || echo "[axis5-after-install] WARNING: could not install the udev rule" >&2
+    # A file in /etc/udev/rules.d overrides the same-named file in /lib: keep
+    # brltty but drop its CH340 (1a86) claim — no package removal needed.
+    for b in /lib/udev/rules.d/85-brltty.rules /usr/lib/udev/rules.d/85-brltty.rules; do
+      [ -f "$b" ] || continue
+      grep -qi '1a86' "$b" || continue
+      sed -E '/1a86/ s/^/#AXIS5: /' "$b" > /tmp/85-brltty.rules.axis5 2>/dev/null \
+        && install -m 0644 /tmp/85-brltty.rules.axis5 /etc/udev/rules.d/85-brltty.rules 2>/dev/null \
+        && echo "[axis5-after-install] brltty no longer claims CH340 (1a86)" >&2
+      rm -f /tmp/85-brltty.rules.axis5
+      break
+    done
+    udevadm control --reload >/dev/null 2>&1 || true
+    udevadm trigger --subsystem-match=tty >/dev/null 2>&1 || true
+    echo "[axis5-after-install] udev reloaded — replug the board once to get /dev/axis5" >&2
+  else
+    echo "[axis5-after-install] WARNING: 99-axis5-serial.rules not found in the package" >&2
+  fi
+
   # ---- point desktop entries at the wrapper ----
   for f in /usr/share/applications/*.desktop; do
     [ -f "$f" ] || continue

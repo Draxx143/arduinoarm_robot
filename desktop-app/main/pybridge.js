@@ -21,7 +21,7 @@
  * ============================================================ */
 "use strict";
 
-const { spawn } = require("child_process");
+const { spawn, execFile } = require("child_process");
 const path = require("path");
 
 /* شناسه‌های این ماژول از یک میلیون شروع می‌شوند تا با شناسه‌های
@@ -191,5 +191,49 @@ function stats() {
   return { count: sessions.size, rx, kind: sessions.size ? "py" : "?" };
 }
 
+/* ---- پل‌های یتیم: ریشه‌ی «دستور می‌رود ولی جواب برنمی‌گردد» -----------
+   در لینوکس tty **انحصاری نیست**: هر فرایندی می‌تواند همان /dev/ttyUSB0 را
+   باز نگه دارد و بایت‌ها را بخواند. اگر نسخه‌ی قبلیِ اپ کرش کرده باشد یا
+   کاربر آن را بسته باشد ولی فرایندِ serial_bridge.py زنده مانده باشد، آن
+   فرایند **همه‌ی** بایت‌های برد را می‌بلعد: دستورهای اپ به برد می‌رسند
+   (موتور تکان می‌خورد/سفت می‌شود) ولی هیچ پاسخی به اپ برنمی‌گردد و اپ
+   «وصل‌نشده» به نظر می‌رسد.
+   پس پیش از هر open، پل‌هایی که فرزندِ ما نیستند را پیدا و خلاص می‌کنیم.
+   این کار فقط فرایندهای خودِ این پروژه را می‌کشد، نه برنامه‌ی کسی دیگر. */
+function findOrphans(o) {
+  const opt = o || {};
+  const run = opt.execFile || execFile;
+  const mine = new Set([...pids(), process.pid, ...(opt.selfPids || [])]);
+  return new Promise((resolve) => {
+    if (process.platform === "win32") return resolve([]);
+    run("pgrep", ["-f", "serial_bridge.py"], { timeout: 3000 }, (err, stdout) => {
+      /* pgrep با خروجیِ ۱ برمی‌گردد وقتی هیچ‌چیز پیدا نکند — خطا نیست */
+      const found = String(stdout || "").split(/\s+/).map((x) => parseInt(x, 10))
+        .filter((pid) => pid && !mine.has(pid));
+      resolve([...new Set(found)]);
+    });
+  });
+}
+
+function killOrphans(o) {
+  const opt = o || {};
+  const killer = opt.kill || ((pid, sig) => process.kill(pid, sig));
+  const log = typeof opt.log === "function" ? opt.log : () => {};
+  return findOrphans(opt).then(async (found) => {
+    const killed = [];
+    for (const pid of found) {
+      try { killer(pid, "SIGTERM"); killed.push(pid); }
+      catch (e) { log(`could not stop leftover bridge pid ${pid}: ${e.message}`); }
+    }
+    if (killed.length) {
+      /* کمی صبر کن تا fd واقعاً رها شود، وگرنه openِ بعدی هم همان پورت را
+         شلوغ می‌بیند */
+      await new Promise((r) => setTimeout(r, opt.settleMs || 250));
+      log(`stopped ${killed.length} leftover serial bridge process(es): ${killed.join(", ")}`);
+    }
+    return killed;
+  });
+}
+
 module.exports = { openBridge, writeTo, closeSession, closeAll, has, stats, pids,
-                   bridgeScriptPath, ID_BASE };
+                   findOrphans, killOrphans, bridgeScriptPath, ID_BASE };

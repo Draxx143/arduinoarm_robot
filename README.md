@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.49-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.49-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.50-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.50-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -437,7 +437,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs ten stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs eleven stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -478,9 +478,16 @@ GUI sources** (no hardware needed):
     correction, a silent board must get **one** RESET prompt and **no** port
     re-open, a USB drop-out must auto-reconnect to the renamed node, and the
     diagnostic tools must stay deleted.
+11. **Port ownership** (`tools/test_portnames.js`, 44 checks): the phantom
+    `/dev/ttyS*` filter, the stable `/dev/axis5` name (substituted in both the
+    plain list and the structured port list, never duplicated, and preferred
+    even when the real node momentarily vanished), orphan-bridge detection and
+    `SIGTERM` kill — including that the app **never** kills its own PIDs — and
+    that `99-axis5-serial.rules` is really shipped in the package and installed
+    by *both* installers, so the fix cannot silently disappear.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی ده مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی یازده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

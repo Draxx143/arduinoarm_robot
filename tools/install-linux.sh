@@ -19,6 +19,7 @@
 #    ۲. تازه‌ترین بسته را از ریلیز `latest` گیتهاب می‌گیرد
 #    ۳. نصب می‌کند و وابستگی‌ها را با apt حل می‌کند
 #    ۴. کاربر را در گروه dialout می‌گذارد (دسترسی /dev/ttyUSB0 یا ttyACM0)
+#    ۵. پورت را از دستِ ModemManager و brltty آزاد می‌کند + نامِ ثابتِ /dev/axis5
 #    ۵. نتیجه را راستی‌آزمایی می‌کند و دستور اجرا/لاگ را چاپ می‌کند
 # ======================================================================
 set -uo pipefail
@@ -243,6 +244,38 @@ else
 fi
 PORTS="$(ls -1 /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | tr '\n' ' ')"
 echo "  پورت‌های دیده‌شده: ${PORTS:-هیچ (آردوینو وصل نیست)}"
+
+# ----------------------------------------------------------------------
+# ۵ب) آزادسازیِ پورت از دستِ ModemManager و brltty
+#     ModemManager هر tty تازه را با دستورِ AT کاوش می‌کند و DTR را تکان
+#     می‌دهد (→ ریستِ برد و بلعیده‌شدنِ بایت‌ها)؛ brltty هم چیپِ CH340
+#     (1a86:7523) را «نمایشگرِ بریل» می‌پندارد و دستگاه را busy می‌کند.
+#     علامتش: با زدنِ «اتصال» موتورها سفت می‌شوند ولی RX صفر می‌ماند.
+# ----------------------------------------------------------------------
+step "آزادسازیِ پورت سریال (ModemManager / brltty)"
+FIXER=""
+for cand in "$(dirname "${BASH_SOURCE[0]}")/fix-serial-port-ownership.sh" \
+            "${HOME}/.cache/axis5-installer/fix-serial-port-ownership.sh"; do
+    [ -f "$cand" ] && { FIXER="$cand"; break; }
+done
+if [ -z "$FIXER" ]; then
+    mkdir -p "${HOME}/.cache/axis5-installer" 2>/dev/null || true
+    FIXER="${HOME}/.cache/axis5-installer/fix-serial-port-ownership.sh"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a091da-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -o "$FIXER" 2>/dev/null || FIXER=""
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a091da-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -O "$FIXER" 2>/dev/null || FIXER=""
+    fi
+fi
+if [ -n "$FIXER" ] && [ -f "$FIXER" ]; then
+    if [ "$DRY" = 1 ]; then
+        echo "  [dry-run] bash $FIXER"
+    else
+        bash "$FIXER" || c_y "  نصبِ قاعده‌ی udev ناموفق بود — دستی اجرا کن: sudo bash $FIXER"
+    fi
+else
+    c_y "  اسکریپتِ آزادسازی پیدا نشد — دستی: desktop-app/build/99-axis5-serial.rules را در /etc/udev/rules.d/ کپی کن"
+fi
 
 # ----------------------------------------------------------------------
 # ۶) راستی‌آزمایی
