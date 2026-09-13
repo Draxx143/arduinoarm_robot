@@ -402,6 +402,34 @@ async function main() {
   ok(/dropped|USB drop-out|electrical/.test(consoleText(dom)),
      "گفت علتِ افت، الکتریکی است (EMI/تغذیه)، نه نرم‌افزار");
 
+  /* ---------- ۷ب) گره‌ی مرده: بعد از افتِ USB اسم عوض شده ---------- */
+  console.log("\n-- کشو هنوز ttyUSB0 را نشان می‌دهد ولی برد الان ttyUSB1 است --");
+  const board8 = makeBoard();
+  /* فهرستِ زنده‌ی سیستم فقط ttyUSB1 را دارد — ttyUSB0 دیگر وجود ندارد */
+  board8.portPlan = [["/dev/ttyUSB1"], ["/dev/ttyUSB1"], ["/dev/ttyUSB1"]];
+  dom = await loadApp(port, board8);
+  w = dom.window;
+  w.document.getElementById("selBaud").value = "115200";
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");     /* همان انتخابِ کهنه‌ی کاربر */
+  await sleep(700);
+  ok(!board8.opened.some((o) => o.path === "/dev/ttyUSB0"),
+     "گره‌ی مرده باز **نشد** (بازکردنش همیشه «وصل نمی‌شود» می‌سازد)",
+     JSON.stringify(board8.opened.map((o) => o.path)));
+  ok(board8.opened.some((o) => o.path === "/dev/ttyUSB1"),
+     "خودش گره‌ی زنده را پیدا کرد و همان را باز کرد",
+     JSON.stringify(board8.opened.map((o) => o.path)));
+  ok(/no longer exists/.test(consoleText(dom)),
+     "به کاربر گفت که کرنل گره را عوض کرده و اپ کدام را برداشت");
+  ok(w.eval("S.mode") === "serial", "اتصال برقرار شد (نه «وصل نمی‌شود»)");
+  ok(w.eval("S.serial.rxCount") > 0, "RX > 0 — داده‌ی برد رسید",
+     "rxCount=" + w.eval("S.serial.rxCount"));
+  /* پنجره را می‌بندیم ولی سناریوی بعدی (جمع‌شدنِ پیامِ تکراری) به یک پنجره‌ی
+     زنده نیاز دارد، پس یکی تازه باز می‌کنیم — نه اینکه به همین تکیه کند. */
+  dom.window.close();
+  const boardDedupe = makeBoard();
+  dom = await loadApp(port, boardDedupe);
+  w = dom.window;
+
   /* ---------- ۸) پیامِ تکراری در کنسول جمع می‌شود ---------- */
   console.log("\n-- ۲۰ بار «[Errno 5]» پشتِ سرِ هم: کنسول پر نمی‌شود --");
   const cBefore = w.eval("document.getElementById('consoleBox').children.length");

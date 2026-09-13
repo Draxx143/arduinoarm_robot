@@ -523,12 +523,31 @@ async function connectSystemPort(name) {
   stopSim();
   const baud = parseInt($("selBaud").value, 10);
 
-  const devPath = IpcSerialLink.supported ? await resolvePortPath(name) : null;
+  /* let نه const: اگر گره‌ی انتخابی مرده باشد (بعد از افتِ USB کرنل اسمش را
+     عوض می‌کند) باید بتوانیم همان‌جا گره‌ی زنده را جایگزین کنیم. با const
+     انتصاب داخل try استثنا می‌داد و بی‌صدا خورده می‌شد — اپ می‌گفت «از
+     ttyUSB1 استفاده می‌کنم» ولی همان گره‌ی مرده را باز می‌کرد. */
+  let devPath = IpcSerialLink.supported ? await resolvePortPath(name) : null;
   if (IpcSerialLink.supported && !devPath) {
     addConsole("warn", `[SYS] "${name}" is not a device path and could not be matched to one — falling back to the port chooser`);
   }
 
   if (IpcSerialLink.supported && devPath) {
+    /* بعد از هر افتِ USB، کرنل دستگاه را دوباره enumerate می‌کند و ممکن است
+       نامش عوض شود (ttyUSB0 → ttyUSB1). گره‌ی قبلی دیگر وجود ندارد ولی هنوز در
+       کشوی پورت و در حافظه‌ی اپ است — بازکردنش یعنی «وصل نمی‌شود». پس پیش از
+       بازکردن، مسیر را با فهرستِ زنده چک کن و در صورتِ لزوم گره‌ی زنده را
+       بردار. این حدس نیست: همان چیزی است که dmesg نشان می‌دهد. */
+    try {
+      const live = await window.electronAPI.listSystemPorts();
+      if (Array.isArray(live) && live.length && live.indexOf(devPath) === -1) {
+        const pick = await findLiveNode(devPath);
+        if (pick && pick.node) {
+          addConsole("sys", `[SYS] ${devPath} no longer exists — the kernel re-enumerated the board; using ${pick.node} instead`);
+          devPath = pick.node;
+        }
+      }
+    } catch (e) { /* فهرست گرفته نشد — همان مسیرِ انتخابی را امتحان کن */ }
     name = devPath;
     const link = new IpcSerialLink();
     bindLinkEvents(link);
@@ -1970,11 +1989,22 @@ function updateLinkStats() {
       S._rxStage = 2;
       const label = S.serial.activeLabel || "";   /* پیش از هر استفاده‌ای */
       addConsole("err", "!! still nothing after RESET — the board is not transmitting to the app.");
+      /* نشانه‌ی کلیدی: در فریم‌ور Axis::init() موتورها را **غیرفعال** می‌کند
+         (ENABLE=HIGH) و فقط دستورِ enable/home سفتشان می‌کند؛ اپ هم هنگامِ
+         اتصال فقط status می‌فرستد. پس اگر موتورها سفت/وزوز‌کنان هستند و یک
+         بایت هم نمی‌آید، AVR **اجرا نمی‌شود**: در ریست یا brown-out پین‌هایش
+         شناور می‌مانند و ENِ درایورها را فعال می‌کنند. این سخت‌افزار است. */
+      if (!S._sawBoardText) {
+        addConsole("warn", "   → no boot banner ever arrived, so the AVR is not running (not a baud problem, not a permissions problem).");
+        addConsole("warn", "   → if the motors feel STIFF or hum: that confirms it. This firmware DISABLES the motors at boot, so stiffness means the chip is held in reset / browning out and its pins are floating, which energises the drivers.");
+        addConsole("warn", "   → 30-second test: unplug the motor power supply (leave only USB), power-cycle the board, then Connect. If it links now, the motor supply is dragging the 5 V rail down — keep motors off USB power and tie the supply GND to the Arduino GND.");
+        addConsole("warn", "   → still dead with motors unpowered? The board/cable/port is at fault: try another USB port and a short data cable, and watch `sudo dmesg -w` while you replug.");
+      }
       addConsole("warn", "   → on Linux a tty is NOT exclusive: another process can hold the same port and swallow every byte (your commands still reach the board, but no reply ever comes back). Check with: `sudo fuser -v " + (label || "/dev/ttyUSB0") + "` and `pgrep -af 'ModemManager|brltty|serial_bridge|screen|minicom'`.");
       addConsole("warn", "   → one command fixes the usual culprits (ModemManager probing + brltty claiming the CH340): bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh) — then replug.");
       addConsole("warn", "   → if nothing holds it, the board is dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling'. That is electrical: motors powered from USB, no common ground, or a long/thin cable.");
       const hintV = $("portHint");
-      if (hintV) hintV.innerHTML = "<b>The board is silent.</b> First rule out a stolen port: <code>sudo fuser -v " + escH(label || "/dev/ttyUSB0") + "</code> and <code>pgrep -af 'ModemManager|brltty'</code> &mdash; on Linux a second reader swallows every reply while your commands still reach the board. Then check <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI) and tie the motor supply <b>GND</b> to the Arduino <b>GND</b>.";
+      if (hintV) hintV.innerHTML = "<b>The board is silent and the AVR is not running</b> (no boot banner ever arrived). If the motors feel <b>stiff</b> that proves it: this firmware <i>disables</i> the motors at boot, so stiffness means the chip is held in reset or browning out and its floating pins are energising the drivers.<div><b>30-second test:</b> unplug the motor supply (USB only) &rarr; power-cycle the board &rarr; Connect. If it links now, the motors were dragging the 5&nbsp;V rail down: keep them off USB power and tie the supply <b>GND</b> to the Arduino <b>GND</b>.</div><div><b>Then rule out a stolen port:</b> <code>sudo fuser -v " + escH(label || "/dev/ttyUSB0") + "</code> and <code>pgrep -af ModemManager</code> &mdash; on Linux a second reader swallows every reply while your commands still reach the board. And <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI).</div>";
       if (window.electronAPI && window.electronAPI.portHolders) {
         window.electronAPI.portHolders(label).then((h) => {
           if (h && h.procs && h.procs.length) {

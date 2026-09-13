@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.50-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.50-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.51-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.51-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -377,6 +377,27 @@ ch341-uart ttyUSB0: ch341-uart converter now disconnected from ttyUSB0
 
 ---
 
+## اگر موتورها سفت می‌شوند ولی هیچ جوابی نمی‌آید
+
+این نشانه خیلی خاص است و یک معنی دارد. در فریم‌ور، `Axis::init()` موتورها را
+**غیرفعال** می‌کند (`ENABLE = HIGH`) و فقط دستورِ `enable` / `home` سفتشان
+می‌کند؛ اپ هم هنگامِ اتصال تنها `status` می‌فرستد. پس اگر با زدنِ «اتصال»
+موتورها سفت یا وزوز‌کنان شدند و یک بایت هم نیامد، یعنی **AVR اصلاً اجرا
+نمی‌شود**: در ریست نگه داشته شده یا brown-out می‌کند، پین‌هایش شناور
+می‌مانند و همان شناوری، درایورها را فعال می‌کند. بردی که اجرا نمی‌شود نه
+بنرِ بوت می‌فرستد نه به دستوری جواب می‌دهد — و هیچ نرم‌افزاری نمی‌تواند
+جایش حرف بزند.
+
+**آزمونِ ۳۰ ثانیه‌ای که این را قطعی می‌کند:** تغذیه‌ی موتورها را بکش (فقط
+USB بماند) → برد را یک بار خاموش/روشن کن → «اتصال» را بزن. اگر وصل شد،
+یعنی موتورها ریلِ ۵ ولت را پایین می‌کشیدند: تغذیه‌ی موتورها را از USB جدا
+نگه دار و GNDِ منبعِ موتورها را به GNDِ آردوینو ببند.
+
+اگر با موتورِ بی‌برق هم ساکت بود، برد/کابل/پورت مقصر است: یک پورتِ دیگر،
+یک کابلِ **دیتا**ِ کوتاه، و `sudo dmesg -w` را موقعِ وصل‌کردن نگاه کن.
+
+---
+
 ## اگر برد وصل نمی‌شود
 
 اپ از نسخه‌ی ۱.۰.۴۹ هیچ ابزارِ تشخیصیِ جداگانه‌ای ندارد — چون خودِ آن
@@ -437,7 +458,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs eleven stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs twelve stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -485,9 +506,17 @@ GUI sources** (no hardware needed):
     `SIGTERM` kill — including that the app **never** kills its own PIDs — and
     that `99-axis5-serial.rules` is really shipped in the package and installed
     by *both* installers, so the fix cannot silently disappear.
+12. **Main-process chain end to end** (`tools/test_main_ipc.js`, 22 checks):
+    the one place where bytes could silently vanish and which no test had ever
+    covered — the *real* `main.js` + *real* `pybridge.js` + *real*
+    `serial_bridge.py` against a fake board on a pty, with `electron` replaced
+    by a stub. It proves `serialport:open` resolves, the board's boot banner
+    really arrives at `webContents.send("serialport:data")` intact, a written
+    command really reaches the board, `serialport:stats` counts it, close is
+    reported, and the orphan-bridge killer never targets our own PIDs.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی یازده مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی دوازده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 
