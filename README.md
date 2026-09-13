@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.46-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.46-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.47-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.47-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -334,7 +334,22 @@ python3 tools/sync_gui_config.py --check    # فقط بررسی (در CI هم ا
 
 ---
 
-## اگر برد وصل نمی‌شود: 🩺 عیب‌یابِ اتصال
+## اگر برد وصل نمی‌شود: 🔍 «برد را پیدا کن» و 🩺 عیب‌یاب
+
+اگر همه‌چیز سبز است (python3، گروه، مجوز، نبودِ خواننده‌ی دوم) ولی **یک بایت
+هم** نمی‌آید، دیگر جای حدس نیست: دکمه‌ی **🔍 Find board** هر گره‌ی واقعیِ
+سریال (`ttyUSB0`، `ttyUSB1`، `ttyACM0`، …) را در هر سرعتِ رایج
+(۱۱۵۲۰۰/۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰/۱۹۲۰۰) باز می‌کند، `status` و `help` می‌فرستد و
+گوش می‌دهد — و می‌گوید برد **کجاست و با چه سرعتی**، بعد خودش به همان
+وصل می‌شود. فهرستِ پورت‌ها هم پاک شد: `node-serialport` در لینوکس ۳۲ پورتِ
+شبحیِ `/dev/ttyS*` را هم می‌داد (کاربر «۳۳ دستگاه» می‌دید درحالی‌که یکی
+واقعی بود)؛ وقتی گره‌ی USB هست آن‌ها حذف می‌شوند.
+
+🩺 **عیب‌یاب** هم حالا اگر اپ متصل باشد، خودش یک لحظه قطع می‌کند تا
+**دست‌دادنِ زنده** واقعاً اجرا شود (قبلاً «رد شد چون اپ متصل است» می‌گفت،
+یعنی بی‌فایده‌ترین گزارشِ ممکن) و بعد دوباره وصل می‌شود.
+
+## 🩺 عیب‌یابِ اتصال
 
 اپ از نسخه‌ی ۱.۰.۴۵ **خودش** سه کار را انجام می‌دهد تا «کامل وصل نمی‌شود»
 بدونِ دخالتِ تو حل شود:
@@ -406,7 +421,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs eleven stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs twelve stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -452,8 +467,14 @@ GUI sources** (no hardware needed):
     with an empty port dropdown, and a board that only answers at 9600 must be
     found by the automatic baud ladder (which also updates the baud selector).
 
+12. **Find-the-board scanner** (`tools/test_scan.js`): sweeps every real
+    device node × every common baud with the fake board and checks it reports
+    the right node *and* speed, never accepts unreadable bytes as "found",
+    survives a missing node, and honours cancel — plus that the 32 phantom
+    `/dev/ttyS*` ports are dropped from the list when a real USB node exists.
+
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی یازده مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی دوازده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

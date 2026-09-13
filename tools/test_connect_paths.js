@@ -116,12 +116,28 @@ function installMock(w, board) {
     portProbe: async () => ({ bytes: 0, sample: "" }),
     portDoctor: async () => ({ port: "/dev/ttyUSB0", baud: 115200,
       checks: [{ name: "rx", ok: false, detail: "0 byte(s)", fix: "check the board" }] }),
+    /* اسکنر: برد روی ttyUSB1 است نه ttyUSB0 — همان چیزی که هیچ حدسی
+       پیدایش نمی‌کند و فقط امتحانِ همه‌ی گره‌ها پیدایش می‌کند */
+    portFind: async () => {
+      board.findCalls = (board.findCalls || 0) + 1;
+      return {
+        ports: ["/dev/ttyUSB0", "/dev/ttyUSB1"],
+        found: { port: "/dev/ttyUSB1", baud: 115200, firmware: "1.0.41",
+                 sample: "AXIS-5 Firmware v1.0.41" },
+        tried: [{ port: "/dev/ttyUSB0", baud: 115200, bytes: 0, known: false },
+                { port: "/dev/ttyUSB1", baud: 115200, bytes: 120, known: true }],
+        stopped: false,
+      };
+    },
+    portFindStop: () => {},
+    onFindLog: (cb) => { board.findLog = cb; },
     listSystemPorts: async () => ["/dev/ttyUSB0"],
     expectPort: () => {}, onPortList: () => {}, onPortAdded: () => {}, onPortRemoved: () => {},
     choosePort: () => {}, cancelChoose: () => {},
     versions: { electron: "test", node: "test", chrome: "test" },
     ipcSerial: {
-      list: async () => ({ ports: [{ path: "/dev/ttyUSB0", friendly: "CH340 serial", vid: "1a86", pid: "7523" }] }),
+      list: async () => ({ ports: [{ path: "/dev/ttyUSB0", friendly: "CH340 serial", vid: "1a86", pid: "7523" },
+                                   { path: "/dev/ttyUSB1", friendly: "CH340 serial", vid: "1a86", pid: "7523" }] }),
       open: async (p, baud) => {
         board.opened.push({ path: String(p), baud: Number(baud) });
         board.id = 1000001;
@@ -341,6 +357,41 @@ async function main() {
   ok(/Press the RESET button/.test(consoleText(dom)),
      "از کاربر خواست دکمه‌ی RESET را بزند (بردهای بدونِ ریستِ خودکار)");
   dom.window.close();
+
+  /* ---------- ۷) 🔍 برد را پیدا کن: برد روی گره‌ی دیگری است ---------- */
+  console.log("\n-- 🔍 Find board: برد روی /dev/ttyUSB1 است، نه ttyUSB0 --");
+  const board6 = makeBoard();
+  dom = await loadApp(port, board6);
+  w = dom.window;
+  ok(w.document.getElementById("btnFind") !== null, "دکمه‌ی «🔍 Find board» در هدر هست");
+  ok(w.eval("typeof findMyBoard") === "function", "findMyBoard وجود دارد");
+  w.document.getElementById("selBaud").value = "19200";
+  await w.eval("findMyBoard()");
+  await sleep(600);
+  ok(board6.findCalls === 1, "اسکنر از راهِ IPC صدا شد");
+  ok(/FIND\] ✓ the board is \/dev\/ttyUSB1 @ 115200/.test(consoleText(dom)),
+     "در کنسول گفت برد کجاست و با چه سرعتی");
+  ok(board6.opened.some((o) => o.path === "/dev/ttyUSB1" && o.baud === 115200),
+     "بعدش روی همان گره و سرعت وصل شد", JSON.stringify(board6.opened));
+  ok(w.eval("S.mode") === "serial", "اتصال برقرار شد");
+  ok(w.document.getElementById("selBaud").value === "115200",
+     "کشوی baud از ۱۹۲۰۰ به ۱۱۵۲۰۰ برگشت", w.document.getElementById("selBaud").value);
+  ok(w.eval("S._finding") === false, "پرچمِ اسکن بعد از پایان پاک شد (دکمه دوباره کار می‌کند)");
+  ok(w.document.getElementById("btnFind").textContent.indexOf("Find board") !== -1,
+     "برچسبِ دکمه از «scanning…» به حالِ اول برگشت");
+
+  /* ---------- ۸) قفلِ هم‌زمانی: کلیکِ دوم وسطِ بازیابی ---------- */
+  console.log("\n-- کلیکِ دوباره‌ی «اتصال» وسطِ بازیابی (دو خواننده روی یک پورت) --");
+  await w.eval("S.serial.disconnect()");      /* قفل باید وقتی هنوز متصل نیستیم دیده شود */
+  await sleep(250);
+  const before = board6.opened.length;
+  w.eval("S._recovering = true");
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");
+  await sleep(300);
+  ok(board6.opened.length === before, "نشستِ دومی باز نشد (بایت‌ها دزدیده نمی‌شوند)",
+     `${before} → ${board6.opened.length}`);
+  ok(/busy/i.test(consoleText(dom)), "به کاربر گفت اپ مشغول است");
+  w.eval("S._recovering = false");
 
   srv.close();
   console.log(`\n#  نتیجه: ${PASS} PASS / ${FAIL} FAIL`);

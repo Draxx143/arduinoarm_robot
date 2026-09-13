@@ -19,6 +19,7 @@ try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC 
  * در main/pybridge.js است — جدا و بدون وابستگی به electron، تا بتوان با
  * Node خالی تستش کرد (tools/test_pybridge.js). */
 const pybridge = require("./main/pybridge.js");
+const scan = require("./main/scan.js");
 const doctor = require("./main/doctor.js");
 
 /* نسخه‌ی فریم‌وری که این اپ انتظار دارد — باید با FIRMWARE_VERSION در
@@ -186,6 +187,36 @@ function createWindow() {
   }));
   ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
 
+  /* ---- 🔍 «برد را پیدا کن»: هر گره‌ی واقعی × هر سرعتِ محتمل ----
+     وقتی همه‌چیز سبز است ولی یک بایت هم نمی‌آید، تنها کارِ باقی‌مانده این
+     است که همه‌ی نامزدها را امتحان کنیم و بگوییم برد کجاست. */
+  let findStop = false;
+  ipcMain.on("port:find-stop", () => { findStop = true; });
+  ipcMain.handle("port:find", async (e, opts) => {
+    if (openSerialPorts.size > 0 || pybridge.stats().count > 0) {
+      return { err: "the app is still holding a port — press Disconnect first" };
+    }
+    findStop = false;
+    const names = await listSystemPorts();
+    let extra = [];
+    if (SerialPortC) { try { extra = (await SerialPortC.list()).map((p) => p.path); } catch (er) {} }
+    const ports = scan.pickRealPorts(names, extra);
+    const say = (line) => { if (win && !win.isDestroyed()) win.webContents.send("find:log", String(line)); };
+    say(`scanning ${ports.length} device(s): ${ports.join(", ") || "(none)"}`);
+    try {
+      const out = await scan.findBoard({
+        pybridge,
+        ports,
+        bauds: (opts && Array.isArray(opts.bauds) && opts.bauds.length) ? opts.bauds : undefined,
+        log: say,
+        shouldStop: () => findStop,
+      });
+      return { ports, found: out.found, tried: out.tried, stopped: out.stopped, note: out.note || "" };
+    } catch (er) {
+      return { ports, err: String((er && er.message) || er), found: null, tried: [] };
+    }
+  });
+
   /* ---- 🩺 عیب‌یابِ اتصال: منطقش در main/doctor.js است (بدون electron،
      پس با Node خالی قابلِ تست است: tools/test_doctor.js) ---- */
   ipcMain.handle("port:doctor", async (e, portPath, baud) => {
@@ -222,7 +253,13 @@ function createWindow() {
     }
     try {
       const list = await SerialPortC.list();
-      return { ports: list.map((p) => ({
+      /* node-serialport در لینوکس همه‌ی /dev/ttyS0..ttyS31 را هم می‌دهد —
+       * پورت‌های شبحیِ مادربرد. کاربرِ ما «۳۳ دستگاه» می‌دید درحالی‌که فقط
+       * یکی واقعی بود. وقتی گره‌ی USB موجود است، آن‌ها را حذف کن. */
+      let osNames = [];
+      try { osNames = await listSystemPorts(); } catch (er) {}
+      const keep = new Set(scan.pickRealPorts(osNames, list.map((p) => p.path)));
+      return { ports: list.filter((p) => keep.has(p.path)).map((p) => ({
         path: p.path,
         friendly: p.friendlyName || p.manufacturer || "",
         vid: p.vendorId || "", pid: p.productId || "",

@@ -483,6 +483,14 @@ async function autoPickPort() {
  * Fallback: Web Serial chooser auto-resolved by port name in main.js. */
 async function connectSystemPort(name) {
   if (S.mode === "serial") return;
+  /* لاگِ کاربر نشان داد که کلیکِ دوباره‌ی «اتصال» وسطِ نردبانِ baud یک نشستِ
+   * دوم باز کرد: دو خواننده روی یک پورت، بایت‌های هم را می‌دزدند و RX در همه‌ی
+   * سرعت‌ها صفر می‌شود. پس تا بازیابی/اسکن تمام نشده، کلیکِ دوم رد می‌شود. */
+  if (S._recovering || S._correcting || S._finding) {
+    addConsole("warn", "[SYS] busy — the app is reconnecting/scanning; wait for it to finish (a second session would steal the port's bytes)");
+    toast("Wait — the app is already working on the connection", "warn", 5000);
+    return;
+  }
   stopSim();
   const baud = parseInt($("selBaud").value, 10);
 
@@ -1045,6 +1053,7 @@ async function autoRecoverRx() {
     addConsole("err", `!! bytes came back at ${garbage.join(", ")} baud but were unreadable at every speed → the board is not running this firmware (reflash firmware/RobotArm_Firmware/), or the cable/adapter is dropping bits`);
   } else {
     addConsole("err", "!! the board sent NOTHING at any baud rate → press its RESET button, check the heartbeat LED, the data cable and the external motor supply");
+    addConsole("warn", "   → next step: press 🔍 Find board. It opens every real serial device (ttyUSB0, ttyUSB1, ttyACM0, …) at every common speed and tells you exactly which one is the arm — so you do not have to guess the port either.");
   }
   S._recovering = false;
   setMode("serial");
@@ -1068,14 +1077,20 @@ async function runPortDoctor(auto) {
   try { devPath = (await resolvePortPath(picked)) || picked; } catch (e) {}
   const btn = $("btnDoctor");
   if (btn) { btn.disabled = true; btn.textContent = "🩺 …"; }
+  /* عیب‌یاب نمی‌تواند هم‌زمان با اپ پورت را باز کند — و «دست‌دادن رد شد چون
+     اپ متصل است» یعنی بی‌فایده‌ترین گزارشِ ممکن (کاربرِ ما دو بار همین را
+     دید). پس خودمان قطع می‌کنیم، گزارشِ کامل را می‌گیریم و بعد وصل می‌شویم. */
+  const wasLinked = S.mode === "serial";
   try {
     addConsole("sys", `[DOCTOR] checking ${devPath || "(no port)"} @ ${baud} baud …`);
-  if (S.mode === "serial") {
-    addConsole("warn", "[DOCTOR] 👉 press the board's RESET button while the doctor waits — its live handshake is the only part that needs the port, and the app must give it up first.");
-  } else {
-    addConsole("warn", "[DOCTOR] 👉 if the board stays silent, press its RESET button during the handshake (many CH340 clones have no auto-reset).");
-  }
-  const rep = await window.electronAPI.portDoctor(devPath, baud);
+    if (wasLinked) {
+      addConsole("sys", "[DOCTOR] disconnecting first — the live handshake needs the port to itself (it reconnects afterwards)");
+      try { await S.serial.disconnect(); } catch (e) {}
+      setMode("off");
+      await nap(500);
+    }
+    addConsole("warn", "[DOCTOR] 👉 press the board's RESET button now and keep an eye on the console — boards without an auto-reset circuit (many CH340 clones) only talk after that.");
+    const rep = await window.electronAPI.portDoctor(devPath, baud);
     let bad = 0;
     (rep && rep.checks ? rep.checks : []).forEach((c) => {
       const mark = c.ok === null ? "…" : (c.ok ? "✓" : "✗");
@@ -1092,10 +1107,90 @@ async function runPortDoctor(auto) {
       ? `<b>🩺 Doctor found ${bad} problem${bad > 1 ? "s" : ""}</b> — the console shows each one with its fix.`
       : `<b>🩺 Doctor: all clear</b> — port, permissions and the board's reply are fine.`;
     if (!auto || bad) toast(bad ? `🩺 Doctor: ${bad} problem(s) — see the console` : "🩺 Doctor: all clear ✓", bad ? "err" : "ok", 7000);
+    /* هیچ نشانه‌ای از فریم‌ور نبود ولی بایت آمد؟ یعنی سرعت اشتباه است */
+    const bm = (rep && rep.checks ? rep.checks : []).find((c) => c.name === "baudmatch");
+    if (bm && bm.ok === false) {
+      addConsole("warn", "[DOCTOR] → unreadable bytes = baud mismatch. Press 🔍 Find board and it will locate the right port AND speed by itself.");
+    } else if ((rep && rep.checks ? rep.checks : []).some((c) => c.name === "rx" && c.ok === false)) {
+      addConsole("warn", "[DOCTOR] → nothing at all on this port. Press 🔍 Find board: it tries every real device node at every common speed, so you do not have to guess which /dev/tty… is the arm.");
+    }
+    if (wasLinked && devPath) {
+      addConsole("sys", "[DOCTOR] reconnecting…");
+      try { await connectSystemPort(devPath); } catch (e) { addConsole("err", "!! reconnect failed: " + e.message); }
+    }
   } catch (e) {
     addConsole("err", "[DOCTOR] !! " + ((e && e.message) || e));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = "🩺 Doctor"; }
+  }
+}
+
+/* ---- 🔍 «برد را پیدا کن» ---------------------------------------------
+ * وقتی همه‌چیز سبز است ولی یک بایت هم نمی‌آید، حدس زدن تمام شده: هر گره‌ی
+ * واقعیِ سریال را در هر سرعتِ محتمل باز کن، «status» بفرست و گوش بده. برد
+ * ممکن است روی ttyUSB1 باشد نه ttyUSB0 (بعضی بردها دو رابطِ سریال می‌سازند)،
+ * یا پشتِ یک مبدلِ USB-سریالِ دیگر. منطقش در main/scan.js است و با بردِ
+ * جعلی تست می‌شود (tools/test_scan.js). */
+async function findMyBoard() {
+  if (!(window.electronAPI && window.electronAPI.portFind)) {
+    toast("Finding the board needs the desktop app — in a browser run tools/diagnose-linux.sh", "warn", 7000);
+    return;
+  }
+  if (S._finding) return;
+  if (S._recovering || S._correcting) {
+    addConsole("warn", "[FIND] the app is busy reconnecting — wait a couple of seconds and try again");
+    return;
+  }
+  S._finding = true;
+  const btn = $("btnFind");
+  if (btn) { btn.disabled = true; btn.textContent = "🔍 scanning…"; }
+  const wasLinked = S.mode === "serial";
+  try {
+    if (wasLinked) {
+      addConsole("sys", "[FIND] disconnecting — the scan needs every port to itself");
+      try { await S.serial.disconnect(); } catch (e) {}
+      setMode("off");
+      await nap(500);
+    }
+    addConsole("warn", "[FIND] 👉 press the RESET button on the Arduino now, and again if the scan asks — boards without an auto-reset circuit only talk after that.");
+    if (window.electronAPI.onFindLog) {
+      window.electronAPI.onFindLog((line) => addConsole("sys", "[FIND] " + line));
+    }
+    const res = await window.electronAPI.portFind({});
+    if (res && res.err) {
+      addConsole("err", "[FIND] !! " + res.err);
+      toast(res.err, "err", 7000);
+    } else if (res && res.found) {
+      const f = res.found;
+      addConsole("sys", `[FIND] ✓ the board is ${f.port} @ ${f.baud} baud` + (f.firmware ? ` — firmware v${f.firmware}` : ""));
+      addConsole("sys", `[FIND]   sample: ${f.sample || ""}`);
+      const sel = $("hdrPort"); if (sel) sel.value = f.port;
+      const bs = $("selBaud"); if (bs) bs.value = String(f.baud);
+      toast(`✓ Board found: ${f.port} @ ${f.baud} — connecting…`, "ok", 7000);
+      S._finding = false;
+      if (btn) { btn.disabled = false; btn.textContent = "🔍 Find board"; }
+      await renderConnCard();
+      if (sel) sel.value = f.port;
+      await connectSystemPort(f.port);
+      return;
+    } else {
+      const tried = (res && res.tried) || [];
+      const noisy = tried.filter((t) => t.bytes > 0 && !t.known);
+      addConsole("err", `[FIND] ✗ no board answered on ${tried.length} port×baud combination(s)`);
+      if (noisy.length) {
+        addConsole("warn", "[FIND] but these returned UNREADABLE bytes: " + noisy.map((t) => `${t.port}@${t.baud}`).join(", ") +
+          " → something transmits there at yet another speed (or the adapter drops bits)");
+      }
+      addConsole("warn", "[FIND] → so the board is not talking at all. Check in this order: (1) the firmware's heartbeat LED — is it blinking? (2) a DATA cable, not a charge-only one (3) the external motor supply — without it the board browns out (4) is the firmware actually flashed on THIS board?");
+      const hint = $("portHint");
+      if (hint) hint.innerHTML = "<b>🔍 No board answered on any port or speed.</b> Check the heartbeat LED, the data cable and the motor supply &mdash; the port and permissions are fine.";
+      toast("No board answered anywhere — see the console checklist", "err", 9000);
+    }
+  } catch (e) {
+    addConsole("err", "[FIND] !! " + ((e && e.message) || e));
+  } finally {
+    S._finding = false;
+    if (btn) { btn.disabled = false; btn.textContent = "🔍 Find board"; }
   }
 }
 
@@ -2467,6 +2562,7 @@ function init() {
     addConsole("sys", "[SYS] port scan: " + Math.max(0, ($("hdrPort") ? $("hdrPort").length : 1) - 1) + " device(s)"); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
   if ($("btnDoctor")) $("btnDoctor").onclick = () => runPortDoctor(false);
+  if ($("btnFind")) $("btnFind").onclick = () => findMyBoard();
   if (window.electronAPI && window.electronAPI.onPortAdded) {
     window.electronAPI.onPortAdded(() => {
       if (S.mode === "off" && !S._scanActive) $("portHint").textContent = "New device detected — click Scan Ports.";
