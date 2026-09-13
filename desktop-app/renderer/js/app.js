@@ -515,8 +515,8 @@ async function connectSystemPort(name) {
   /* لاگِ کاربر نشان داد که کلیکِ دوباره‌ی «اتصال» وسطِ نردبانِ baud یک نشستِ
    * دوم باز کرد: دو خواننده روی یک پورت، بایت‌های هم را می‌دزدند و RX در همه‌ی
    * سرعت‌ها صفر می‌شود. پس تا بازیابی/اسکن تمام نشده، کلیکِ دوم رد می‌شود. */
-  if (S._correcting || S._reconnecting) {
-    addConsole("warn", "[SYS] busy — the app is reconnecting/scanning; wait for it to finish (a second session would steal the port's bytes)");
+  if (S._correcting || S._reconnecting || S._nodeSweep) {
+    addConsole("warn", "[SYS] busy — the app is working on the connection; wait for it to finish (a second session would steal the port's bytes)");
     toast("Wait — the app is already working on the connection", "warn", 5000);
     return;
   }
@@ -954,6 +954,92 @@ async function toggleSerial() {
  * اولین افت، [Errno 5] چاپ می‌کرد و تسلیم می‌شد. حالا منتظرِ برگشتِ برد
  * می‌ماند، گره‌ی تازه را **خودش پیدا می‌کند** (چون کرنل ممکن است اسمش را
  * عوض کند) و با همان سرعتِ قبلی وصل می‌شود. */
+/* ---- یک دورِ محدود روی بقیه‌ی گره‌های زنده -----------------------------
+   بعد از افتِ USB ممکن است برد روی گره‌ی دیگری باشد، یا گره‌ی فعلی مرده باشد
+   ولی باز شود و ساکت بماند. این **یک دور** است: هر گره یک بار، فقط با سرعتِ
+   خودِ فریم‌ور، با پیامِ روشن. نردبانِ قدیمیِ «۵ سرعت × همه‌ی پورت‌ها» نبود —
+   همان ده‌ها بار پورت را باز و بسته می‌کرد و روی CH340 خودش باعثِ افتِ
+   تغذیه و بیرون‌افتادنِ دستگاه از BUS می‌شد. */
+async function tryOtherNodes() {
+  if (S._nodeSweep || S._correcting || S._reconnecting) return false;
+  if (!IpcSerialLink.supported) return false;
+  S._nodeSweep = true;
+  const cur = (S.serial && S.serial.activeLabel) || "";
+  const baud = FW.BAUD;
+  try {
+    let names = [];
+    try { names = (await window.electronAPI.listSystemPorts()) || []; } catch (e) {}
+    const cands = names.filter((n) => n && n !== cur &&
+      /tty(USB|ACM)\d|rfcomm\d|\/axis5$/i.test(String(n)));
+    if (!cands.length) {
+      addConsole("sys", "[SYS] no other serial device to try — " + (cur || "this port") + " is the only one, and it stays silent");
+      return false;
+    }
+    addConsole("sys", `[SYS] nothing came back on ${cur || "?"} — one pass over the other live device(s): ${cands.join(", ")} @ ${baud}`);
+    const selB = $("selBaud"); if (selB) selB.value = String(baud);
+    try { await S.serial.disconnect(); } catch (e) {}
+    await nap(300);
+    for (const node of cands) {
+      if (S._userClosed) break;
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      try {
+        await link.connectVia(node, baud);
+      } catch (e) {
+        addConsole("warn", `[SYS] ${node} did not open: ${e.message}`);
+        continue;
+      }
+      const t0 = Date.now();
+      while (Date.now() - t0 < 1800) {
+        await nap(200);
+        try { send(Cmd.status(), { auto: true }); } catch (e) {}
+        if (S._sawBoardText || link.rxCount > 0) break;
+      }
+      if (S._sawBoardText || link.rxCount > 0) {
+        addConsole("sys", `[SYS] ✓ the board answered on ${node} @ ${baud} — staying here`);
+        const hp = $("hdrPort"); if (hp) hp.value = node;
+        try { Store.set("last_port", node); } catch (e) {}
+        S._connAt = Date.now(); S._rxStage = 0; S._rxWarned = false; S._holdersChecked = false;
+        renderConnCard();
+        toast("Board found on " + node, "ok", 6000);
+        return true;
+      }
+      addConsole("warn", `[SYS] ${node}: opened but silent (${link.rxCount} B received)`);
+      try { await link.disconnect(); } catch (e) {}
+      await nap(200);
+    }
+    /* هیچ‌کدام جواب نداد → نشست را روی همان گره‌ی اول برگردان تا کاربر
+       بتواند RESET را بزند و اپ وصل بماند (نه اینکه بی‌اتصال رها شود) */
+    if (cur) {
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      try {
+        await link.connectVia(cur, baud);
+        addConsole("sys", `[SYS] back on ${cur} — press the board's RESET button now`);
+      } catch (e) {
+        addConsole("warn", `[SYS] could not re-open ${cur}: ${e.message}`);
+      }
+    }
+    addConsole("err", "!! no serial device on this system answered — the board is not running or not transmitting");
+    toast("No device answered — check the board's power and RESET", "err", 8000);
+    return false;
+  } finally {
+    S._nodeSweep = false;
+  }
+}
+
+/* یک بار بگو RESET بزن — بردِ بدونِ مدارِ ریستِ خودکار تا RESET نزند حرف
+   نمی‌زند. پورت را باز و بسته نمی‌کند. */
+function promptBoardReset() {
+  addConsole("warn", "👉 Nothing came from the board in 6 s — press the RESET button on the Arduino NOW and leave the app connected (this board has no auto-reset circuit, so it only starts talking after that).");
+  toast("Press the board's RESET button", "info", 8000);
+  const hintR = $("portHint");
+  if (hintR) hintR.innerHTML = "<b>Press the RESET button on the Arduino</b> &mdash; the app stays connected and keeps listening.";
+  setTimeout(() => { try { send(Cmd.status(), { auto: true }); } catch (e) {} }, 500);
+}
+
 async function findLiveNode(preferred) {
   try {
     const names = (await window.electronAPI.listSystemPorts()) || [];
@@ -1094,7 +1180,7 @@ function bindLinkEvents(link) {
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
     S._userClosed = false;
     S._connAt = Date.now(); S._rxWarned = false; S._rxStage = 0;
-    S._holdersChecked = false;
+    S._holdersChecked = false; S._sweepTried = false;
     S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
     S._eioExplained = false;
     renderConnCard();
@@ -1111,7 +1197,7 @@ function bindLinkEvents(link) {
     /* افتِ ناگهانی (نه به خواستِ کاربر) → خودمان دنبالش می‌رویم */
     const path = link.activeLabel || "";
     if (was && !S._userClosed && IpcSerialLink.supported && looksLikeDevPath(path) &&
-        !S._reconnecting) {
+        !S._reconnecting && !S._nodeSweep) {
       setTimeout(() => { autoReconnect(path, link.baud || FW.BAUD).catch(() => {}); }, 200);
     }
   };
@@ -1956,7 +2042,7 @@ function updateLinkStats() {
        هیچ‌کدام پورت را دوباره باز نمی‌کند: باز و بسته‌کردنِ پشتِ سرِ هم روی
        CH340 خودش افتِ تغذیه و بیرون‌افتادن از BUS را بیشتر می‌کند. */
     const silentMs = (S._connAt && S.mode === "serial") ? Date.now() - S._connAt : 0;
-    const busyNow = S._correcting || S._reconnecting;
+    const busyNow = S._correcting || S._reconnecting || S._nodeSweep;
     /* پله‌ی ۰ (۳.۵ ثانیه): اول ببین کسِ دیگری پورت را گرفته. در لینوکس tty
        انحصاری نیست: یک خواننده‌ی دوم همه‌ی بایت‌های برد را می‌بلعد درحالی‌که
        دستورهای اپ به برد می‌رسند — یعنی موتورها تکان می‌خورند ولی RX صفر
@@ -1978,13 +2064,16 @@ function updateLinkStats() {
         }).catch(() => {});
       }
     }
-    if (S.serial.rxCount === 0 && silentMs > 6000 && S._rxStage === 0 && S._holdersChecked && !busyNow) {
-      S._rxStage = 1; S._rxWarned = true;
-      addConsole("warn", "👉 Nothing came from the board in 6 s — press the RESET button on the Arduino NOW and leave the app connected (this board has no auto-reset circuit, so it only starts talking after that).");
-      toast("Press the board's RESET button", "info", 8000);
-      const hintR = $("portHint");
-      if (hintR) hintR.innerHTML = "<b>Press the RESET button on the Arduino</b> &mdash; the app stays connected and keeps listening.";
-      setTimeout(() => { try { send(Cmd.status(), { auto: true }); } catch (e) {} }, 500);
+    if (S.serial.rxCount === 0 && silentMs > 5500 && S._rxStage === 0 && S._holdersChecked && !busyNow && !S._sweepTried) {
+      /* اول یک دورِ محدود روی بقیه‌ی گره‌های زنده (شاید برد جای دیگری است)،
+         بعد — اگر هیچ‌کدام جواب نداد — درخواستِ RESET. */
+      S._rxStage = 1; S._rxWarned = true; S._sweepTried = true;
+      tryOtherNodes().then((found) => {
+        if (found) { S._rxStage = 0; return; }
+        if (S.mode === "serial" && S.serial.rxCount === 0 && !S._userClosed) promptBoardReset();
+      }).catch(() => {
+        if (S.mode === "serial" && S.serial.rxCount === 0) promptBoardReset();
+      });
     } else if (S.serial.rxCount === 0 && silentMs > 16000 && S._rxStage === 1 && !busyNow) {
       S._rxStage = 2;
       const label = S.serial.activeLabel || "";   /* پیش از هر استفاده‌ای */

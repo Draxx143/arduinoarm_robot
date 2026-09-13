@@ -142,7 +142,8 @@ function installMock(w, board) {
         /* بردِ واقعی هم بعد از پالسِ ریست بنر می‌فرستد — ولی فقط اگر سرعت
            درست باشد؛ وگرنه یا ساکت است یا بایتِ بی‌معنی می‌دهد. */
         const rightSpeed = (!board.onlyBaud || board.onlyBaud === Number(baud)) &&
-                           (!board.realBaud || board.realBaud === Number(baud));
+                           (!board.realBaud || board.realBaud === Number(baud)) &&
+                           (!board.answerPaths || board.answerPaths.indexOf(String(p)) !== -1);
         if (rightSpeed) setTimeout(() => board.reply(), 30);
         else if (board.garbage) setTimeout(() => board.replyGarbage(), 30);
         return { id: 1000001 };
@@ -152,7 +153,8 @@ function installMock(w, board) {
         const last = board.opened[board.opened.length - 1] || {};
         if (board.realBaud && board.realBaud !== Number(last.baud)) {
           if (board.garbage) board.replyGarbage();
-        } else if (!board.onlyBaud || board.onlyBaud === Number(last.baud)) {
+        } else if ((!board.onlyBaud || board.onlyBaud === Number(last.baud)) &&
+                   (!board.answerPaths || board.answerPaths.indexOf(String(last.path || "")) !== -1)) {
           board.reply();
         }
         return {};
@@ -423,15 +425,47 @@ async function main() {
   ok(w.eval("S.mode") === "serial", "اتصال برقرار شد (نه «وصل نمی‌شود»)");
   ok(w.eval("S.serial.rxCount") > 0, "RX > 0 — داده‌ی برد رسید",
      "rxCount=" + w.eval("S.serial.rxCount"));
-  /* پنجره را می‌بندیم ولی سناریوی بعدی (جمع‌شدنِ پیامِ تکراری) به یک پنجره‌ی
-     زنده نیاز دارد، پس یکی تازه باز می‌کنیم — نه اینکه به همین تکیه کند. */
   dom.window.close();
-  const boardDedupe = makeBoard();
-  dom = await loadApp(port, boardDedupe);
+
+  /* ---------- ۷ج) برد روی گره‌ی دیگری است: یک دورِ محدود ---------- */
+  console.log("\n-- ttyUSB0 ساکت است ولی برد روی ttyUSB1 جواب می‌دهد --");
+  const boardSweep = makeBoard();
+  boardSweep.answerPaths = ["/dev/ttyUSB1"];
+  boardSweep.portPlan = [["/dev/ttyUSB0", "/dev/ttyUSB1"], ["/dev/ttyUSB0", "/dev/ttyUSB1"],
+                         ["/dev/ttyUSB0", "/dev/ttyUSB1"], ["/dev/ttyUSB0", "/dev/ttyUSB1"]];
+  dom = await loadApp(port, boardSweep);
   w = dom.window;
+  ok(w.eval("typeof tryOtherNodes") === "function", "بازیابیِ «یک دور روی گره‌های دیگر» وجود دارد");
+  w.document.getElementById("selBaud").value = "115200";
+  await w.eval("connectSystemPort('/dev/ttyUSB0')");
+  await sleep(400);
+  ok(w.eval("S.serial.rxCount") === 0, "روی گره‌ی انتخابیِ کاربر ساکت است",
+     "rxCount=" + w.eval("S.serial.rxCount"));
+  w.eval("S._connAt = Date.now() - 4000; updateLinkStats();");   /* بررسیِ مالکیت */
+  await sleep(300);
+  w.eval("S._connAt = Date.now() - 6000; updateLinkStats();");   /* شروعِ یک دور */
+  await sleep(3200);
+  ok(/one pass over the other live device/.test(consoleText(dom)),
+     "گفت یک دور روی بقیه‌ی گره‌های زنده می‌زند (نه نردبانِ baud)");
+  ok(boardSweep.opened.some((o) => o.path === "/dev/ttyUSB1"), "گره‌ی دیگر را امتحان کرد",
+     JSON.stringify(boardSweep.opened.map((o) => o.path)));
+  ok(/the board answered on \/dev\/ttyUSB1/.test(consoleText(dom)),
+     "برد را روی گره‌ی دیگر پیدا کرد و همان‌جا ماند");
+  ok(w.eval("S.mode") === "serial", "اپ متصل است");
+  ok(w.eval("S.serial.rxCount") > 0, "RX > 0 روی گره‌ی درست", "rx=" + w.eval("S.serial.rxCount"));
+  ok(w.eval("S._nodeSweep") === false, "پرچمِ sweep پاک شد (اتصالِ بعدی قفل نمی‌شود)");
+  const tries = boardSweep.opened.filter((o) => o.path === "/dev/ttyUSB1").length;
+  ok(tries === 1, "**یک** دور، نه بیشتر — چرنِ قدیمی برنگشته", tries + " بار");
+  ok(!boardSweep.opened.some((o) => o.baud !== 115200),
+     "فقط با سرعتِ خودِ فریم‌ور امتحان کرد (۹۶۰۰/۵۷۶۰۰/… نه)",
+     JSON.stringify(boardSweep.opened.map((o) => o.baud)));
+  dom.window.close();
 
   /* ---------- ۸) پیامِ تکراری در کنسول جمع می‌شود ---------- */
   console.log("\n-- ۲۰ بار «[Errno 5]» پشتِ سرِ هم: کنسول پر نمی‌شود --");
+  const boardDedupe = makeBoard();     /* پنجره‌ی خودش — به سناریوی قبل تکیه نکند */
+  dom = await loadApp(port, boardDedupe);
+  w = dom.window;
   const cBefore = w.eval("document.getElementById('consoleBox').children.length");
   w.eval(`for (let i = 0; i < 20; i++) addConsole("err", "!! [Errno 5] Input/output error")`);
   const cAfter = w.eval("document.getElementById('consoleBox').children.length");
