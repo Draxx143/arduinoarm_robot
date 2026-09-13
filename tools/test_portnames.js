@@ -129,6 +129,23 @@ ok(typeof pybridge.findOrphans === "function" && typeof pybridge.killOrphans ===
   });
   ok(res2.length === 0, "وقتی یتیمی نیست هیچ کاری نمی‌کند");
 
+  /* ⚠ این همان باگی است که کاربر دید: اگر pgrep بی‌پاسخ بماند، findOrphans
+     هرگز settle نمی‌شد و serialport:open پیش از بازکردنِ پورت گیر می‌کرد —
+     نه خطا، نه موفقیت، فقط «[SYS] opening …» برای همیشه. */
+  const t0 = Date.now();
+  const hung = await pybridge.findOrphans({ execFile: () => {}, timeoutMs: 400 });
+  const waited = Date.now() - t0;
+  ok(Array.isArray(hung) && hung.length === 0,
+     "findOrphans با execFileِ بی‌پاسخ هم حل می‌شود (هرگز hang نمی‌شود)");
+  ok(waited < 1500, "مهلتِ داخلی سرِ وقت آزاد کرد", waited + " ms");
+  const t1 = Date.now();
+  const threw = await pybridge.findOrphans({ execFile: () => { throw new Error("spawn ENOENT"); }, timeoutMs: 400 });
+  ok(Array.isArray(threw) && Date.now() - t1 < 500,
+     "استثنای همزمانِ execFile هم به «چیزی پیدا نشد» ختم می‌شود");
+  const t2 = Date.now();
+  await pybridge.killOrphans({ execFile: () => {}, kill: () => {}, timeoutMs: 300 });
+  ok(Date.now() - t2 < 1500, "killOrphans هم در همان حالت بی‌پاسخ، حل می‌شود");
+
   /* ---------- ۴) قاعده‌ی udev و نصب‌کننده‌ها ---------- */
   console.log("\n-- قاعده‌ی udev: باید در بسته باشد و نصب شود --");
   const rulePath = path.join(ROOT, "desktop-app/build/99-axis5-serial.rules");

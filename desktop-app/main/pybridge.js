@@ -204,14 +204,24 @@ function findOrphans(o) {
   const opt = o || {};
   const run = opt.execFile || execFile;
   const mine = new Set([...pids(), process.pid, ...(opt.selfPids || [])]);
+  /* ⚠ این تابع **هرگز** نباید hang شود: در main.js پیش‌درآمدِ بازکردنِ پورت
+   * است و اگر settles نکند، serialport:open نه خطا می‌دهد نه موفقیت — کاربر
+   * فقط «[SYS] opening …» را می‌بیند و بعد هیچ. پس یک مهلتِ داخلیِ مستقل از
+   * timeoutِ خودِ execFile دارد و هر استثنا هم به «چیزی پیدا نشد» ختم می‌شود. */
+  const capMs = Number(opt.timeoutMs) || 2500;
   return new Promise((resolve) => {
-    if (process.platform === "win32") return resolve([]);
-    run("pgrep", ["-f", "serial_bridge.py"], { timeout: 3000 }, (err, stdout) => {
-      /* pgrep با خروجیِ ۱ برمی‌گردد وقتی هیچ‌چیز پیدا نکند — خطا نیست */
-      const found = String(stdout || "").split(/\s+/).map((x) => parseInt(x, 10))
-        .filter((pid) => pid && !mine.has(pid));
-      resolve([...new Set(found)]);
-    });
+    let done = false;
+    const fin = (v) => { if (!done) { done = true; clearTimeout(cap); resolve(v); } };
+    const cap = setTimeout(() => fin([]), capMs);
+    if (process.platform === "win32") return fin([]);
+    try {
+      run("pgrep", ["-f", "serial_bridge.py"], { timeout: Math.max(500, capMs - 500) }, (err, stdout) => {
+        /* pgrep با خروجیِ ۱ برمی‌گردد وقتی هیچ‌چیز پیدا نکند — خطا نیست */
+        const found = String(stdout || "").split(/\s+/).map((x) => parseInt(x, 10))
+          .filter((pid) => pid && !mine.has(pid));
+        fin([...new Set(found)]);
+      });
+    } catch (e) { fin([]); }
   });
 }
 
@@ -220,6 +230,7 @@ function killOrphans(o) {
   const killer = opt.kill || ((pid, sig) => process.kill(pid, sig));
   const log = typeof opt.log === "function" ? opt.log : () => {};
   return findOrphans(opt).then(async (found) => {
+    /* هیچ‌کدام از این قدم‌ها نباید promise را بی‌پاسخ بگذارند */
     const killed = [];
     for (const pid of found) {
       try { killer(pid, "SIGTERM"); killed.push(pid); }

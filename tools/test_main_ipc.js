@@ -191,6 +191,40 @@ async function main() {
   ok(!names.some((n) => /^\/dev\/ttyS\d+$/.test(n)) || names.every((n) => /^\/dev\/ttyS\d+$/.test(n)),
      "پورتِ شبحیِ ttyS وقتی USB هست در فهرست نمی‌ماند", JSON.stringify(names).slice(0, 120));
 
+  /* ---- ⚠ شبیه‌سازیِ دقیقِ باگِ گزارش‌شده: pgrep بی‌پاسخ ----
+     کاربر «[SYS] opening …» را می‌دید و بعد هیچ. اگر پیدا کردنِ پل‌های یتیم
+     هرگز settle نشود، serialport:open هرگز به پل نمی‌رسد. با یک pgrepِ
+     گیرکرده در PATH همان شرایط را می‌سازیم: بازکردنِ پورت باید **با وجودِ
+     آن** کامل شود. */
+  const hangDir = path.join(os.tmpdir(), "axis5-hangbin");
+  require("fs").mkdirSync(hangDir, { recursive: true });
+  const hangPgrep = path.join(hangDir, "pgrep");
+  require("fs").writeFileSync(hangPgrep, "#!/bin/sh\nsleep 60\n", { mode: 0o755 });
+  const oldPath = process.env.PATH;
+  process.env.PATH = hangDir + ":" + oldPath;
+  const board2 = await startBoard();
+  sent.length = 0;
+  const t0 = Date.now();
+  const res2 = await handlers.get("serialport:open")({}, board2.slave, 115200);
+  const took = Date.now() - t0;
+  ok(res2 && !res2.err, "با pgrepِ گیرکرده هم پورت باز شد (open هرگز hang نمی‌شود)",
+     res2 && res2.err ? res2.err : "");
+  ok(took < 6000, "و در کمتر از ۶ ثانیه — مهلتِ داخلی کار کرد", took + " ms");
+  const notices = sent.filter((m) => m.channel === "serialport:notice").map((m) => String(m.payload));
+  ok(notices.some((t) => /leftover bridge/i.test(t)),
+     "breadcrumbِ «بررسیِ پل‌های جامانده» به کنسول رسید", JSON.stringify(notices));
+  ok(notices.some((t) => /starting the serial bridge/i.test(t)),
+     "breadcrumbِ «شروعِ پل» هم رسید — پس اگر جایی گیر کند، آخرین پیام همان است",
+     JSON.stringify(notices));
+  board2.send("AXIS-5 Firmware v1.0.41");
+  await sleep(600);
+  ok(sent.some((m) => m.channel === "serialport:data"),
+     "RX هم در همان وضعیت جریان دارد");
+  await handlers.get("serialport:close")({}, res2.id);
+  await sleep(400);
+  process.env.PATH = oldPath;
+  try { board2.child.kill(); } catch (e) {}
+
   /* ---- پلِ یتیم: باید پیش از open خلاص شود ---- */
   const pybridge = require(path.join(ROOT, "desktop-app", "main", "pybridge.js"));
   const stubExec = (c, a, o, cb) => cb(null, "999991\n999992\n");

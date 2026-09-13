@@ -258,6 +258,16 @@ function connErrorHint(e, portPath) {
   if (/Errno 5|Input\/output error|\bEIO\b/i.test(m))
     return { html: `<b>The USB device dropped off the bus</b>${pp} &mdash; the kernel returned an I/O error, so the CH340 stopped answering. This is electrical, not software: run <code>sudo dmesg | tail -30</code> and look for <code>disabled by hub (EMI?), re-enabling</code> or repeated <code>USB disconnect</code>.<div><b>Fixes, in order:</b> a shorter <b>shielded</b> USB cable &rarr; a rear motherboard port (no hub/front panel) &rarr; <b>common ground</b> between the motor supply and the Arduino &rarr; keep the USB cable away from the stepper wiring &rarr; a USB isolator.</div>`,
              plain: "USB I/O error — the device dropped off the bus (EMI from the motors, a power dip, or a thin/long cable). Try a short shielded cable, a rear USB port, and tie the motor supply ground to the Arduino ground." };
+  /* open هرگز settles نشد: یا یک فرایندِ جامانده پورت را نگه داشته، یا
+     دستگاه نصفه enumerate شده. این حالت قبلاً **بی‌صدا** بود: کاربر فقط
+     «[SYS] opening …» را می‌دید و بعد هیچ. */
+  if (/OPEN_STALLED|never answered while opening/i.test(m))
+    return { html: `<b>The port open never finished</b>${pp} &mdash; the app asked the system to open it and got no answer at all. Two causes, in order:
+      <div>1. <b>A leftover process is holding it.</b> Close the app, then run:
+      <div><code>sudo pkill -f serial_bridge.py</code> &nbsp;·&nbsp; <code>sudo fuser -k ${escH(portPath || "/dev/ttyUSB0")}</code></div>
+      2. <b>The USB device is half-enumerated</b> (it dropped off the bus and did not come back cleanly): <b>unplug the cable, wait 5 s, replug</b>, then Connect. Watch <code>sudo dmesg -w</code> while you replug &mdash; if the kernel prints <code>disabled by hub (EMI?), re-enabling</code> the cause is electrical (motor supply on the USB rail, no common ground, or a thin/long cable).</div>
+      <div>Permanent fix for the daemon case: <code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>`,
+             plain: "The port open never finished" + pp + " — a leftover process is holding it, or the USB device is half-enumerated. Run: sudo pkill -f serial_bridge.py && sudo fuser -k " + (portPath || "/dev/ttyUSB0") + " — then unplug, wait 5 s, replug and Connect." };
   /* پلِ Linux/macOS به python3 نیاز دارد — بدون آن «اتصال» فقط شکست می‌خورد */
   if (/cannot run python|python3|bridge spawn|bridge timeout/i.test(m))
     return { html: `<b>python3 is missing</b>${pp} &mdash; the Linux/macOS serial bridge runs on it:<div><code>sudo apt install python3</code></div>then Disconnect &amp; Connect again.`,
@@ -554,7 +564,15 @@ async function connectSystemPort(name) {
     S.serial = link;
     addConsole("sys", `[SYS] opening ${name} @ ${baud} (system driver)…`);
     try {
-      await link.connectVia(name, baud);
+      /* سقفِ مستقلِ سمتِ رندرر: اگر پروسه‌ی اصلی کلاً بی‌پاسخ بماند (هر
+         حلقه‌ای که settle نشود)، دکمه‌ی «اتصال» نباید برای همیشه روی
+         «opening …» بماند. ۲۵ ثانیه = بعد از سقفِ ۲۰ ثانیه‌ی خودِ main. */
+      await Promise.race([
+        link.connectVia(name, baud),
+        new Promise((_, rej) => setTimeout(() => rej(new Error(
+          "OPEN_STALLED: the main process never answered while opening " + name +
+          " — the port is stuck (a leftover process is holding it, or the USB device is half-enumerated)")), 25000)),
+      ]);
       Store.set("prefer_hw", "1");
     } catch (e) {
       const hint = connErrorHint(e, name);

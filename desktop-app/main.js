@@ -223,6 +223,15 @@ function createWindow() {
     } catch (e) { return { err: String(e.message || e) }; }
   });
   ipcMain.handle("serialport:open", (e, portPath, baud) => new Promise((resolve) => {
+    /* ⚠ قانونِ اصلی: این promise باید در **هر** شرایطی settles شود. قبلاً یک
+     * حلقه‌ی بی‌پاسخ (pgrep) اینجا باعث می‌شد دکمه‌ی «اتصال» برای همیشه روی
+     * «opening …» بماند بدونِ هیچ خطایی — بدترین گزارشِ ممکن برای کاربر. */
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; clearTimeout(hardCap); resolve(v); } };
+    const notice = (m) => { if (win && !win.isDestroyed()) win.webContents.send("serialport:notice", m); };
+    const hardCap = setTimeout(() => done({
+      err: "opening " + portPath + " took longer than 20 s and never answered — the port is stuck. Unplug the USB cable, run: sudo pkill -f serial_bridge.py, then replug and connect again.",
+    }), 20000);
     /* ---- Linux/macOS: پلِ پایتون (ترموسِ خام + پالسِ DTR، بدون وابستگی) ----
        pybridge تضمین می‌کند این promise در **هر** شرایطی یک بار حل شود:
        پورت وجود ندارد / مجوز نیست / پورت دستِ برنامه‌ی دیگری است / python3
@@ -232,17 +241,23 @@ function createWindow() {
       /* پیش از بازکردن: پل‌های یتیمِ نشست‌های قبلی را خلاص کن. tty در لینوکس
        * انحصاری نیست، پس یک serial_bridge.pyِ جامانده همه‌ی بایت‌های برد را
        * می‌بلعد: دستور می‌رود، جواب برنمی‌گردد، اپ «وصل‌نشده» به نظر می‌رسد. */
-      const openNow = (orphansKilled) => pybridge.openBridge({
-        portPath: String(portPath),
-        baud: Number(baud) || 115200,
-        send: (channel, payload) => {
-          if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
-        },
-      }).then((res) => resolve(res && !res.err && orphansKilled && orphansKilled.length
-        ? Object.assign({ orphansKilled }, res) : res));
-      pybridge.killOrphans({
-        log: (m) => { if (win && !win.isDestroyed()) win.webContents.send("serialport:notice", m); },
-      }).then(openNow, () => openNow([]));
+      const openNow = (orphansKilled) => {
+        notice(`starting the serial bridge on ${portPath} @ ${Number(baud) || 115200}…`);
+        return pybridge.openBridge({
+          portPath: String(portPath),
+          baud: Number(baud) || 115200,
+          send: (channel, payload) => {
+            if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+          },
+        }).then((res) => done(res && !res.err && orphansKilled && orphansKilled.length
+          ? Object.assign({ orphansKilled }, res) : res));
+      };
+      /* breadcrumb: اگر کنسول بعد از این پیام ساکت ماند، یعنی همین قدم گیر کرده */
+      notice("checking for leftover bridge processes that would steal the port's bytes…");
+      Promise.resolve()
+        .then(() => pybridge.killOrphans({ log: notice, timeoutMs: 2500 }))
+        .then((k) => openNow(k || []), () => openNow([]))
+        .catch((er) => done({ err: "connect step failed: " + ((er && er.message) || er) }));
       return;
     }
     if (!SerialPortC) return resolve({ err: "driver unavailable" });
