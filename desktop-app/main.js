@@ -19,8 +19,18 @@ try { SerialPortC = require("serialport").SerialPort; } catch (e) { SerialPortC 
  * در main/pybridge.js است — جدا و بدون وابستگی به electron، تا بتوان با
  * Node خالی تستش کرد (tools/test_pybridge.js). */
 const pybridge = require("./main/pybridge.js");
-const scan = require("./main/scan.js");
-const doctor = require("./main/doctor.js");
+
+/* ---- پورت‌های واقعی در برابر پورت‌های شبحیِ مادربرد ---------------------
+   node-serialport روی لینوکس /dev/ttyS0..ttyS31 را هم فهرست می‌کند؛ هیچ‌کدام
+   برد نیستند و انتخاب‌کردن‌شان فقط «وصل نشد» می‌سازد. وقتی گره‌ی USB/بلوتوثِ
+   واقعی هست، ttyS*ها را دور می‌ریزیم. این بخشی از خودِ اتصال است (فهرستِ
+   پورت)، نه ابزارِ تشخیص. */
+function pickRealPorts(names, extra) {
+  const all = [...new Set([...(names || []), ...(extra || [])]
+    .map((x) => String(x || "").trim()).filter(Boolean))];
+  const hasUsb = all.some((p) => /tty(USB|ACM)\d|rfcomm\d|^COM\d+$/i.test(p));
+  return (hasUsb ? all.filter((p) => !/^\/dev\/ttyS\d+$/.test(p)) : all).sort();
+}
 
 /* نسخه‌ی فریم‌وری که این اپ انتظار دارد — باید با FIRMWARE_VERSION در
  * firmware/RobotArm_Firmware/Config.h یکی باشد (تستِ مرحله‌ی ۵ چک می‌کند). */
@@ -159,15 +169,6 @@ function createWindow() {
     return { mainRx: rx, kind };
   });
 
-  /* Raw OS-level port probe: 2 s of `cat` straight from the kernel.
-   * Call with the app port CLOSED. Returns byte count + a sample. */
-  ipcMain.handle("port:probe", (e, portPath) => new Promise((resolve) => {
-    execFile("timeout", ["2", "cat", String(portPath)], { timeout: 4000, maxBuffer: 262144 }, (err, stdout) => {
-      const out = String(stdout || "");
-      resolve({ bytes: out.length, sample: out.slice(0, 160) });
-    });
-  }));
-
   /* Who else has the port open? (RX=0 usually means a 2nd reader is
    * stealing the bytes — name it so the user knows what to close) */
   ipcMain.handle("port:holders", (e, portPath) => new Promise((resolve) => {
@@ -186,56 +187,6 @@ function createWindow() {
     });
   }));
   ipcMain.on("serial:expect-port", (e, name) => { expectedPortName = String(name || ""); });
-
-  /* ---- 🔍 «برد را پیدا کن»: هر گره‌ی واقعی × هر سرعتِ محتمل ----
-     وقتی همه‌چیز سبز است ولی یک بایت هم نمی‌آید، تنها کارِ باقی‌مانده این
-     است که همه‌ی نامزدها را امتحان کنیم و بگوییم برد کجاست. */
-  let findStop = false;
-  ipcMain.on("port:find-stop", () => { findStop = true; });
-  ipcMain.handle("port:find", async (e, opts) => {
-    if (openSerialPorts.size > 0 || pybridge.stats().count > 0) {
-      return { err: "the app is still holding a port — press Disconnect first" };
-    }
-    findStop = false;
-    const names = await listSystemPorts();
-    let extra = [];
-    if (SerialPortC) { try { extra = (await SerialPortC.list()).map((p) => p.path); } catch (er) {} }
-    const ports = scan.pickRealPorts(names, extra);
-    const say = (line) => { if (win && !win.isDestroyed()) win.webContents.send("find:log", String(line)); };
-    say(`scanning ${ports.length} device(s): ${ports.join(", ") || "(none)"}`);
-    try {
-      const out = await scan.findBoard({
-        pybridge,
-        ports,
-        bauds: (opts && Array.isArray(opts.bauds) && opts.bauds.length) ? opts.bauds : undefined,
-        log: say,
-        shouldStop: () => findStop,
-      });
-      return { ports, found: out.found, tried: out.tried, stopped: out.stopped, note: out.note || "" };
-    } catch (er) {
-      return { ports, err: String((er && er.message) || er), found: null, tried: [] };
-    }
-  });
-
-  /* ---- 🩺 عیب‌یابِ اتصال: منطقش در main/doctor.js است (بدون electron،
-     پس با Node خالی قابلِ تست است: tools/test_doctor.js) ---- */
-  ipcMain.handle("port:doctor", async (e, portPath, baud) => {
-    try {
-      return await doctor.runDoctor({
-        portPath: String(portPath || ""),
-        baud: Number(baud) || 115200,
-        pybridge,
-        busy: openSerialPorts.size > 0,
-        platform: process.platform,
-        expectedFw: EXPECTED_FW,
-        selfPids: [process.pid, ...pybridge.pids()],
-      });
-    } catch (er) {
-      return { port: String(portPath || ""), baud: Number(baud) || 115200, checks: [
-        { name: "doctor", ok: false, detail: "the doctor itself failed: " + ((er && er.message) || er), fix: "" },
-      ] };
-    }
-  });
 
   /* ---- Main-process serial backend (bypasses Chromium Web Serial) ---- */
   ipcMain.handle("serialport:available", () => !!SerialPortC);
@@ -258,7 +209,7 @@ function createWindow() {
        * یکی واقعی بود. وقتی گره‌ی USB موجود است، آن‌ها را حذف کن. */
       let osNames = [];
       try { osNames = await listSystemPorts(); } catch (er) {}
-      const keep = new Set(scan.pickRealPorts(osNames, list.map((p) => p.path)));
+      const keep = new Set(pickRealPorts(osNames, list.map((p) => p.path)));
       return { ports: list.filter((p) => keep.has(p.path)).map((p) => ({
         path: p.path,
         friendly: p.friendlyName || p.manufacturer || "",

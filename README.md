@@ -248,8 +248,8 @@ bash tools/install-linux.sh --force        # نصب دوباره‌ی همان �
 لینک مستقیم بسته‌ها (ریپو عمومی است، با `wget` هم می‌شود):
 
 ```bash
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.48-amd64.deb
-wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.48-x86_64.AppImage
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.49-amd64.deb
+wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5-Robot-Control-1.0.49-x86_64.AppImage
 ```
 
 > اگر شماره‌ی نسخه عوض شده باشد، `tools/install-linux.sh` خودش بالاترین نسخه‌ی
@@ -371,49 +371,53 @@ ch341-uart ttyUSB0: ch341-uart converter now disconnected from ttyUSB0
 
 اپ در این وضعیت خودش کار درست را می‌کند: منتظرِ برگشتِ برد می‌ماند، گره‌ی
 تازه‌ای که کرنل می‌سازد را **پیدا می‌کند** (چون اسمش بین `ttyUSB0` و
-`ttyUSB1` عوض می‌شود) و با همان سرعتِ قبلی وصل می‌شود. 🩺 عیب‌یاب هم اگر
-گره وسطِ دست‌دادن ناپدید شود، بررسیِ `usb ✗` را با همین راه‌حل‌ها می‌دهد.
+`ttyUSB1` عوض می‌شود) و با همان سرعتِ قبلی وصل می‌شود. خطای تکراریِ
+`[Errno 5]` هم در کنسول جمع می‌شود (`×N`) تا سیلِ پیام، علتِ اصلی را پنهان
+نکند.
 
 ---
 
-## اگر برد وصل نمی‌شود: 🔍 «برد را پیدا کن» و 🩺 عیب‌یاب
+## اگر برد وصل نمی‌شود
 
-اگر همه‌چیز سبز است (python3، گروه، مجوز، نبودِ خواننده‌ی دوم) ولی **یک بایت
-هم** نمی‌آید، دیگر جای حدس نیست: دکمه‌ی **🔍 Find board** هر گره‌ی واقعیِ
-سریال (`ttyUSB0`، `ttyUSB1`، `ttyACM0`، …) را در هر سرعتِ رایج
-(۱۱۵۲۰۰/۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰/۱۹۲۰۰) باز می‌کند، `status` و `help` می‌فرستد و
-گوش می‌دهد — و می‌گوید برد **کجاست و با چه سرعتی**، بعد خودش به همان
-وصل می‌شود. فهرستِ پورت‌ها هم پاک شد: `node-serialport` در لینوکس ۳۲ پورتِ
-شبحیِ `/dev/ttyS*` را هم می‌داد (کاربر «۳۳ دستگاه» می‌دید درحالی‌که یکی
-واقعی بود)؛ وقتی گره‌ی USB هست آن‌ها حذف می‌شوند.
+اپ از نسخه‌ی ۱.۰.۴۹ هیچ ابزارِ تشخیصیِ جداگانه‌ای ندارد — چون خودِ آن
+ابزارها (کاوشِ پشتِ سرِ همِ baud، باز و بسته‌کردنِ مکررِ پورت) روی CH340
+باعثِ افتِ تغذیه و بیرون‌افتادنِ دستگاه از BUS می‌شدند، یعنی مشکل را بدتر
+می‌کردند. به‌جایش اپ **خودش** این سه کار را می‌کند:
 
-🩺 **عیب‌یاب** هم حالا اگر اپ متصل باشد، خودش یک لحظه قطع می‌کند تا
-**دست‌دادنِ زنده** واقعاً اجرا شود (قبلاً «رد شد چون اپ متصل است» می‌گفت،
-یعنی بی‌فایده‌ترین گزارشِ ممکن) و بعد دوباره وصل می‌شود.
-
-## 🩺 عیب‌یابِ اتصال
-
-اپ از نسخه‌ی ۱.۰.۴۵ **خودش** سه کار را انجام می‌دهد تا «کامل وصل نمی‌شود»
-بدونِ دخالتِ تو حل شود:
-
-1. دکمه‌ی **اتصال** در اپِ دسکتاپ همیشه از **پلِ سیستمی** می‌رود (ترموسِ خام
-   + پالسِ ریستِ درست + عیب‌یاب)، حتی وقتی کشوی پورت خالی است — در آن حالت
-   خودش تنها پورتِ واقعیِ سیستم (`/dev/ttyACM*` یا `/dev/ttyUSB*`) را
-   برمی‌دارد. قبلاً با کشوی خالی به وب‌سریالِ کرومیوم می‌افتاد: مسیری که نه
-   پالسِ ریستِ درست دارد، نه عیب‌یاب، نه راهنما.
-2. مسیرِ وب‌سریال هم حالا خطوطِ مودم را کنترل می‌کند (`setSignals`) — بدونِ
-   آن، بردهای USB بومی (Leonardo/Micro/ESP32) «میزبان وصل نیست» فرض می‌کنند
-   و هر `Serial.print` را بی‌صدا دور می‌ریزند.
-3. اگر بعد از اتصال **RX صفر** بماند، اول صریح می‌گوید «دکمه‌ی RESET روی
-   برد را بزن» (بسیاری از کلون‌های CH340 مدارِ ریستِ خودکار ندارند و فقط
-   دستی حرف می‌زنند) و بعد نردبانِ baud را می‌رود — **اول ۱۱۵۲۰۰** (سرعتِ
-   خودِ فریم‌ور)، بعد ۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰/۱۹۲۰۰. فقط سرعتی پذیرفته می‌شود
-   که پاسخِ **خوانا و شناخته‌شده** بدهد: بایتِ بی‌معنی دلیل بر درست بودنِ
-   سرعت نیست.
+1. دکمه‌ی **اتصال** همیشه از **پلِ سیستمی** می‌رود (ترموسِ خام + پالسِ ریستِ
+   درست)، حتی وقتی کشوی پورت خالی است — در آن حالت خودش تنها پورتِ واقعیِ
+   سیستم را برمی‌دارد. پورت‌های شبحیِ `/dev/ttyS*` هم از فهرست حذف
+   می‌شوند (قبلاً کاربر «۳۳ دستگاه» می‌دید درحالی‌که یکی واقعی بود).
+2. مسیرِ وب‌سریال هم خطوطِ مودم را کنترل می‌کند (`setSignals`) — بدونِ آن،
+   بردهای USB بومی (Leonardo/Micro/ESP32) «میزبان وصل نیست» فرض می‌کنند و هر
+   `Serial.print` را بی‌صدا دور می‌ریزند.
+3. اگر بعد از اتصال **RX صفر** بماند، **یک بار** می‌گوید «دکمه‌ی RESET روی
+   برد را بزن» و منتظر می‌ماند — پورت را دوباره باز نمی‌کند. اگر بعد از
+   RESET هم ساکت ماند، حکمِ روشن می‌دهد: برد از USB می‌افتد (EMI/تغذیه) و
+   راهِ تأییدش `sudo dmesg | tail -30` است.
 4. اگر داده می‌آید ولی **کاراکترِ بی‌معنی** است، یعنی سرعت غلط است — اپ
    صریح می‌گوید `BAUD RATE IS WRONG` و خودش به ۱۱۵۲۰۰ برمی‌گردد و دوباره
-   وصل می‌شود.
+   وصل می‌شود (فقط یک بار، نه در یک نردبان).
 
+اگر می‌خواهی بیرون از اپ بررسی کنی، اسکریپتِ ترمینال هست (بدونِ UI):
+
+```bash
+bash tools/diagnose-linux.sh              # خودش پورت را پیدا می‌کند
+bash tools/diagnose-linux.sh /dev/ttyUSB0 # یا پورتِ مشخص
+bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه باشد
+```
+
+خروجیِ بخشِ «دست‌دادنِ واقعی با برد» تعیین‌کننده است:
+
+| چه دیدی | یعنی | کار |
+|---|---|---|
+| `AXIS-5 Firmware v1.0.41` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
+| هیچ بایتی نیامد | برد ساکت است | دکمه‌ی **RESET** روی برد را بزن؛ بعد LED چشمک‌زن، کابلِ **دیتا** و تغذیه‌ی خارجی را چک کن |
+| متنِ به‌هم‌ریخته | baud اشتباه | فریم‌ور روی ۱۱۵۲۰۰ است؛ اپ خودش برمی‌گرداند |
+| `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |
+| `Resource busy` | خواننده‌ی دوم | Arduino IDE / Serial Monitor / اپِ دوم را ببند |
+| `disabled by hub (EMI?), re-enabling` در dmesg | افتِ الکتریکیِ USB | بخشِ «افتِ USB (EMI)» بالای همین صفحه |
+| جواب می‌دهد ولی نسخه ندارد | فریم‌ورِ قدیمی روی برد | `firmware/RobotArm_Firmware/` را دوباره فلش کن |
 
 > **ریشه‌ی شایع‌ترین حالت («پورت شناسایی می‌شود، خطایی نمی‌آید، ولی RX صفر
 > می‌ماند»)** در خودِ پلِ سریال بود و در نسخه‌ی ۱.۰.۴۴ اصلاح شد:
@@ -429,41 +433,11 @@ ch341-uart ttyUSB0: ch341-uart converter now disconnected from ttyUSB0
 > (مرحله‌ی ۱۰/۱۰) همین را روی فایلِ واقعیِ پل پین می‌کند.
 
 
-«پورت شناسایی می‌شود ولی اتصال برقرار نمی‌شود» چند علتِ کاملاً متفاوت دارد.
-به‌جای حدس زدن، دو ابزار داری که **علتِ واقعی را با راه‌حلش** می‌گویند:
-
-**۱) داخلِ اپ دسکتاپ** — دکمه‌ی **🩺 Doctor** کنارِ کشوی انتخابِ پورت.
-این‌ها را بررسی می‌کند و نتیجه را در کنسولِ سریال می‌نویسد:
-`python3` (پلِ لینوکس به آن نیاز دارد) · عضویت در گروه `dialout` · وجودِ
-گرهِ دستگاه · مجوزِ خواندن/نوشتن · اینکه چه فرایندِ دیگری پورت را گرفته ·
-`dmesg` · و در آخر یک **دست‌دادنِ زنده** با برد (بازکردنِ پورت، پالسِ DTR،
-فرستادنِ `status` و `pos`، شمارشِ بایت‌های برگشتی و تشخیصِ نسخه‌ی فریم‌ور).
-اگر بعد از اتصال RX صفر بماند، خودکار یک بار اجرا می‌شود.
-
-**۲) از ترمینال** (بدونِ نیاز به اپ):
-
-```bash
-bash tools/diagnose-linux.sh              # خودش پورت را پیدا می‌کند
-bash tools/diagnose-linux.sh /dev/ttyUSB0 # یا پورتِ مشخص
-bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه باشد
-```
-
-خروجیِ همان بخشِ ۹ («دست‌دادنِ واقعی با برد») تعیین‌کننده است:
-
-| چه دیدی | یعنی | کار |
-|---|---|---|
-| `AXIS-5 Firmware v1.0.41` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
-| هیچ بایتی نیامد | برد ساکت است | عیب‌یاب خودش ۹۶۰۰/۵۷۶۰۰/۳۸۴۰۰ را امتحان می‌کند و می‌گوید کدام جواب داد؛ بعد LED چشمک‌زن، کابلِ **دیتا** و تغذیه‌ی خارجی را چک کن |
-| متنِ به‌هم‌ریخته | baud اشتباه | با ۹۶۰۰ امتحان کن؛ فریم‌ور روی ۱۱۵۲۰۰ است |
-| `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |
-| `Resource busy` | خواننده‌ی دوم | Arduino IDE / Serial Monitor / اپِ دوم را ببند |
-| جواب می‌دهد ولی نسخه ندارد | فریم‌ورِ قدیمی روی برد | `firmware/RobotArm_Firmware/` را دوباره فلش کن |
-
 ---
 
 ## Development
 
-`tools/hosttest/run_tests.sh` runs thirteen stages against the **real firmware and
+`tools/hosttest/run_tests.sh` runs ten stages against the **real firmware and
 GUI sources** (no hardware needed):
 
 1. **Compile** every `.cpp` + the sketch with g++ against an Arduino stub.
@@ -491,32 +465,22 @@ GUI sources** (no hardware needed):
    on a **real pty** (`tools/pty_holder.py`) and checks open → RX → TX → close,
    plus every failure mode (missing port, non-tty file, no python3) — each must
    return `{err}` fast instead of hanging the Connect button forever.
-9. **Connection doctor** (`tools/test_doctor.js`): runs `desktop-app/main/doctor.js`
-   against a **fake board** (`tools/fake_board.py`) and verifies it correctly
-   diagnoses a healthy board + firmware version, an old firmware, a missing
-   device, an already-connected app, a missing `dialout` group, missing python3
-   and a second process holding the port — plus the **automatic baud probe**:
-   a board that is silent at 115200 but answers at 9600 is found and named.
-10. **Reset pulse** (`tools/test_reset_lines.py`): runs the real
+9. **Reset pulse** (`tools/test_reset_lines.py`): runs the real
     `bridge/serial_bridge.py` on a pty with a stubbed `fcntl` and asserts the
     DTR/RTS sequence ends with **both lines at the same level**, so the board is
     left running instead of held in reset (the classic RX=0 cause). The same
     rule is checked in `tools/diagnose-linux.sh`.
-11. **Connect paths** (`tools/test_connect_paths.js`): loads the desktop
-    renderer in jsdom with a mock `electronAPI` and pins the three things that
-    used to cause RX=0 — Web Serial must pulse DTR/RTS and end with both lines
-    at the same level, the Connect button must use the **system bridge** even
-    with an empty port dropdown, and a board that only answers at 9600 must be
-    found by the automatic baud ladder (which also updates the baud selector).
-
-12. **Find-the-board scanner** (`tools/test_scan.js`): sweeps every real
-    device node × every common baud with the fake board and checks it reports
-    the right node *and* speed, never accepts unreadable bytes as "found",
-    survives a missing node, and honours cancel — plus that the 32 phantom
-    `/dev/ttyS*` ports are dropped from the list when a real USB node exists.
+10. **Connect paths** (`tools/test_connect_paths.js`): loads the desktop
+    renderer in jsdom with a mock `electronAPI` and pins what actually fixes
+    RX=0 — Web Serial must pulse DTR/RTS and end with both lines at the same
+    level, the Connect button must use the **system bridge** even with an empty
+    port dropdown, unreadable bytes must trigger exactly one automatic baud
+    correction, a silent board must get **one** RESET prompt and **no** port
+    re-open, a USB drop-out must auto-reconnect to the renamed node, and the
+    diagnostic tools must stay deleted.
 
 ```bash
-bash tools/hosttest/run_tests.sh     # همه‌ی دوازده مرحله
+bash tools/hosttest/run_tests.sh     # همه‌ی ده مرحله
 cd tools && npm install              # فقط برای مرحله‌ی ۷ (jsdom) — اختیاری
 ```
 

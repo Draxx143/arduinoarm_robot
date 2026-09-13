@@ -34,8 +34,6 @@
       </select>
       <select id="hdrPort" title="Serial port — ⚡ Connect Arduino dials this port"><option value="">pick port…</option></select>
       <button class="btn small" id="hdrScan" title="Rescan serial ports">&#8635;</button>
-      <button class="btn small" id="btnFind" title="Try every real serial device at every common baud rate and report which one is the board">🔍 Find board</button>
-      <button class="btn small" id="btnDoctor" title="Connection doctor: python3, dialout group, device permissions, who else holds the port, dmesg, and a live handshake with the board">🩺 Doctor</button>
       <label class="chk" style="display:flex;align-items:center;gap:4px;font-size:10.5px;margin-inline-end:2px" title="Auto-connect the best port at startup"><input type="checkbox" id="chkAutoPort"> auto</label>
       <button class="btn teal" id="btnConnect">⚡ Connect Arduino</button>
       <button class="btn amber" id="btnSim">▦ Simulator</button>
@@ -399,7 +397,6 @@
         <div class="card-body">
           <div class="console-tools">
             <button class="btn small" id="btnAck" title="Toggle per-command confirmations from the board (ack on/off)">&#10003; ACK: OFF</button>
-            <button class="btn small" id="btnPortTest" title="2 s raw OS-level read of the port — checks whether the board transmits at all">&#128269; Port Test</button>
             <span class="tiny" id="ioMeter" style="margin-left:auto" title="Bytes sent / received">TX — · RX —</span>
           </div>
           <div id="consoleBox"></div>

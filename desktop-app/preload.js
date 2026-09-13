@@ -14,14 +14,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   serialDriverAvailable: () => ipcRenderer.invoke("serialport:available"),
   portHolders: (p) => ipcRenderer.invoke("port:holders", p),
   serialStats: () => ipcRenderer.invoke("serialport:stats"),
-  portProbe: (p) => ipcRenderer.invoke("port:probe", p),
-  portDoctor: (p, baud) => ipcRenderer.invoke("port:doctor", p, baud),
-  portFind: (opts) => ipcRenderer.invoke("port:find", opts || {}),
-  portFindStop: () => ipcRenderer.send("port:find-stop"),
-  onFindLog: (cb) => {
-    ipcRenderer.removeAllListeners("find:log");
-    ipcRenderer.on("find:log", (_e, line) => cb(String(line)));
-  },
   ipcSerial: {
     list: () => ipcRenderer.invoke("serialport:list"),
     open: (portPath, baud) => ipcRenderer.invoke("serialport:open", portPath, baud),

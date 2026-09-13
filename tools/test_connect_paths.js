@@ -2,7 +2,7 @@
 /* ============================================================
  * تستِ مسیرهای اتصال — «شناسایی می‌شود ولی کامل وصل نمی‌شود»
  *
- * سه چیزی که این تست پین می‌کند، هر سه علتِ واقعیِ RX=0 بوده‌اند:
+ * چیزهایی که این تست پین می‌کند، همه علتِ واقعیِ «وصل نمی‌شود» بوده‌اند:
  *
  *  ۱) مسیرِ وب‌سریال هم باید خطوطِ مودم را کنترل کند. کرومیوم DTR/RTS را
  *     در وضعیتِ پیش‌فرضِ درایور رها می‌کند: بردهای USB بومی بدونِ DTRِ
@@ -11,12 +11,18 @@
  *     ریست نگه داشته می‌شود.
  *
  *  ۲) در اپِ دسکتاپ، «اتصال» با کشوی خالی باید از **پلِ سیستمی** برود، نه
- *     از وب‌سریال. قبلاً کاربری که فقط دکمه‌ی اتصال را می‌زد واردِ مسیری
- *     می‌شد که نه پالسِ ریستِ درست داشت، نه عیب‌یاب، نه کاوشِ baud.
+ *     از وب‌سریال.
  *
- *  ۳) وقتی RX صفر ماند، اپ باید **خودش** نردبانِ baud را برود و اگر برد با
- *     سرعتِ دیگری حرف زد همان‌جا متصل بماند (و کشوی baud را به‌روز کند)؛
- *     و اگر هیچ سرعتی جواب نداد، صریح بگوید برد ساکت است.
+ *  ۳) بردِ ساکت باید **یک بار** درخواستِ RESET بگیرد و اپ پورت را باز و بسته
+ *     نکند. کاوشِ پشتِ سرِ همِ baud روی CH340 خودش باعثِ افتِ تغذیه و
+ *     بیرون‌افتادنِ دستگاه از BUS می‌شود — یعنی ابزارِ «عیب‌یابی» مشکل را
+ *     بدتر می‌کرد. پس فقط دو پله: RESET بزن، بعد حکمِ روشنِ علتِ الکتریکی.
+ *
+ *  ۴) وقتی USB می‌افتد (EMI)، اپ باید خودش دوباره وصل شود و اگر کرنل اسمِ
+ *     گره را عوض کرد (ttyUSB0 → ttyUSB1) گره‌ی تازه را پیدا کند.
+ *
+ *  ۵) ابزارهای تشخیصی (عیب‌یاب / «برد را پیدا کن» / Port Test) حذف شده‌اند
+ *     و این تست پین می‌کند که دیگر برنگردند.
  *
  * همه با یک electronAPIِ ساختگی در jsdom — بدونِ سخت‌افزار.
  *
@@ -113,24 +119,6 @@ function installMock(w, board) {
     serialDriverAvailable: async () => false,
     serialStats: async () => ({ mainRx: board.rxSent, kind: "py" }),
     portHolders: async () => ({ pids: [], procs: [] }),
-    portProbe: async () => ({ bytes: 0, sample: "" }),
-    portDoctor: async () => ({ port: "/dev/ttyUSB0", baud: 115200,
-      checks: [{ name: "rx", ok: false, detail: "0 byte(s)", fix: "check the board" }] }),
-    /* اسکنر: برد روی ttyUSB1 است نه ttyUSB0 — همان چیزی که هیچ حدسی
-       پیدایش نمی‌کند و فقط امتحانِ همه‌ی گره‌ها پیدایش می‌کند */
-    portFind: async () => {
-      board.findCalls = (board.findCalls || 0) + 1;
-      return {
-        ports: ["/dev/ttyUSB0", "/dev/ttyUSB1"],
-        found: { port: "/dev/ttyUSB1", baud: 115200, firmware: "1.0.41",
-                 sample: "AXIS-5 Firmware v1.0.41" },
-        tried: [{ port: "/dev/ttyUSB0", baud: 115200, bytes: 0, known: false },
-                { port: "/dev/ttyUSB1", baud: 115200, bytes: 120, known: true }],
-        stopped: false,
-      };
-    },
-    portFindStop: () => {},
-    onFindLog: (cb) => { board.findLog = cb; },
     listSystemPorts: async () => {
       /* با portPlan می‌شود «برد از BUS افتاد و با اسمِ دیگری برگشت» را ساخت */
       board.listCalls = (board.listCalls || 0) + 1;
@@ -266,52 +254,57 @@ async function main() {
      "پاسخِ برد (نسخه‌ی فریم‌ور) در اپ دیده شد");
   ok(w.eval("typeof autoPickPort") === "function", "autoPickPort وجود دارد (انتخابِ خودکارِ پورت)");
 
-  /* ---------- ۳) برد فقط با ۹۶۰۰ حرف می‌زند → نردبانِ baud ---------- */
-  console.log("\n-- RX=0 چون فریم‌ور روی ۹۶۰۰ است: بازیابیِ خودکار --");
-  const board2 = makeBoard();
-  board2.onlyBaud = 9600;
-  dom = await loadApp(port, board2);
+  /* ---------- ۳) بردِ ساکت: یک درخواستِ RESET، بدونِ باز و بسته کردنِ پورت ---- */
+  console.log("\n-- بردِ ساکت: فقط یک بار RESET بخواه، پورت را churn نکن --");
+  const boardSilent = makeBoard();
+  boardSilent.onlyBaud = -1;                 /* هیچ‌وقت جواب نمی‌دهد */
+  dom = await loadApp(port, boardSilent);
   w = dom.window;
-  /* نردبان را کوتاه کن تا تست سریع بماند (آرایه const است، ولی محتوایش نه) */
-  w.eval("BAUD_LADDER.splice(0, BAUD_LADDER.length, 9600)");
-  w.document.getElementById("hdrPort").value = "/dev/ttyUSB0";
   w.document.getElementById("selBaud").value = "115200";
   await w.eval("connectSystemPort('/dev/ttyUSB0')");
-  await sleep(600);
-  ok(board2.opened[0] && board2.opened[0].baud === 115200, "اول با ۱۱۵۲۰۰ وصل شد");
+  await sleep(400);
   ok(w.eval("S.serial.rxCount") === 0, "RX صفر ماند — دقیقاً همان علامتِ کاربر",
      "rxCount=" + w.eval("S.serial.rxCount"));
-  const fixed = await w.eval("autoRecoverRx()");
-  await sleep(300);
-  ok(fixed === true, "نردبانِ baud برد را پیدا کرد و متصل ماند");
-  ok(board2.opened.some((o) => o.baud === 9600), "با ۹۶۰۰ هم امتحان کرد",
-     JSON.stringify(board2.opened.map((o) => o.baud)));
-  ok(w.eval("S.serial.rxCount") > 0, "بعد از بازیابی RX > 0 است");
-  ok(w.document.getElementById("selBaud").value === "9600",
-     "کشوی baud به ۹۶۰۰ به‌روز شد (کاربر دفعه‌ی بعد درست وصل می‌شود)",
-     "value=" + w.document.getElementById("selBaud").value);
-  ok(/answers at 9600|۹۶۰۰/.test(consoleText(dom)), "در کنسول گفته شد برد با ۹۶۰۰ جواب می‌دهد");
+  const openedBefore = boardSilent.opened.length;
+  w.eval("S._connAt = Date.now() - 7000; updateLinkStats();");   /* ۶ ثانیه گذشته */
+  await sleep(150);
+  ok(w.eval("S._rxStage") === 1, "پله‌ی ۱ فعال شد");
+  ok(/press the RESET button/i.test(consoleText(dom)), "یک بار گفت دکمه‌ی RESET را بزند");
+  ok(boardSilent.opened.length === openedBefore,
+     "پورت دوباره باز **نشد** (باز و بسته‌کردنِ پشتِ سرِ هم روی CH340 خودش افتِ BUS می‌سازد)",
+     `${openedBefore} → ${boardSilent.opened.length}`);
+  w.eval("S._connAt = Date.now() - 7000; updateLinkStats(); updateLinkStats();");
+  await sleep(100);
+  const resetMsgs = (consoleText(dom).match(/press the RESET button/gi) || []).length;
+  ok(resetMsgs === 1, "درخواستِ RESET تکرار نمی‌شود (کاربر را گیج نمی‌کند)", resetMsgs + " بار");
+  w.eval("S._connAt = Date.now() - 17000; updateLinkStats();");  /* ۱۶ ثانیه گذشته */
+  await sleep(150);
+  ok(w.eval("S._rxStage") === 2, "پله‌ی ۲: حکمِ روشن داده شد");
+  ok(boardSilent.opened.length === openedBefore, "در پله‌ی ۲ هم پورت دست‌نخورده ماند",
+     `${openedBefore} → ${boardSilent.opened.length}`);
+  ok(/dmesg/.test(consoleText(dom)) && /EMI/.test(consoleText(dom)),
+     "علتِ واقعی را گفت: افتِ USB/EMI و راهِ تأییدش (sudo dmesg)");
+  ok(w.eval("S.mode") === "serial", "اپ متصل می‌ماند تا کاربر RESET را بزند (قطع نمی‌شود)");
   dom.window.close();
 
-  /* ---------- ۴) بردِ کاملاً ساکت ---------- */
-  console.log("\n-- بردی که در هیچ baud ای حرف نمی‌زند --");
-  const board3 = makeBoard();
-  board3.onlyBaud = -1;                    /* هیچ‌وقت جواب نمی‌دهد */
-  dom = await loadApp(port, board3);
+  /* ---------- ۴) ابزارهای تشخیصی حذف شده‌اند و نباید برگردند ---------- */
+  console.log("\n-- حذفِ ابزارهای تشخیصی: عیب‌یاب / «برد را پیدا کن» / Port Test --");
+  const boardNone = makeBoard();
+  dom = await loadApp(port, boardNone);
   w = dom.window;
-  w.eval("BAUD_LADDER.splice(0, BAUD_LADDER.length, 9600, 57600)");
-  w.document.getElementById("selBaud").value = "115200";
-  await w.eval("connectSystemPort('/dev/ttyUSB0')");
-  await sleep(500);
-  const fixed3 = await w.eval("autoRecoverRx()");
-  await sleep(400);
-  ok(fixed3 === false, "گزارش داد که بازیابی موفق نبود");
-  ok(board3.opened.filter((o) => o.baud === 115200).length >= 2,
-     "در پایان به baudِ اولیه برگشت (اتصالِ کاربر را خراب رها نمی‌کند)",
-     JSON.stringify(board3.opened.map((o) => o.baud)));
-  ok(/NOTHING at any baud|silent|ساکت/.test(consoleText(dom)),
-     "صریحاً گفت برد در هیچ سرعتی چیزی نفرستاد (نه یک پیامِ مبهم)");
-  ok(w.eval("S.mode") === "serial", "اپ هنوز در وضعیتِ اتصال است تا کاربر بتواند عیب‌یاب را ببیند");
+  ok(w.document.getElementById("btnDoctor") === null, "دکمه‌ی 🩺 Doctor از UI حذف شد");
+  ok(w.document.getElementById("btnFind") === null, "دکمه‌ی 🔍 Find board از UI حذف شد");
+  ok(w.document.getElementById("btnPortTest") === null, "دکمه‌ی 🔬 Port Test از UI حذف شد");
+  ok(w.eval("typeof runPortDoctor") === "undefined", "تابعِ عیب‌یاب دیگر وجود ندارد");
+  ok(w.eval("typeof findMyBoard") === "undefined", "تابعِ «برد را پیدا کن» دیگر وجود ندارد");
+  ok(w.eval("typeof autoRecoverRx") === "undefined", "نردبانِ خودکارِ RX=0 دیگر وجود ندارد");
+  ok(w.eval("typeof BAUD_LADDER") === "undefined", "نردبانِ baud دیگر وجود ندارد");
+  ok(w.electronAPI.portDoctor === undefined && w.electronAPI.portFind === undefined &&
+     w.electronAPI.portProbe === undefined,
+     "پلِ preload هم IPC تشخیصی ندارد (پاک‌سازی کاملِ هر سه لایه)");
+  ok(w.eval("typeof autoReconnect") === "function", "وصلِ دوباره‌ی خودکار هست (همین اصلاحِ اصلی است)");
+  ok(w.eval("typeof findLiveNode") === "function", "یافتنِ گره‌ی تازه بعد از افتِ USB هست");
+  ok(w.eval("typeof autoCorrectBaud") === "function", "اصلاحِ خودکارِ baudِ اشتباه هست");
   dom.window.close();
 
   /* ---------- ۵) بایتِ آشغال = سرعتِ اشتباه (گزارشِ واقعیِ کاربر) ---------- */
@@ -341,66 +334,22 @@ async function main() {
   ok(board4.opened.some((o) => o.baud === 115200), "پورت با ۱۱۵۲۰۰ از نو باز شد");
   dom.window.close();
 
-  /* ---------- ۶) نردبان باید آشغال را نپذیرد ---------- */
-  console.log("\n-- نردبانِ baud: آشغال را رد کند، سرعتِ درست را بپذیرد --");
-  const board5 = makeBoard();
-  board5.realBaud = 57600; board5.garbage = true;
-  dom = await loadApp(port, board5);
+  /* ---------- ۶) قفلِ هم‌زمانی: کلیکِ دوم وسطِ وصلِ دوباره ---------- */
+  console.log("\n-- کلیکِ دوباره‌ی «اتصال» وسطِ وصلِ دوباره (دو خواننده روی یک پورت) --");
+  const boardGuard = makeBoard();
+  dom = await loadApp(port, boardGuard);
   w = dom.window;
-  w.eval("BAUD_LADDER.splice(0, BAUD_LADDER.length, 9600, 57600)");
-  w.document.getElementById("selBaud").value = "115200";
+  const before = boardGuard.opened.length;
+  w.eval("S._reconnecting = true");
   await w.eval("connectSystemPort('/dev/ttyUSB0')");
-  await sleep(500);
-  ok(w.eval("S.serial.rxCount") > 0 && w.eval("S._sawBoardText") === false,
-     "در ۱۱۵۲۰۰ فقط آشغال می‌آید");
-  const fixed5 = await w.eval("autoRecoverRx()");
   await sleep(300);
-  ok(fixed5 === true, "نردبان سرعتِ درست را پیدا کرد و متصل ماند");
-  ok(w.eval("S.serial.baud") === 57600, "روی ۵۷۶۰۰ ماند (نه ۹۶۰۰ که آشغال می‌داد)",
-     "baud=" + w.eval("S.serial.baud"));
-  ok(w.document.getElementById("selBaud").value === "57600", "کشوی baud به‌روز شد");
-  ok(/UNREADABLE/.test(consoleText(dom)),
-     "در کنسول صریح گفت که بایتِ ۹۶۰۰ خوانا نبود");
-  ok(/Press the RESET button/.test(consoleText(dom)),
-     "از کاربر خواست دکمه‌ی RESET را بزند (بردهای بدونِ ریستِ خودکار)");
+  ok(boardGuard.opened.length === before, "نشستِ دومی باز نشد (بایت‌ها دزدیده نمی‌شوند)",
+     `${before} → ${boardGuard.opened.length}`);
+  ok(/busy/i.test(consoleText(dom)), "به کاربر گفت اپ مشغول است");
+  w.eval("S._reconnecting = false");
   dom.window.close();
 
-  /* ---------- ۷) 🔍 برد را پیدا کن: برد روی گره‌ی دیگری است ---------- */
-  console.log("\n-- 🔍 Find board: برد روی /dev/ttyUSB1 است، نه ttyUSB0 --");
-  const board6 = makeBoard();
-  dom = await loadApp(port, board6);
-  w = dom.window;
-  ok(w.document.getElementById("btnFind") !== null, "دکمه‌ی «🔍 Find board» در هدر هست");
-  ok(w.eval("typeof findMyBoard") === "function", "findMyBoard وجود دارد");
-  w.document.getElementById("selBaud").value = "19200";
-  await w.eval("findMyBoard()");
-  await sleep(600);
-  ok(board6.findCalls === 1, "اسکنر از راهِ IPC صدا شد");
-  ok(/FIND\] ✓ the board is \/dev\/ttyUSB1 @ 115200/.test(consoleText(dom)),
-     "در کنسول گفت برد کجاست و با چه سرعتی");
-  ok(board6.opened.some((o) => o.path === "/dev/ttyUSB1" && o.baud === 115200),
-     "بعدش روی همان گره و سرعت وصل شد", JSON.stringify(board6.opened));
-  ok(w.eval("S.mode") === "serial", "اتصال برقرار شد");
-  ok(w.document.getElementById("selBaud").value === "115200",
-     "کشوی baud از ۱۹۲۰۰ به ۱۱۵۲۰۰ برگشت", w.document.getElementById("selBaud").value);
-  ok(w.eval("S._finding") === false, "پرچمِ اسکن بعد از پایان پاک شد (دکمه دوباره کار می‌کند)");
-  ok(w.document.getElementById("btnFind").textContent.indexOf("Find board") !== -1,
-     "برچسبِ دکمه از «scanning…» به حالِ اول برگشت");
-
-  /* ---------- ۸) قفلِ هم‌زمانی: کلیکِ دوم وسطِ بازیابی ---------- */
-  console.log("\n-- کلیکِ دوباره‌ی «اتصال» وسطِ بازیابی (دو خواننده روی یک پورت) --");
-  await w.eval("S.serial.disconnect()");      /* قفل باید وقتی هنوز متصل نیستیم دیده شود */
-  await sleep(250);
-  const before = board6.opened.length;
-  w.eval("S._recovering = true");
-  await w.eval("connectSystemPort('/dev/ttyUSB0')");
-  await sleep(300);
-  ok(board6.opened.length === before, "نشستِ دومی باز نشد (بایت‌ها دزدیده نمی‌شوند)",
-     `${before} → ${board6.opened.length}`);
-  ok(/busy/i.test(consoleText(dom)), "به کاربر گفت اپ مشغول است");
-  w.eval("S._recovering = false");
-
-  /* ---------- ۹) افتِ USB: برد با اسمِ دیگری برمی‌گردد ---------- */
+  /* ---------- ۷) افتِ USB: برد با اسمِ دیگری برمی‌گردد ---------- */
   console.log("\n-- افتِ USB: گره ناپدید و به‌جایش /dev/ttyUSB1 پیدا می‌شود --");
   const board7 = makeBoard();
   board7.portPlan = [[], [], ["/dev/ttyUSB1"], ["/dev/ttyUSB1"], ["/dev/ttyUSB1"]];
@@ -421,7 +370,7 @@ async function main() {
   ok(/dropped|USB drop-out|electrical/.test(consoleText(dom)),
      "گفت علتِ افت، الکتریکی است (EMI/تغذیه)، نه نرم‌افزار");
 
-  /* ---------- ۱۰) پیامِ تکراری در کنسول جمع می‌شود ---------- */
+  /* ---------- ۸) پیامِ تکراری در کنسول جمع می‌شود ---------- */
   console.log("\n-- ۲۰ بار «[Errno 5]» پشتِ سرِ هم: کنسول پر نمی‌شود --");
   const cBefore = w.eval("document.getElementById('consoleBox').children.length");
   w.eval(`for (let i = 0; i < 20; i++) addConsole("err", "!! [Errno 5] Input/output error")`);
@@ -440,7 +389,7 @@ async function main() {
   srv.close();
   console.log(`\n#  نتیجه: ${PASS} PASS / ${FAIL} FAIL`);
   if (FAIL) { console.log("#  مواردِ ناموفق:\n  - " + fails.join("\n  - ")); process.exit(1); }
-  console.log("########## مسیرهای اتصال: پلِ سیستمی پیش‌فرض، خطوط درست، بازیابیِ baud ##########");
+  console.log("########## مسیرهای اتصال: پلِ سیستمی پیش‌فرض، خطوط درست، بدونِ churn، وصلِ خودکار ##########");
   process.exit(0);
 }
 

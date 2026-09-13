@@ -512,7 +512,7 @@ async function connectSystemPort(name) {
   /* لاگِ کاربر نشان داد که کلیکِ دوباره‌ی «اتصال» وسطِ نردبانِ baud یک نشستِ
    * دوم باز کرد: دو خواننده روی یک پورت، بایت‌های هم را می‌دزدند و RX در همه‌ی
    * سرعت‌ها صفر می‌شود. پس تا بازیابی/اسکن تمام نشده، کلیکِ دوم رد می‌شود. */
-  if (S._recovering || S._correcting || S._finding) {
+  if (S._correcting || S._reconnecting) {
     addConsole("warn", "[SYS] busy — the app is reconnecting/scanning; wait for it to finish (a second session would steal the port's bytes)");
     toast("Wait — the app is already working on the connection", "warn", 5000);
     return;
@@ -990,13 +990,7 @@ async function autoReconnect(path, baud) {
   return false;
 }
 
-/* ---- بازیابیِ خودکارِ RX=0 -------------------------------------------
- * «کامل وصل نمی‌شود» بیشترِ وقت‌ها یعنی: پورت باز شد، TX رفت، ولی هیچ
- * بایتی برنگشت. رایج‌ترین علتِ باقی‌مانده بعد از پالسِ ریست، **سرعتِ
- * اشتباه** است — فریم‌وری که با Config.h قدیمی روی ۹۶۰۰ فلش شده، یا بردی
- * که بوت‌لودرش سرعتِ دیگری دارد. به‌جای اینکه فقط گزارش بدهیم، خودمان
- * نردبانِ baud را می‌رویم و اگر برد با سرعتِ دیگری حرف زد، **همان‌جا
- * متصل می‌مانیم** و کشوی baud را هم به‌روز می‌کنیم. */
+
 const nap = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ---- «آیا این واقعاً حرفِ برد است یا بایتِ به‌هم‌ریخته؟» ---------------
@@ -1024,9 +1018,6 @@ function looksLikeBoard(text) {
   return sc.known && sc.ratio >= 0.85;
 }
 
-/* ترتیب مهم است: اول سرعتِ خودِ فریم‌ور (Config.h)، بعد سرعت‌های رایج */
-const BAUD_LADDER = [FW.BAUD, 9600, 57600, 38400, 19200];
-
 /* ---- اصلاحِ خودکارِ baud ---------------------------------------------
  * اگر داده می‌آید ولی خوانا نیست، یعنی سرعت غلط است — نه بردِ خراب. خودمان
  * به سرعتِ فریم‌ور برمی‌گردیم و دوباره وصل می‌شویم. */
@@ -1046,7 +1037,7 @@ async function autoCorrectBaud(from) {
   try {
     await link.connectVia(path, FW.BAUD);
     S._connAt = Date.now(); S._rxWarned = false; S._baudWarned = false;
-    S._sawBoardText = false; S._recoveredAuto = false;
+    S._sawBoardText = false; S._rxStage = 0;
     renderConnCard();
     S._correcting = false;
     return true;
@@ -1054,236 +1045,6 @@ async function autoCorrectBaud(from) {
     addConsole("err", `!! reconnect at ${FW.BAUD} failed: ${e.message}`);
     S._correcting = false;
     return false;
-  }
-}
-
-/* ---- بازیابیِ خودکارِ RX=0 -------------------------------------------
- * پله‌ها: (۰) از کاربر بخواه دکمه‌ی RESET را بزند — بسیاری از کلون‌های
- * CH340 مدارِ ریستِ خودکار ندارند؛ (۱) نردبانِ baud، ولی فقط سرعتی پذیرفته
- * می‌شود که پاسخِ **خوانا و شناخته‌شده** بدهد. */
-async function autoRecoverRx() {
-  if (S._recovering || !IpcSerialLink.supported) return false;
-  let cur = S.serial;
-  const path = (cur && cur.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
-  if (!path || !looksLikeDevPath(path)) return false;   /* وب‌سریال: مسیرِ دستگاه نداریم */
-  const start = (cur && cur.baud) || parseInt($("selBaud").value, 10) || FW.BAUD;
-  S._recovering = true;
-
-  /* ۰) ریستِ دستی — کاربرِ ما گزارش کرده که تا دکمه‌ی RESET را نزند وصل نمی‌شود */
-  const heard = [];
-  const origOnLine = cur.onLine;
-  cur.onLine = (l) => { heard.push(l); if (origOnLine) origOnLine(l); };
-  addConsole("warn", "👉 Press the RESET button on the Arduino now — boards without an auto-reset circuit (many CH340 clones) only talk after that. Waiting 6 s…");
-  toast("Press the board's RESET button now", "info", 6500);
-  try { send(Cmd.status(), { auto: true }); } catch (e) {}
-  await nap(6000);
-  cur.onLine = origOnLine;
-  if (looksLikeBoard(heard.join("\n"))) {
-    S._recovering = false; S._rxWarned = false; S._connAt = Date.now(); S._sawBoardText = true;
-    addConsole("sys", `[SYS] ✓ the board answered after a manual reset @ ${start} baud`);
-    toast("✓ Board answered after RESET", "ok", 6000);
-    renderConnCard();
-    return true;
-  }
-
-  /* ۱) نردبانِ baud — با سنجه‌ی محتوا، نه شمارشِ بایت */
-  const tries = [];
-  BAUD_LADDER.forEach((b) => { if (b !== start && tries.indexOf(b) === -1) tries.push(b); });
-  addConsole("warn", `[SYS] still nothing readable @ ${start} baud — trying ${tries.join(", ")} …`);
-  const garbage = [];
-  for (const b of tries) {
-    let probe = null;
-    try {
-      try { await cur.disconnect(); } catch (e) {}
-      await nap(250);                                  /* پل باید پورت را رها کند */
-      probe = new IpcSerialLink();
-      bindLinkEvents(probe);
-      S.serial = probe;
-      const got = [];
-      probe.onLine = (l) => got.push(l);               /* آشغال را در کنسول نریز */
-      await probe.connectVia(path, b);
-      await nap(2600);                                 /* بنرِ بوت + پاسخِ status */
-      const text = got.join("\n");
-      if (looksLikeBoard(text)) {
-        probe.onLine = (l) => rxLine(l);
-        const sel = $("selBaud");
-        if (sel) sel.value = String(b);
-        addConsole("sys", `[SYS] ✓ the board answers at ${b} baud — staying connected (baud selector updated; it was ${start})`);
-        toast(`✓ Connected at ${b} baud`, "ok", 8000);
-        S._rxWarned = false; S._baudWarned = false; S._connAt = Date.now();
-        S._sawBoardText = true; S._doctorAuto = false; S._recovering = false;
-        renderConnCard();
-        try { send(Cmd.status(), { auto: true }); } catch (e) {}
-        return true;
-      }
-      if (probe.rxCount > 0) {
-        garbage.push(b);
-        addConsole("warn", `[SYS] ${b} baud: ${probe.rxCount} byte(s) came back but they are UNREADABLE → wrong speed, moving on`);
-      } else {
-        addConsole("warn", `[SYS] ${b} baud: nothing at all`);
-      }
-      cur = probe;
-      await probe.disconnect();
-      probe = null;
-    } catch (e) {
-      addConsole("err", `!! ${b} baud: ${e.message}`);
-      if (probe) { try { await probe.disconnect(); } catch (e2) {} probe = null; }
-    }
-  }
-
-  /* هیچ سرعتی پاسخِ خوانا نداد → به وضعیتِ اول برگرد و گزارش بده */
-  try {
-    const back = new IpcSerialLink();
-    bindLinkEvents(back);
-    S.serial = back;
-    cur = back;
-    await back.connectVia(path, start);
-    addConsole("sys", `[SYS] back to ${start} baud`);
-  } catch (e) {
-    addConsole("err", "!! could not reopen the port: " + e.message);
-  }
-  if (garbage.length) {
-    addConsole("err", `!! bytes came back at ${garbage.join(", ")} baud but were unreadable at every speed → the board is not running this firmware (reflash firmware/RobotArm_Firmware/), or the cable/adapter is dropping bits`);
-  } else {
-    addConsole("err", "!! the board sent NOTHING at any baud rate → press its RESET button, check the heartbeat LED, the data cable and the external motor supply");
-    addConsole("warn", "   → next step: press 🔍 Find board. It opens every real serial device (ttyUSB0, ttyUSB1, ttyACM0, …) at every common speed and tells you exactly which one is the arm — so you do not have to guess the port either.");
-  }
-  S._recovering = false;
-  setMode("serial");
-  renderConnCard();
-  return false;
-}
-
-/* 🩺 Connection doctor — asks the main process to check every reason a board
-   may fail to link, and prints the findings (with the exact fix) to the serial
-   console. Runs on demand and automatically when RX stays at 0 after connect,
-   so "it detects the board but never really connects" stops being a guessing
-   game. In a plain browser there is no such access — use tools/diagnose-linux.sh. */
-async function runPortDoctor(auto) {
-  if (!(window.electronAPI && window.electronAPI.portDoctor)) {
-    if (!auto) toast("The doctor needs the desktop app — in a browser run tools/diagnose-linux.sh", "warn", 7000);
-    return;
-  }
-  const picked = ($("hdrPort") && $("hdrPort").value) || (S.serial && S.serial.activeLabel) || "";
-  const baud = parseInt($("selBaud").value, 10) || FW.BAUD;
-  let devPath = picked;
-  try { devPath = (await resolvePortPath(picked)) || picked; } catch (e) {}
-  const btn = $("btnDoctor");
-  if (btn) { btn.disabled = true; btn.textContent = "🩺 …"; }
-  /* عیب‌یاب نمی‌تواند هم‌زمان با اپ پورت را باز کند — و «دست‌دادن رد شد چون
-     اپ متصل است» یعنی بی‌فایده‌ترین گزارشِ ممکن (کاربرِ ما دو بار همین را
-     دید). پس خودمان قطع می‌کنیم، گزارشِ کامل را می‌گیریم و بعد وصل می‌شویم. */
-  const wasLinked = S.mode === "serial";
-  try {
-    addConsole("sys", `[DOCTOR] checking ${devPath || "(no port)"} @ ${baud} baud …`);
-    if (wasLinked) {
-      addConsole("sys", "[DOCTOR] disconnecting first — the live handshake needs the port to itself (it reconnects afterwards)");
-      try { await S.serial.disconnect(); } catch (e) {}
-      setMode("off");
-      await nap(500);
-    }
-    addConsole("warn", "[DOCTOR] 👉 press the board's RESET button now and keep an eye on the console — boards without an auto-reset circuit (many CH340 clones) only talk after that.");
-    const rep = await window.electronAPI.portDoctor(devPath, baud);
-    let bad = 0;
-    (rep && rep.checks ? rep.checks : []).forEach((c) => {
-      const mark = c.ok === null ? "…" : (c.ok ? "✓" : "✗");
-      addConsole(c.ok === false ? "err" : "sys", `[DOCTOR] ${mark} ${c.name}: ${c.detail}`);
-      if (c.fix) addConsole("warn", `[DOCTOR]     → fix: ${c.fix}`);
-      if (c.ok === false) bad++;
-    });
-    const skipped = (rep && rep.checks ? rep.checks : []).some((c) => c.name === "handshake" && c.ok === null);
-    if (skipped) {
-      addConsole("warn", "[DOCTOR] the live handshake was skipped because the app itself holds the port — press Disconnect, then 🩺 Doctor again for the full test.");
-    }
-    const hint = $("portHint");
-    if (hint) hint.innerHTML = bad
-      ? `<b>🩺 Doctor found ${bad} problem${bad > 1 ? "s" : ""}</b> — the console shows each one with its fix.`
-      : `<b>🩺 Doctor: all clear</b> — port, permissions and the board's reply are fine.`;
-    if (!auto || bad) toast(bad ? `🩺 Doctor: ${bad} problem(s) — see the console` : "🩺 Doctor: all clear ✓", bad ? "err" : "ok", 7000);
-    /* هیچ نشانه‌ای از فریم‌ور نبود ولی بایت آمد؟ یعنی سرعت اشتباه است */
-    const bm = (rep && rep.checks ? rep.checks : []).find((c) => c.name === "baudmatch");
-    if (bm && bm.ok === false) {
-      addConsole("warn", "[DOCTOR] → unreadable bytes = baud mismatch. Press 🔍 Find board and it will locate the right port AND speed by itself.");
-    } else if ((rep && rep.checks ? rep.checks : []).some((c) => c.name === "rx" && c.ok === false)) {
-      addConsole("warn", "[DOCTOR] → nothing at all on this port. Press 🔍 Find board: it tries every real device node at every common speed, so you do not have to guess which /dev/tty… is the arm.");
-    }
-    if (wasLinked && devPath) {
-      addConsole("sys", "[DOCTOR] reconnecting…");
-      try { await connectSystemPort(devPath); } catch (e) { addConsole("err", "!! reconnect failed: " + e.message); }
-    }
-  } catch (e) {
-    addConsole("err", "[DOCTOR] !! " + ((e && e.message) || e));
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = "🩺 Doctor"; }
-  }
-}
-
-/* ---- 🔍 «برد را پیدا کن» ---------------------------------------------
- * وقتی همه‌چیز سبز است ولی یک بایت هم نمی‌آید، حدس زدن تمام شده: هر گره‌ی
- * واقعیِ سریال را در هر سرعتِ محتمل باز کن، «status» بفرست و گوش بده. برد
- * ممکن است روی ttyUSB1 باشد نه ttyUSB0 (بعضی بردها دو رابطِ سریال می‌سازند)،
- * یا پشتِ یک مبدلِ USB-سریالِ دیگر. منطقش در main/scan.js است و با بردِ
- * جعلی تست می‌شود (tools/test_scan.js). */
-async function findMyBoard() {
-  if (!(window.electronAPI && window.electronAPI.portFind)) {
-    toast("Finding the board needs the desktop app — in a browser run tools/diagnose-linux.sh", "warn", 7000);
-    return;
-  }
-  if (S._finding) return;
-  if (S._recovering || S._correcting) {
-    addConsole("warn", "[FIND] the app is busy reconnecting — wait a couple of seconds and try again");
-    return;
-  }
-  S._finding = true;
-  const btn = $("btnFind");
-  if (btn) { btn.disabled = true; btn.textContent = "🔍 scanning…"; }
-  const wasLinked = S.mode === "serial";
-  try {
-    if (wasLinked) {
-      addConsole("sys", "[FIND] disconnecting — the scan needs every port to itself");
-      try { await S.serial.disconnect(); } catch (e) {}
-      setMode("off");
-      await nap(500);
-    }
-    addConsole("warn", "[FIND] 👉 press the RESET button on the Arduino now, and again if the scan asks — boards without an auto-reset circuit only talk after that.");
-    if (window.electronAPI.onFindLog) {
-      window.electronAPI.onFindLog((line) => addConsole("sys", "[FIND] " + line));
-    }
-    const res = await window.electronAPI.portFind({});
-    if (res && res.err) {
-      addConsole("err", "[FIND] !! " + res.err);
-      toast(res.err, "err", 7000);
-    } else if (res && res.found) {
-      const f = res.found;
-      addConsole("sys", `[FIND] ✓ the board is ${f.port} @ ${f.baud} baud` + (f.firmware ? ` — firmware v${f.firmware}` : ""));
-      addConsole("sys", `[FIND]   sample: ${f.sample || ""}`);
-      const sel = $("hdrPort"); if (sel) sel.value = f.port;
-      const bs = $("selBaud"); if (bs) bs.value = String(f.baud);
-      toast(`✓ Board found: ${f.port} @ ${f.baud} — connecting…`, "ok", 7000);
-      S._finding = false;
-      if (btn) { btn.disabled = false; btn.textContent = "🔍 Find board"; }
-      await renderConnCard();
-      if (sel) sel.value = f.port;
-      await connectSystemPort(f.port);
-      return;
-    } else {
-      const tried = (res && res.tried) || [];
-      const noisy = tried.filter((t) => t.bytes > 0 && !t.known);
-      addConsole("err", `[FIND] ✗ no board answered on ${tried.length} port×baud combination(s)`);
-      if (noisy.length) {
-        addConsole("warn", "[FIND] but these returned UNREADABLE bytes: " + noisy.map((t) => `${t.port}@${t.baud}`).join(", ") +
-          " → something transmits there at yet another speed (or the adapter drops bits)");
-      }
-      addConsole("warn", "[FIND] → so the board is not talking at all. Check in this order: (1) the firmware's heartbeat LED — is it blinking? (2) a DATA cable, not a charge-only one (3) the external motor supply — without it the board browns out (4) is the firmware actually flashed on THIS board?");
-      const hint = $("portHint");
-      if (hint) hint.innerHTML = "<b>🔍 No board answered on any port or speed.</b> Check the heartbeat LED, the data cable and the motor supply &mdash; the port and permissions are fine.";
-      toast("No board answered anywhere — see the console checklist", "err", 9000);
-    }
-  } catch (e) {
-    addConsole("err", "[FIND] !! " + ((e && e.message) || e));
-  } finally {
-    S._finding = false;
-    if (btn) { btn.disabled = false; btn.textContent = "🔍 Find board"; }
   }
 }
 
@@ -1306,9 +1067,9 @@ function bindLinkEvents(link) {
     setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
     S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
     S._userClosed = false;
-    S._connAt = Date.now(); S._rxWarned = false; S._doctorAuto = false;
-    S._recoveredAuto = false; S._recovering = false;
+    S._connAt = Date.now(); S._rxWarned = false; S._rxStage = 0;
     S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
+    S._eioExplained = false;
     renderConnCard();
     setTimeout(() => send(Cmd.status(), { auto: true }), 600);
     /* second hello after the bootloader window: boards that reboot on open
@@ -1323,7 +1084,7 @@ function bindLinkEvents(link) {
     /* افتِ ناگهانی (نه به خواستِ کاربر) → خودمان دنبالش می‌رویم */
     const path = link.activeLabel || "";
     if (was && !S._userClosed && IpcSerialLink.supported && looksLikeDevPath(path) &&
-        !S._reconnecting && !S._finding && !S._recovering) {
+        !S._reconnecting) {
       setTimeout(() => { autoReconnect(path, link.baud || FW.BAUD).catch(() => {}); }, 200);
     }
   };
@@ -2146,7 +1907,7 @@ function updateLinkStats() {
        این همان «کاراکترِ بی‌معنی» است: باید صریح گفته شود و خودکار درست شود،
        نه اینکه کاربر به آشغالِ روی صفحه خیره بماند. */
     if (S.serial.rxCount > 40 && !S._sawBoardText && S._connAt &&
-        Date.now() - S._connAt > 3000 && !S._baudWarned && !S._recovering && !S._correcting) {
+        Date.now() - S._connAt > 3000 && !S._baudWarned && !S._correcting && !S._reconnecting) {
       S._baudWarned = true;
       const curB = S.serial.baud || parseInt($("selBaud").value, 10) || FW.BAUD;
       addConsole("err", `!! ${S.serial.rxCount} bytes arrived but none of it is readable — the BAUD RATE IS WRONG (app at ${curB}, this firmware uses ${FW.BAUD})`);
@@ -2156,51 +1917,43 @@ function updateLinkStats() {
       toast(`Wrong baud rate — switching to ${FW.BAUD}`, "err", 9000);
       setTimeout(() => { autoCorrectBaud(curB).catch(() => {}); }, 300);
     }
-    /* zero data from the board? say it loudly, once */
-    if (S.serial.rxCount === 0 && S._connAt && Date.now() - S._connAt > 6000 && !S._rxWarned) {
-      S._rxWarned = true;
-      /* «وصل شد ولی برد چیزی نمی‌فرستد» — به‌جای حدس زدن، عیب‌یاب را یک بار
-         خودکار اجرا کن تا علتِ واقعی (python3، dialout، مجوز، خواننده‌ی دوم،
-         بردِ ساکت) با راه‌حلش در کنسول بیاید. */
-      /* ترتیب مهم است: اول سعی کن درستش کنی (نردبانِ baud)، بعد — اگر
-         درست نشد — عیب‌یاب را اجرا کن. عیب‌یاب وقتی پورت دستِ اپ است
-         دست‌دادن را رد می‌کند، پس باید بعد از بسته‌شدنِ نشست‌ها بیاید. */
-      if (!S._recoveredAuto && S.mode === "serial") {
-        S._recoveredAuto = true;
-        setTimeout(() => {
-          autoRecoverRx().then((fixed) => {
-            if (!fixed && !S._doctorAuto && S.mode === "serial") {
-              S._doctorAuto = true;
-              addConsole("warn", "[DOCTOR] RX is still 0 — running the connection doctor…");
-              setTimeout(() => { runPortDoctor(true).catch(() => {}); }, 600);
-            }
-          }).catch(() => {});
-        }, 300);
-      } else if (!S._doctorAuto && S.mode === "serial") {
-        S._doctorAuto = true;
-        addConsole("warn", "[DOCTOR] RX is 0 — running the connection doctor automatically…");
-        setTimeout(() => { runPortDoctor(true).catch(() => {}); }, 400);
-      }
-      const hint = $("portHint");
-      if (hint) hint.innerHTML = "<b>The board sends nothing back</b> (RX 0 B after 6 s) &mdash; checking who else holds the port…";
-      addConsole("warn", "!! no RX data 6 s after connect — checking port holders…");
+    /* ---- برد ساکت است؟ دو پله، بدونِ باز و بسته کردنِ پورت ----
+       پله‌ی ۱ (۶ ثانیه): فقط بگو دکمه‌ی RESET را بزند — بردِ کاربر مدارِ
+       ریستِ خودکار ندارد و تا RESET نزند حرف نمی‌زند.
+       پله‌ی ۲ (۱۶ ثانیه): حکمِ روشن + علتِ واقعی (افتِ USB / EMI).
+       هیچ‌کدام پورت را دوباره باز نمی‌کند: باز و بسته‌کردنِ پشتِ سرِ هم روی
+       CH340 خودش افتِ تغذیه و بیرون‌افتادن از BUS را بیشتر می‌کند. */
+    const silentMs = (S._connAt && S.mode === "serial") ? Date.now() - S._connAt : 0;
+    const busyNow = S._correcting || S._reconnecting;
+    if (S.serial.rxCount === 0 && silentMs > 6000 && S._rxStage === 0 && !busyNow) {
+      S._rxStage = 1; S._rxWarned = true;
+      addConsole("warn", "👉 Nothing came from the board in 6 s — press the RESET button on the Arduino NOW and leave the app connected (this board has no auto-reset circuit, so it only starts talking after that).");
+      toast("Press the board's RESET button", "info", 8000);
+      const hintR = $("portHint");
+      if (hintR) hintR.innerHTML = "<b>Press the RESET button on the Arduino</b> &mdash; the app stays connected and keeps listening.";
+      setTimeout(() => { try { send(Cmd.status(), { auto: true }); } catch (e) {} }, 500);
+    } else if (S.serial.rxCount === 0 && silentMs > 16000 && S._rxStage === 1 && !busyNow) {
+      S._rxStage = 2;
+      addConsole("err", "!! still nothing after RESET — the board is not transmitting on this port.");
+      addConsole("warn", "   → the usual cause is the board dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling' or repeated 'USB disconnect'. That is electrical: motors powered from USB, no common ground with the motor supply, or a long/thin cable.");
+      const hintV = $("portHint");
+      if (hintV) hintV.innerHTML = "<b>The board is silent.</b> Check <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI), tie the motor supply <b>GND</b> to the Arduino <b>GND</b>, and use a short <b>shielded</b> cable on a rear port.";
       const label = S.serial.activeLabel || "";
       if (window.electronAPI && window.electronAPI.portHolders) {
         window.electronAPI.portHolders(label).then((h) => {
-          if (!hint) return;
           if (h && h.procs && h.procs.length) {
+            const hint = $("portHint"); if (!hint) return;
             hint.innerHTML = "<b>RX 0 B — another program is reading the port:</b> " +
               h.procs.map(escH).join(", ") +
               " &mdash; <b>close it</b> (two readers steal each other's bytes!), then Disconnect &amp; Connect.";
             addConsole("warn", "!! port ALSO held by: " + h.procs.join(", ") + " (PIDs " + h.pids.join(", ") + ") — close it and reconnect");
           } else {
-            hint.innerHTML = "<b>RX 0 B</b> &mdash; no other reader. Run <b>Port Test</b>: if the board transmits to a raw OS reader, the driver path is at fault; if not, the board itself is silent (baud/firmware/another DTR app).";
-            addConsole("sys", "[SYS] no other program holds the port — press 🔬 Port Test to check the board itself");
+            addConsole("sys", "[SYS] no other program is holding the port — so the board itself is silent");
           }
         }).catch(() => {});
       }
     }
-    if (S.serial.rxCount > 0) S._rxWarned = false;
+    if (S.serial.rxCount > 0) { S._rxStage = 0; S._rxWarned = false; }
   }
   renderTimersLocal();
 }
@@ -2499,32 +2252,6 @@ function init() {
   $("appVersion").textContent = (window.electronAPI && window.electronAPI.appVersion) || "web";
 
   /* ---------- Connection card wiring ---------- */
-  $("btnPortTest").onclick = async () => {
-    const hint = $("portHint");
-    let path = "";
-    try {
-      const res = await window.electronAPI.ipcSerial.list();
-      path = (res && res.ports && res.ports[0] && res.ports[0].path) || "";
-    } catch (e) {}
-    if (!path) { toast("No serial device found to test", "err"); return; }
-    if (S.mode === "serial") { await S.serial.disconnect(); await new Promise((r) => setTimeout(r, 400)); }
-    if (hint) hint.innerHTML = `&mdash; probing <code>${escH(path)}</code> for 2 s with a raw OS reader&hellip;`;
-    toast("Probing the port for 2 s (the board may reboot)", "info", 3000);
-    let res2 = { bytes: -1, sample: "" };
-    try { res2 = await window.electronAPI.portProbe(path); } catch (e) { res2 = { bytes: -1, sample: String(e.message || e) }; }
-    if (res2.bytes > 0) {
-      const sample = String(res2.sample || "").replace(/[\u0000-\u001f]+/g, " ").slice(0, 80);
-      if (hint) hint.innerHTML = `<b style="color:#3fb950">Board IS transmitting</b> (${res2.bytes} bytes on raw read) &mdash; sample: <code>${escH(sample)}</code>. The OS path works; reconnect and watch the RX meter.`;
-      addConsole("sys", `[SYS] port probe: ${res2.bytes} bytes received raw — board transmits ✓`);
-    } else if (res2.bytes === 0) {
-      if (hint) hint.innerHTML = `<b style="color:#fca5a5">Board sent NOTHING</b> even to a raw OS reader (2 s) &mdash; the board itself is silent: check it runs the latest firmware, baud 115200, no other DTR app, then power-cycle it.`;
-      addConsole("warn", "!! port probe: 0 bytes in 2 s — the board itself is not transmitting");
-    } else {
-      if (hint) hint.innerHTML = `probe failed: ${escH(res2.sample || "unknown error")}`;
-    }
-    renderConnCard();
-  };
-
   /* FIX: این بایندها در جابه‌جایی کارت کنسول به سایدبار گم شده بودند —
      Enter/Send دوباره کار می‌کند (+ تاریخچه با ↑/↓) */
   $("btnSend").onclick = sendFromInput;
@@ -2671,8 +2398,6 @@ function init() {
   $("hdrScan").onclick = async () => { S._sysPorts = null; await renderConnCard();
     addConsole("sys", "[SYS] port scan: " + Math.max(0, ($("hdrPort") ? $("hdrPort").length : 1) - 1) + " device(s)"); };
   $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
-  if ($("btnDoctor")) $("btnDoctor").onclick = () => runPortDoctor(false);
-  if ($("btnFind")) $("btnFind").onclick = () => findMyBoard();
   if (window.electronAPI && window.electronAPI.onPortAdded) {
     window.electronAPI.onPortAdded(() => {
       if (S.mode === "off" && !S._scanActive) $("portHint").textContent = "New device detected — click Scan Ports.";

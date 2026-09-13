@@ -2,6 +2,13 @@
 
 Industrial English-language **desktop application** (Electron) for the 5-DOF Arduino Mega 2560 robot arm firmware (`RobotArm_Firmware.ino`).
 
+## 🆕 What's new in v1.0.49
+
+- **The diagnostic tools are gone — on purpose.** 🩺 Doctor, 🔍 Find board and 🔬 Port Test were removed from the UI, the renderer, the preload bridge and the main process (`main/doctor.js` and `main/scan.js` deleted). Sweeping baud rates and re-opening the port over and over is exactly what makes a CH340 board brown out and drop off the USB bus, so the "diagnostics" were making the real problem worse. What replaces them is the fix itself.
+- **One prompt, no port churn.** If RX stays 0 the app now says *press the RESET button* **once** and keeps the session open; 10 s later it gives a single clear verdict (USB drop-out / EMI, with `sudo dmesg | tail -30` as the confirmation). The port is never re-opened by a probe loop.
+- **Still automatic where it matters:** system-bridge connect even with an empty dropdown, DTR/RTS pulse ending with both lines level, one-shot baud correction on unreadable bytes, auto-reconnect after a USB drop-out (including the kernel renaming `ttyUSB0` → `ttyUSB1`), console dedupe of repeated `[Errno 5]` lines, and phantom `/dev/ttyS*` filtering (now inlined in `main.js`).
+- Host tests: ten stages, all green — including new assertions that a silent board triggers exactly one RESET prompt and **zero** re-opens, and that the deleted tools stay deleted in all three layers.
+
 ## 🆕 What's new in v1.0.38
 
 - **THE root cause of "بعد از E-STOP هوم کار نمی‌کند" + demo-noise found (re-flash)** — `EMERGENCY_STOP_PIN 22` was polled every 1 ms and **ANY LOW level immediately re-latched the E-STOP**. A floating/noisy wire on pin 22 (or a held physical button) meant: homing cleared the latch and got re-estopped within 1 ms (homing NEVER worked), and random mid-motion estops left all steppers energized at hold current — the loud demo whine. The hardware input is now **debounced (25 consecutive LOW reads ≈ 25 ms) and edge-triggered**: noise has zero effect, a real held button trips once, and homing always recovers. Host test T8 drives noise spikes (no trip), a held press (exactly one trip), then proves homing + moves recover.
