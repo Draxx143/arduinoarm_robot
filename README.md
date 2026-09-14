@@ -260,6 +260,60 @@ wget https://github.com/Draxx143/arduinoarm_robot/releases/download/latest/AXIS5
 
 ---
 
+## فلشِ فریم‌ور روی Mega 2560 از ترمینالِ اوبونتو (کامل)
+
+**یک خطی** — `arduino-cli` را خودش نصب می‌کند (بدون روت)، هسته‌ی AVR را می‌گیرد،
+کامپایل و آپلود می‌کند و در آخر می‌گوید چطور راستی‌آزمایی کنی:
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/flash-linux.sh)
+```
+
+```bash
+bash tools/flash-linux.sh --dry-run             # فقط نشان بده چه می‌کرد
+bash tools/flash-linux.sh --port /dev/ttyACM0   # پورتِ دلخواه
+bash tools/flash-linux.sh --compile-only        # فقط بساز (.hex در ~/.cache/axis5-build)
+bash tools/flash-linux.sh --keep-ros            # دست به ROS_Interface نزن
+```
+
+دو نکته‌ای که اسکریپت خودش حل می‌کند:
+
+* **وابستگیِ rosserial.** `ROS_Interface.h` هدرهای `ros.h` را include می‌کند و
+  Arduino IDE **همه‌ی** `.cpp`های پوشه‌ی اسکچ را کامپایل می‌کند — پس حتی در
+  حالتِ TEST MODE (بدونِ ROS) بدونِ آن کتابخانه ساخت شکست می‌خورد. اسکریپت اول
+  `arduino-cli lib install rosserial_arduino` را امتحان می‌کند و اگر نبود،
+  `ROS_Interface.{h,cpp}` را **موقتاً** کنار می‌گذارد و بعد از ساخت سرِ جایش
+  برمی‌گرداند (هیچ فایلِ دیگری به آن ارجاع نمی‌دهد).
+* **FQBN درست:** `arduino:avr:mega` (Mega 2560). بردِ اصلی معمولاً
+  `/dev/ttyACM0` می‌شود و کلون‌های CH340 `/dev/ttyUSB0`؛ اسکریپت اول
+  `/dev/axis5` (نامِ ثابتِ udev) را برمی‌دارد.
+
+دستی، بدونِ اسکریپت:
+
+```bash
+arduino-cli core update-index
+arduino-cli core install arduino:avr
+arduino-cli lib install rosserial_arduino        # اگر در دسترس نبود، همان نکته‌ی بالا
+arduino-cli compile --fqbn arduino:avr:mega firmware/RobotArm_Firmware
+arduino-cli upload  -p /dev/ttyACM0 --fqbn arduino:avr:mega firmware/RobotArm_Firmware
+```
+
+بعد از فلش، **راستی‌آزمایی** (همان دست‌دادنی که خودِ اپ می‌زند: termios خام +
+پالسِ DTR، و چاپِ نسخه‌ی فریم‌ور):
+
+```bash
+bash tools/diagnose-linux.sh /dev/ttyACM0        # پورت را خودش هم پیدا می‌کند
+```
+
+اگر «پورت دستِ برنامه‌ی دیگری است» یا `RX = 0` دیدی، یک بار این را بزن
+(ModemManager/brltty + گروه `dialout` + نامِ ثابتِ `/dev/axis5`):
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh)
+```
+
+---
+
 ## Control GUIs / رابط‌های کنترل
 
 دو GUI وجود دارد که هر دو **یک پروتکل** را حرف می‌زنند:
