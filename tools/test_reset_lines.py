@@ -147,6 +147,25 @@ check(not (hist and not same_level(hist[-1])),
       "هرگز در وضعیتِ متفاوت رها نمی‌شود",
       "رها شدن در تفاوت = نگه‌داشتنِ AVR در ریست برای کلِ نشست")
 
+# ---- لبه‌ی RISINGِ DTR: تنها تریگرِ ریستِ چیپ‌های 16U2/32U4 -------------
+# روی Mega 2560 / Leonardo / Micro فریم‌ورِ CDCِ چیپِ USB می‌گوید
+#   if (!prevDTR && curDTR) ResetTimer = ...
+# یعنی AVR فقط با لبه‌ی ۰→۱ِ DTR ریست می‌شود. پالسی که DTR را
+# هرگز پایین نبرد ((۱,۱)→(۱,۰)→(۱,۱)) هیچ لبه‌ی rising نمی‌سازد: برد
+# ری‌بوت نمی‌شود، بنری نمی‌فرستد، و در حالی که Arduino IDE سالم وصل
+# می‌شود اپ ساکت می‌ماند. این دقیقاً همان شکایتِ کاربر بود.
+dtr_seq = [bool(b & TIOCM_DTR) for b in hist]
+rising = [(i, a, c) for i, (a, c) in enumerate(zip(dtr_seq, dtr_seq[1:])) if not a and c]
+check(len(rising) >= 1,
+      "لبه‌ی RISINGِ DTR (۰→۱) وجود دارد — تریگرِ ریستِ 16U2/32U4 (Mega 2560)",
+      "DTR: " + "→".join("1" if d else "0" for d in dtr_seq))
+check(any(not d for d in dtr_seq),
+      "DTR واقعاً یک بار LOW شد (پالس به وضعیتِ اولیه‌ی کرنل وابسته نیست)",
+      "DTR: " + "→".join("1" if d else "0" for d in dtr_seq))
+check(len(rising) == 1,
+      "دقیقاً یک ریست، نه دوتا (ریستِ دوم وسطِ بنرِ بوت می‌افتد و متن را cut می‌کند)",
+      f"{len(rising)} لبه‌ی rising")
+
 print("\n-- همان پل وقتی مبدل، ioctlِ دوم را پس می‌زند (مبدلِ ناقص) --")
 out2, hist2 = run_bridge_on_pty(fail_at=2)
 check(out2.startswith("R:"), "پل هنوز آماده می‌شود (اتصال نباید بشکند)",
@@ -173,6 +192,11 @@ check(bool(seq) and seq[-1][0] == seq[-1][1] == "1",
 check(any(a != b for a, b in seq),
       "اسکریپت هم یک وضعیتِ «متفاوت» می‌سازد (ریستِ واقعی)",
       f"{seq}")
+sdtr = [a for a, _ in seq]
+srise = [i for i in range(1, len(sdtr)) if sdtr[i - 1] == "0" and sdtr[i] == "1"]
+check(len(srise) >= 1,
+      "اسکریپت هم لبه‌ی risingِ DTR دارد (وگرنه عیب‌یاب خودش برد را ریست نمی‌کند و گزارشِ غلط می‌دهد)",
+      f"DTR: {'→'.join(sdtr)}")
 
 print(f"\n#  نتیجه: {PASS} PASS / {FAIL} FAIL")
 if FAIL:

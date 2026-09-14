@@ -232,6 +232,16 @@ async function main() {
   ok(sig.length > 0 && sig[sig.length - 1].dtr === true,
      "در پایان DTR asserted است → بردهای USB بومی «میزبان وصل است» را می‌بینند",
      "بدونِ آن Serial.print بی‌صدا دور ریخته می‌شود");
+  /* لبه‌ی RISINGِ DTR — تنها تریگرِ ریستِ چیپِ 16U2/32U4 روی Mega 2560.
+     بدونِ آن: پورت بی‌خطا باز می‌شود، برد ری‌بوت نمی‌شود، هیچ بایتی
+     نمی‌آید، ولی Arduino IDE سالم وصل می‌شود (چون اول DTR را می‌اندازد). */
+  const dtrSeq = sig.map((c) => c.dtr);
+  const rises = dtrSeq.filter((d, i) => i > 0 && !dtrSeq[i - 1] && d).length;
+  ok(rises >= 1, "لبه‌ی RISINGِ DTR (۰→۱) وجود دارد — تریگرِ ریستِ Mega 2560 (16U2)",
+     "DTR: " + dtrSeq.map((d) => (d ? "1" : "0")).join("→"));
+  ok(dtrSeq.indexOf(false) !== -1, "DTR واقعاً یک بار LOW شد",
+     "DTR: " + dtrSeq.map((d) => (d ? "1" : "0")).join("→"));
+  ok(rises === 1, "دقیقاً یک ریست (ریستِ دوم بنرِ بوت را cut می‌کند)", rises + " لبه");
   dom.window.close();
 
   /* ---------- ۲) کشوی خالی → باید از پلِ سیستمی برود ---------- */

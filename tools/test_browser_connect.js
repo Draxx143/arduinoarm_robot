@@ -255,6 +255,19 @@ async function main() {
      JSON.stringify(last));
   ok(last.dtr === true, "در پایان DTR asserted است → بردهای USB بومی «میزبان وصل است» را می‌بینند",
      "بدونِ آن Serial.print بی‌صدا دور ریخته می‌شود");
+  /* لبه‌ی RISINGِ DTR: تنها تریگرِ ریستِ چیپِ 16U2/32U4 روی Mega 2560.
+     فریم‌ورِ CDCِ آن چیپ‌ها «if (!prevDTR && curDTR) ResetTimer=…» است، پس
+     پالسی که DTR را پایین نبرد ((۱,۱)→(۱,۰)→(۱,۱)) هیچ لبه‌ی rising نمی‌سازد:
+     برد ری‌بوت نمی‌شود، بنری نمی‌فرستد، و در حالی که IDE وصل می‌شود اپ
+     ساکت می‌ماند — دقیقاً همان گزارشِ کاربر. */
+  const dtrSeq = st.signals.map((c) => c.dtr);
+  const rises = dtrSeq.filter((d, i) => i > 0 && !dtrSeq[i - 1] && d).length;
+  ok(rises >= 1, "لبه‌ی RISINGِ DTR (۰→۱) وجود دارد — تریگرِ ریستِ Mega 2560 (16U2)",
+     "DTR: " + dtrSeq.map((d) => (d ? "1" : "0")).join("→"));
+  ok(dtrSeq.indexOf(false) !== -1, "DTR واقعاً یک بار LOW شد (مستقل از وضعیتِ اولیه‌ی کرنل)",
+     "DTR: " + dtrSeq.map((d) => (d ? "1" : "0")).join("→"));
+  ok(rises === 1, "دقیقاً یک ریست — ریستِ دوم وسطِ بنرِ بوت می‌افتد و متنش را cut می‌کند",
+     rises + " لبه‌ی rising");
   ok(w.eval("S.mode") === "serial", "GUI در وضعیتِ اتصال است");
   g.dom.window.close();
 

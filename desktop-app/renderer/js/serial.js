@@ -101,26 +101,34 @@ class SerialLink {
     if (this.onConnect) this.onConnect(this.baud);
   }
 
-  /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند و این دو
-   * پیامدِ جدی دارد:
-   *   · بردهای USB بومی (32u4/ESP32) تا وقتی DTR asserted نباشد «میزبان وصل
-   *     نیست» فرض می‌کنند و هر Serial.print را **بی‌صدا دور می‌ریزند** → RX=0؛
-   *   · بردهای Rev3 لبه‌ی ریست را نمی‌گیرند، پس بنرِ بوت و نسخه‌ی فریم‌ور
-   *     هرگز نمی‌آید و اپ نمی‌داند آن سوی سیم چه چیزی هست.
-   * پس همان پالسِ avrdude را می‌زنیم که پلِ دسکتاپ می‌زند، با همان قانونِ
-   * حیاتی: پایان با **هر دو خط در یک سطح**. در Rev3 خطِ RESET با جفت
-   * ترانزیستور از DTR/RTS هدایت می‌شود و تا وقتی این دو متفاوت باشند AVR در
-   * ریست **نگه داشته می‌شود** — یعنی پورت باز است، TX می‌رود، RX صفر می‌ماند. */
+  /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند، و دو مکانیزمِ
+   * ریستِ متفاوت روی این بردها هست که یک پالس باید **هر دو** را بزند:
+   *   · بردهای Rev3 (Uno/Mega) تا وقتی DTR و RTS در سطحِ **متفاوت** باشند RESET
+   *     را پایین نگه می‌دارند (جفتِ ترانزیستور)، پس پایانِ پالس باید هم‌سطح باشد
+   *     وگرنه AVR تا آخرِ نشست در ریست می‌ماند؛
+   *   · چیپ‌های USBِ 16U2/32U4 روی Mega 2560 / Leonardo / Micro AVR را **فقط با
+   *     لبه‌ی RISINGِ DTR (۰→۱)** ریست می‌کنند — فریم‌ورِ CDCشان
+   *     «if (!prevDTR && curDTR) ResetTimer=…» است. پالسی که DTR را هرگز پایین
+   *     نبرد لبه‌ی rising نمی‌سازد، پس برد اصلاً ری‌بوت نمی‌شود: پورت بی‌خطا باز
+   *     می‌شود، هیچ بایتی نمی‌آید، و Arduino IDE (که اول DTR را می‌اندازد و بعد
+   *     بالا می‌برد) سالم وصل می‌شود. همان «IDE کار می‌کند، اپ ساکت است».
+   *   · بردهای USB بومی تا DTR asserted نباشد «میزبان وصل نیست» فرض می‌کنند و هر
+   *     Serial.print را بی‌صدا دور می‌ریزند → RX=0.
+   * پس: (۰,۰) → (۰,۱) → (۱,۱). لبه‌ی falling دارد، **دقیقاً یک** لبه‌ی risingِ
+   * DTR دارد (مستقل از سطحی که کرنل موقعِ open جا گذاشته)، و با هر دو خطِ
+   * asserted تمام می‌شود. شروع از (۱,۱) دو بار غلط است: لبه‌ی falling ندارد، و
+   * اگر کرنل DTR را پایین جا گذاشته باشد همان قدمِ اول خودش یک rising می‌سازد و
+   * ریستِ دوم وسطِ بنرِ بوت می‌افتد و متن نصفه cut می‌شود. */
   async _assertLines(port) {
     if (!port || typeof port.setSignals !== "function") return;
     const nap = (ms) => new Promise((r) => setTimeout(r, ms));
-    const both = { dataTerminalReady: true, requestToSend: true };
+    const sig = (dtr, rts) => ({ dataTerminalReady: dtr, requestToSend: rts });
     try {
-      await port.setSignals(both);                                       /* میزبان وصل است */
+      await port.setSignals(sig(false, false));  /* DTR پایین → لبه‌ی falling */
       await nap(50);
-      await port.setSignals({ dataTerminalReady: true, requestToSend: false }); /* تفاوت → RESET پایین */
-      await nap(120);
-      await port.setSignals(both);                                       /* یکسان → برد آزاد و در حالِ بوت */
+      await port.setSignals(sig(false, true));   /* متفاوت → RESET پایین (Rev3) */
+      await nap(120);                            /* نگه‌داشتنِ ریست (بوت‌لودر ≥ ۵۰ms) */
+      await port.setSignals(sig(true, true));    /* لبه‌ی RISINGِ DTR → ریستِ 16U2/32U4 */
       await nap(50);
     } catch (e) {
       /* برخی مبدل‌ها setSignals را پس می‌زنند — نباید اتصال را بشکند */

@@ -63,16 +63,41 @@ def main():
         bits = (bits | TIOCM_RTS) if rts else (bits & ~TIOCM_RTS)
         fcntl.ioctl(fd, TIOCMSET, bits)
 
+    # ---- THE PULSE -------------------------------------------------------
+    # Two different reset mechanisms live on these boards, and one pulse has
+    # to trigger BOTH:
+    #
+    #  * Rev3 boards (Uno/Mega) pull RESET low while DTR and RTS sit at
+    #    DIFFERENT levels (the transistor pair), so the pulse must also end
+    #    with both lines at the SAME level or the AVR is held in reset for
+    #    the whole session.
+    #  * The 16U2 / 32U4 USB chips on the Mega 2560 / Leonardo / Micro reset
+    #    the AVR ONLY on the DTR RISING edge (0 -> 1): their CDC firmware does
+    #    `if (!prevDTR && curDTR) ResetTimer = ...`. A pulse that never drives
+    #    DTR low produces no rising edge, so the board is never re-booted: the
+    #    port opens cleanly, nothing is ever received, and the Arduino IDE
+    #    (which drops DTR then raises it, like avrdude) still works fine.
+    #    That is the "IDE works, the app is silent" failure.
+    #
+    # (0,0) -> (0,1) -> (1,1) is deterministic: it contains the DTR falling
+    # edge (resets cap-coupled boards), exactly ONE DTR rising edge (resets
+    # 16U2/32U4 boards) regardless of the DTR level the kernel left behind on
+    # open, and it ends with both lines asserted so native-USB boards see the
+    # host as connected instead of silently dropping every Serial.print().
+    #
+    # Starting from (1,1) is wrong twice over: it has no falling edge, and if
+    # the kernel left DTR low that first step is itself a rising edge, so the
+    # second reset can land mid-banner and truncate the boot text.
     try:
-        set_lines(True, True)     # idle, same level -> board running
+        set_lines(False, False)   # DTR low: falling edge for cap-coupled boards
         time.sleep(0.05)
-        set_lines(True, False)    # levels differ -> RESET pulled low
+        set_lines(False, True)    # levels differ -> RESET pulled low on Rev3
         time.sleep(0.12)          # hold reset (bootloaders want >= 50 ms)
     except Exception:
         pass                      # ptys/ports without modem-control ioctls
     try:
-        set_lines(True, True)     # ALWAYS release: same level -> board boots
-    except Exception:
+        set_lines(True, True)     # DTR RISING edge -> 16U2/32U4 reset; both
+    except Exception:             # asserted -> Rev3 released, host "connected"
         pass
     time.sleep(0.05)
     sys.stdout.write("R:\n")
