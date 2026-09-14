@@ -266,7 +266,7 @@ function connErrorHint(e, portPath) {
       <div>1. <b>A leftover process is holding it.</b> Close the app, then run:
       <div><code>sudo pkill -f serial_bridge.py</code> &nbsp;·&nbsp; <code>sudo fuser -k ${escH(portPath || "/dev/ttyUSB0")}</code></div>
       2. <b>The USB device is half-enumerated</b> (it dropped off the bus and did not come back cleanly): <b>unplug the cable, wait 5 s, replug</b>, then Connect. Watch <code>sudo dmesg -w</code> while you replug &mdash; if the kernel prints <code>disabled by hub (EMI?), re-enabling</code> the cause is electrical (motor supply on the USB rail, no common ground, or a thin/long cable).</div>
-      <div>Permanent fix for the daemon case: <code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>`,
+      <div>Permanent fix for the daemon case: <code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>`,
              plain: "The port open never finished" + pp + " — a leftover process is holding it, or the USB device is half-enumerated. Run: sudo pkill -f serial_bridge.py && sudo fuser -k " + (portPath || "/dev/ttyUSB0") + " — then unplug, wait 5 s, replug and Connect." };
   /* پلِ Linux/macOS به python3 نیاز دارد — بدون آن «اتصال» فقط شکست می‌خورد */
   if (/cannot run python|python3|bridge spawn|bridge timeout/i.test(m))
@@ -279,7 +279,7 @@ function connErrorHint(e, portPath) {
   if (/busy|lock|EBUSY|resource temporarily|device is/i.test(m))
     return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>
       <div><b>On Linux the usual culprits are system daemons, not your apps:</b> <code>ModemManager</code> probes every new serial device with AT commands (and toggles DTR, which resets the board), and <code>brltty</code> mistakes the CH340 chip (1a86:7523) for a braille display. One command fixes both, permanently:
-      <div><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>
+      <div><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh)</code></div>
       then replug the USB cable. It also creates a stable <code>/dev/axis5</code> name that survives USB drop-outs.</div>`,
              plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app). On Linux also check ModemManager/brltty: run tools/fix-serial-port-ownership.sh, then replug." };
   if (/Permission|Access denie|Unauthorized/i.test(m))
@@ -2074,7 +2074,7 @@ function updateLinkStats() {
           S._rxStage = 3;                       /* علت پیدا شد — نصیحتِ RESET لازم نیست */
           addConsole("err", "!! another program is holding this port: " + h.procs.join(", ") + " (PID " + h.pids.join(", ") + ")");
           addConsole("warn", "   → on Linux a tty is NOT exclusive, so that program swallows every byte the board sends. Your commands still reach the board (that is why a motor moved) but no reply ever comes back.");
-          addConsole("warn", "   → close it: Arduino IDE / Serial Monitor / minicom / screen, a second copy of this app (pkill -f serial_bridge.py), or a system daemon — ModemManager probes the port and brltty claims the CH340 chip. Permanent one-line fix: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)");
+          addConsole("warn", "   → close it: Arduino IDE / Serial Monitor / minicom / screen, a second copy of this app (pkill -f serial_bridge.py), or a system daemon — ModemManager probes the port and brltty claims the CH340 chip. Permanent one-line fix: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh)");
           toast("Port is held by " + h.procs.join(", ") + " — close it and reconnect", "err", 9000);
           const hintH = $("portHint");
           if (hintH) hintH.innerHTML = "<b>Another program is reading this port:</b> " + h.procs.map(escH).join(", ") +
@@ -2108,7 +2108,7 @@ function updateLinkStats() {
         addConsole("warn", "   → still dead with motors unpowered? The board/cable/port is at fault: try another USB port and a short data cable, and watch `sudo dmesg -w` while you replug.");
       }
       addConsole("warn", "   → on Linux a tty is NOT exclusive: another process can hold the same port and swallow every byte (your commands still reach the board, but no reply ever comes back). Check with: `sudo fuser -v " + (label || "/dev/ttyUSB0") + "` and `pgrep -af 'ModemManager|brltty|serial_bridge|screen|minicom'`.");
-      addConsole("warn", "   → one command fixes the usual culprits (ModemManager probing + brltty claiming the CH340): bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh) — then replug.");
+      addConsole("warn", "   → one command fixes the usual culprits (ModemManager probing + brltty claiming the CH340): bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh) — then replug.");
       addConsole("warn", "   → if nothing holds it, the board is dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling'. That is electrical: motors powered from USB, no common ground, or a long/thin cable.");
       const hintV = $("portHint");
       if (hintV) hintV.innerHTML = "<b>The board is silent and the AVR is not running</b> (no boot banner ever arrived). If the motors feel <b>stiff</b> that proves it: this firmware <i>disables</i> the motors at boot, so stiffness means the chip is held in reset or browning out and its floating pins are energising the drivers.<div><b>30-second test:</b> unplug the motor supply (USB only) &rarr; power-cycle the board &rarr; Connect. If it links now, the motors were dragging the 5&nbsp;V rail down: keep them off USB power and tie the supply <b>GND</b> to the Arduino <b>GND</b>.</div><div><b>Then rule out a stolen port:</b> <code>sudo fuser -v " + escH(label || "/dev/ttyUSB0") + "</code> and <code>pgrep -af ModemManager</code> &mdash; on Linux a second reader swallows every reply while your commands still reach the board. And <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI).</div>";

@@ -29,7 +29,7 @@ set -uo pipefail
 RULE_NAME="99-axis5-serial.rules"
 RULE_DST="/etc/udev/rules.d/$RULE_NAME"
 BRLTTY_OVERRIDE="/etc/udev/rules.d/85-brltty.rules"
-RAW_URL="https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/desktop-app/build/$RULE_NAME"
+RAW_URL="https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/desktop-app/build/$RULE_NAME"
 MODE="install"
 case "${1:-}" in
   --check) MODE="check" ;;

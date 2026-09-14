@@ -6,7 +6,7 @@
 #  AXIS-5 Robot Control — نصب/پاک‌سازی کامل از ترمینال لینوکس
 #
 #  یک‌خطی (بدون کلون کردن ریپو):
-#     bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/install-linux.sh)
+#     bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/install-linux.sh)
 #
 #  یا بعد از کلون:
 #     bash tools/install-linux.sh              # دانلود + پاک‌سازی قبلی + نصب .deb
@@ -262,9 +262,9 @@ if [ -z "$FIXER" ]; then
     mkdir -p "${HOME}/.cache/axis5-installer" 2>/dev/null || true
     FIXER="${HOME}/.cache/axis5-installer/fix-serial-port-ownership.sh"
     if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a091da-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -o "$FIXER" 2>/dev/null || FIXER=""
+        curl -fsSL "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a09f8f-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -o "$FIXER" 2>/dev/null || FIXER=""
     elif command -v wget >/dev/null 2>&1; then
-        wget -q "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a091da-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -O "$FIXER" 2>/dev/null || FIXER=""
+        wget -q "https://raw.githubusercontent.com/${REPO}/${AXIS5_BRANCH:-arena/01a09f8f-arduinoarm-robot}/tools/fix-serial-port-ownership.sh" -O "$FIXER" 2>/dev/null || FIXER=""
     fi
 fi
 if [ -n "$FIXER" ] && [ -f "$FIXER" ]; then

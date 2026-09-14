@@ -229,7 +229,7 @@ Tuning in `Config.h`:
 **یک خطی** — نه کلون لازم است نه چیز دیگر:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/install-linux.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/install-linux.sh)
 ```
 
 اسکریپت `tools/install-linux.sh` این کارها را به ترتیب انجام می‌دهد:

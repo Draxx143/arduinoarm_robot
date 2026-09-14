@@ -1406,7 +1406,7 @@ function linkDiagnosis() {
     S._diagDone = true;
     addConsole("err", "!! ۶ ثانیه است یک بایت هم از برد نیامده (RX = 0) — پورت باز است، ولی برد حرف نمی‌زند.");
     addConsole("warn", "   → ۱) برنامه‌ی دیگری پورت را گرفته؟ در لینوکس tty انحصاری نیست: Arduino IDE / Serial Monitor / minicom / screen / یک نسخه‌ی دوم از همین GUI همه‌ی بایت‌ها را می‌بلعند (دستور می‌رود، جواب برنمی‌گردد). چک کن: sudo fuser -v /dev/ttyUSB0");
-    addConsole("warn", "   → ۲) ModemManager یا brltty پورت را قاپیده‌اند (روی چیپ CH340 رایج است). یک بار برای همیشه: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh) و بعد کابل را دوباره بزن.");
+    addConsole("warn", "   → ۲) ModemManager یا brltty پورت را قاپیده‌اند (روی چیپ CH340 رایج است). یک بار برای همیشه: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh) و بعد کابل را دوباره بزن.");
     addConsole("warn", "   → ۳) دکمه‌ی RESET روی برد را بزن — GUI وصل می‌ماند و گوش می‌دهد (پورت را نمی‌بندد).");
     addConsole("warn", "   → ۴) باودریت باید " + FW.BAUD + " باشد؛ فریم‌ور با همان Serial.begin(" + FW.BAUD + ") کامپایل شده.");
     addConsole("warn", "   → ۵) اگر موتورهای استپ سفت/وزوز‌کنان‌اند و یک بایت هم نمی‌آید: تغذیه‌ی موتورها را بکش (فقط USB بماند) و برد را خاموش/روشن کن — یعنی ریل ۵ ولت افت کرده و AVR در brown-out است.");

@@ -155,7 +155,7 @@ fi
 if [ "$OWNERSHIP_BAD" = 1 ]; then
     echo
     bad "ریشه‌ی «دستور می‌رود ولی جواب برنمی‌گردد» همین‌جاست. یک دستور درستش می‌کند:"
-    echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh)"
+    echo "      bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a09f8f-arduinoarm-robot/tools/fix-serial-port-ownership.sh)"
     echo "    بعد کابلِ USB را یک بار بکش و دوباره بزن."
 fi
 
