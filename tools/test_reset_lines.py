@@ -16,7 +16,8 @@ TX را کرنل می‌پذیرد، و RX برای همیشه صفر می‌م�
 بدونِ این شبیه‌سازی هیچ‌وقت نمی‌شد این منطق را تست کرد.
 
 بررسی‌ها:
-  ۱. پل آماده می‌شود («R:» می‌فرستد)
+  ۱. پل آماده می‌شود («R:» می‌فرستد) — ولی **نه بی‌درنگ**: اول منتظرِ بنرِ
+     بوت می‌ماند و اگر برد ساکت بود، بعد از مهلت ادامه می‌دهد (hang نه)
   ۲. پالسِ ریست واقعاً زده می‌شود (حداقل یک وضعیتِ «متفاوت» دیده شود)
   ۳. **وضعیتِ نهایی: DTR و RTS یکسان و هر دو asserted** — یعنی برد از
      ریست آزاد شده و اجرا می‌شود
@@ -32,6 +33,7 @@ import pty
 import re
 import runpy
 import sys
+import time
 import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,12 +60,14 @@ def same_level(bits):
     return bool(bits & TIOCM_DTR) == bool(bits & TIOCM_RTS)
 
 
-def run_bridge_on_pty(fail_at=None):
+def run_bridge_on_pty(fail_at=None, ready_wait="0.3"):
     """پلِ واقعی را روی pty اجرا کن و تاریخچه‌ی خطوطِ مودم را برگردان.
 
     fail_at: شماره‌ی چندمین TIOCMSET باید استثنا بدهد (شبیه‌سازیِ مبدلِ
              ناقص) — برای اینکه مطمئن شویم حتی در آن حالت هم برد در ریست
              رها نمی‌شود.
+    ready_wait: مهلتِ انتظارِ بنرِ بوت (ثانیه) — کوتاه، تا تست معطلِ
+             ۵ ثانیه‌ی واقعی نماند. خروجی: (stdout, تاریخچه, ثانیه‌ی سپری‌شده)
     """
     mfd, sfd = pty.openpty()
     slave = os.ttyname(sfd)
@@ -101,9 +105,10 @@ def run_bridge_on_pty(fail_at=None):
     }
     out = io.StringIO()
     sys.modules["fcntl"] = fake
-    sys.argv = ["serial_bridge.py", slave, "115200"]
+    sys.argv = ["serial_bridge.py", slave, "115200", ready_wait]
     sys.stdin = io.StringIO("")        # EOF فوری: حلقه‌ی stdin تمام می‌شود
     sys.stdout = out
+    t0 = time.monotonic()
     try:
         runpy.run_path(BRIDGE, run_name="__main__")
     except SystemExit:
@@ -116,14 +121,14 @@ def run_bridge_on_pty(fail_at=None):
                 if v is None:
                     sys.modules.pop("fcntl", None)
                 else:
-                    sys.modules["fcntl"] = v
+                    sys.modules[k] = v
             else:
                 setattr(sys, k, v)
         try:
             os.close(mfd)
         except OSError:
             pass
-    return out.getvalue(), [h for h in history if not isinstance(h, tuple)]
+    return out.getvalue(), [h for h in history if not isinstance(h, tuple)], time.monotonic() - t0
 
 
 print("=" * 72)
@@ -131,8 +136,18 @@ print("تستِ پالسِ ریستِ برد (DTR/RTS) — علتِ «RX=0 با 
 print("=" * 72)
 
 print("\n-- پلِ واقعیِ اپ روی pty، با fcntlِ شبیه‌سازی‌شده --")
-out, hist = run_bridge_on_pty()
-check(out.startswith("R:"), "پل آماده شد", f"stdout با {out.splitlines()[:1]!r} شروع شد")
+out, hist, elapsed = run_bridge_on_pty()
+lines = out.splitlines()
+check("R:" in lines, "پل آماده شد (R: را فرستاد)", f"stdout: {lines[:3]!r}…")
+check(any(x.startswith("N:") for x in lines),
+      "پل علتِ انتظار را گزارش کرد (خطِ N: …)",
+      "پیش از R: باید بگوید منتظرِ بنرِ بوت است")
+check(elapsed >= 0.25,
+      "R: بی‌درنگ نیامد — پل واقعاً منتظرِ بنرِ بوت ماند",
+      f"%0.2fs سپری شد (مهلتِ تست 0.3s)" % elapsed)
+check(elapsed < 5.0,
+      "مهلت کار کرد — بردِ ساکت اتصال را hang نکرد",
+      f"%0.2fs با مهلتِ 0.3s" % elapsed)
 check(len(hist) >= 3, "پالسِ ریست چند مرحله‌ای است", f"{len(hist)} بار TIOCMSET")
 check(any(not same_level(b) for b in hist),
       "یک وضعیتِ «متفاوت» دیده شد (یعنی RESET واقعاً پایین کشیده شد)",
@@ -167,8 +182,8 @@ check(len(rising) == 1,
       f"{len(rising)} لبه‌ی rising")
 
 print("\n-- همان پل وقتی مبدل، ioctlِ دوم را پس می‌زند (مبدلِ ناقص) --")
-out2, hist2 = run_bridge_on_pty(fail_at=2)
-check(out2.startswith("R:"), "پل هنوز آماده می‌شود (اتصال نباید بشکند)",
+out2, hist2, _ = run_bridge_on_pty(fail_at=2)
+check("R:" in out2.splitlines(), "پل هنوز آماده می‌شود (اتصال نباید بشکند)",
       f"{len(hist2)} بار خطوط ست شد")
 check(not hist2 or same_level(hist2[-1]),
       "حتی با ioctlِ ناقص، وضعیتِ نهایی هم‌سطح است",

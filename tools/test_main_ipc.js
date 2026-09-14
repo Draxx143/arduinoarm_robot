@@ -144,9 +144,15 @@ async function main() {
 
   /* ---- بازکردنِ پورت از راهِ هندلرِ واقعی ---- */
   sent.length = 0;
+  /* دست‌دادنِ بوت از راهِ زنجیره‌ی واقعی: بنر پیشاپیش در بافرِ pty است، پس
+   * پل باید R: را بی‌درنگ بعد از پالس بدهد — نه بعد از مهلتِ ۵ ثانیه. */
+  for (const line of BANNER.split("\n")) { if (line) board.send(line); }
+  const tOpen1 = Date.now();
   const res = await handlers.get("serialport:open")({}, board.slave, 115200);
+  const took1 = Date.now() - tOpen1;
   ok(res && !res.err, "serialport:open بدون خطا حل شد", res && res.err ? res.err : JSON.stringify(res));
   ok(res && typeof res.id === "number", "شناسه‌ی نشست برگشت", String(res && res.id));
+  ok(took1 < 8000, "open با بنرِ آماده سریع حل شد (دست‌دادن، نه انتظارِ کاملِ ۵ ثانیه)", took1 + " ms");
 
   /* ---- برد حرف می‌زند: باید به renderer برسد ----
      pty_holder هر SEND را یک خط می‌فرستد، پس بنر را خط‌به‌خط می‌دهیم —
@@ -162,6 +168,10 @@ async function main() {
   ok(decoded.split("\n").filter((l) => /====/.test(l)).length >= 2,
      "چند خط پشتِ سرِ هم سالم رسید (تکه‌تکه‌شدنِ بایت‌ها مشکلی نمی‌سازد)",
      JSON.stringify(decoded.slice(0, 120)));
+  const openNotices = sent.filter((m) => m.channel === "serialport:notice").map((m) => String(m.payload));
+  ok(openNotices.some((t) => /boot banner seen/i.test(t)),
+     "پل از راهِ زنجیره‌ی واقعی دیدنِ بنر را گزارش کرد",
+     JSON.stringify(openNotices).slice(0, 220));
 
   /* ---- نوشتن: باید به برد برسد ---- */
   board.got.length = 0;
@@ -204,8 +214,14 @@ async function main() {
   process.env.PATH = hangDir + ":" + oldPath;
   const board2 = await startBoard();
   sent.length = 0;
+  /* بنر از پیش در بافرِ pty است (بایت‌ها تا باز شدنِ پورت می‌مانند) تا
+   * دست‌دادنِ بوت بی‌درنگ حل شود و این سناریو فقط مهلتِ داخلیِ pgrep را
+   * بسنجد، نه مهلتِ ۵ ثانیه‌ی بنر را. */
+  board2.send("AXIS-5 Firmware v1.0.41");
   const t0 = Date.now();
-  const res2 = await handlers.get("serialport:open")({}, board2.slave, 115200);
+  const openP2 = handlers.get("serialport:open")({}, board2.slave, 115200);
+  setTimeout(() => board2.send("System initialized."), 3000);
+  const res2 = await openP2;
   const took = Date.now() - t0;
   ok(res2 && !res2.err, "با pgrepِ گیرکرده هم پورت باز شد (open هرگز hang نمی‌شود)",
      res2 && res2.err ? res2.err : "");

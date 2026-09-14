@@ -16,8 +16,13 @@
  * این دقیقاً همان «بورد شناسایی می‌شود ولی وصل نمی‌شود» است.
  *
  * پروتکلِ پل (bridge/serial_bridge.py):
- *   stdout:  R: آماده | D:<b64> داده | E:<b64> خطا | X: خروج
+ *   stdout:  R: آماده | D:<b64> داده | N:<b64> اطلاع‌رسانی | E:<b64> خطا | X: خروج
  *   stdin :  W:<b64> نوشتن | C: بستن
+ *
+ * «R:» یعنی «بنرِ بوتِ برد دیده شد (یا مهلتِ ۵ ثانیه گذشت)» — نه «پورت باز
+ * شد». پس promise‌ی openBridge عملاً کلِ زنجیره‌ی زیر را پوشش می‌دهد، نه فقط
+ * بالا آمدنِ پروسس:
+ *   spawn bridge → open serial → reset → boot banner (≤ ‎5 s) → R:
  * ============================================================ */
 "use strict";
 
@@ -52,7 +57,12 @@ function openBridge(o) {
   const baud = Number(o.baud) || 115200;
   const send = typeof o.send === "function" ? o.send : () => {};
   const python = o.python || "python3";
-  const timeoutMs = Number(o.timeoutMs) || 5000;
+  /* مهلتِ کلِ اتصال: بالا آمدنِ python + بازکردنِ پورت + پالسِ ریست +
+   * انتظارِ بنرِ بوت (تا ۵ ثانیه) + حاشیه برای سیستم‌های کند. باید
+   * **بزرگ‌تر** از مهلتِ بنرِ پل باشد، وگرنه اتصالِ سالم timeout می‌خورد؛ و
+   * **کوچک‌تر** از سقفِ ۲۰ ثانیه‌ی main.js (که خودش زیرِ سقفِ ۲۵ ثانیه‌ی
+   * رندرر است):  5s بنر < 9s پل < 20s پروسه‌ی اصلی < 25s رندرر. */
+  const timeoutMs = Number(o.timeoutMs) || 9000;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -100,6 +110,13 @@ function openBridge(o) {
         } else if (line.startsWith("D:")) {
           try { rec.rx += Buffer.from(line.slice(2), "base64").length; } catch (e) {}
           send("serialport:data", line.slice(2));
+        } else if (line.startsWith("N:")) {
+          /* اطلاع‌رسانیِ پل («پورت باز شد»، «منتظر بنرِ بوت…»، «بنر دیده
+           * شد») — در هر زمانی (حتی پیش از R:) فقط به کنسول می‌رود و هرگز
+           * باعثِ شکستِ open نمی‌شود. */
+          let note = line.slice(2);
+          try { note = Buffer.from(note, "base64").toString("utf8"); } catch (e) {}
+          send("serialport:notice", note);
         } else if (line.startsWith("E:")) {
           let msg = line.slice(2);
           try { msg = Buffer.from(msg, "base64").toString("utf8"); } catch (e) {}

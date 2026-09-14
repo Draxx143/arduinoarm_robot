@@ -101,12 +101,24 @@ async function main() {
     if (!slave) throw new Error("no pty");
 
     const events = [];
-    const res = await pybridge.openBridge({
+    /* دست‌دادنِ بوت: «برد» بنر را می‌فرستد — حتی پیش از بالا آمدنِ پل، چون
+     * بایت‌ها در بافرِ pty می‌مانند — پس R: باید بی‌درنگ بعد از پالس بیاید،
+     * نه بعد از مهلتِ ۵ ثانیه. */
+    holder.send("SEND:AXIS-5 Firmware v1.0.41");
+    const tOpen = Date.now();
+    const openP = pybridge.openBridge({
       portPath: slave, baud: 115200, timeoutMs: 8000,
       send: (ch, payload) => events.push([ch, payload]),
     });
+    setTimeout(() => holder.send("SEND:System initialized."), 800);
+    const res = await openP;
+    const openMs = Date.now() - tOpen;
     ok(!!res.id && !res.err, "پل روی tty واقعی باز شد (id=" + res.id + ")" + (res.err ? " → " + res.err : ""));
+    ok(openMs < 4500, `بنر دیده شد و R: زود آمد (${openMs}ms < مهلتِ ۵ ثانیه) — دست‌دادنِ واقعی، نه sleep`);
     ok(pybridge.has(res.id), "نشست در رجیستری است");
+    const notices = events.filter((e) => e[0] === "serialport:notice").map((e) => String(e[1]));
+    ok(notices.some((t) => /boot banner seen/i.test(t)),
+       "پل دیدنِ بنر را گزارش کرد: " + JSON.stringify(notices).slice(0, 160));
 
     /* RX: «برد» یک خط می‌فرستد → باید به renderer برود */
     holder.send("SEND:>> POS 1.0,2.0,3.0,4.0,5.0");

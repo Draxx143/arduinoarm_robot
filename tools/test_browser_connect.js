@@ -286,6 +286,8 @@ async function main() {
   ok(w.eval("S.serial.rxCount") > 0, "RX > 0 — بایتِ برد به GUI رسید",
      "rxCount=" + w.eval("S.serial.rxCount"));
   ok(w.eval("S._sawBoardText") === true, "متن به‌عنوانِ حرفِ خودِ فریم‌ور شناخته شد");
+  ok(w.eval("S.serial._sawBanner") === true,
+     "onConnect فقط بعد از دیدنِ بنرِ واقعی آمد (دست‌دادنِ بوت، نه شانس)");
   ok(w.eval("S.fwVersion") === w.eval("FW.EXPECTED_FW"),
      "نسخه‌ی فریم‌ور از بنرِ بوت خوانده شد → GUI و برد هم‌نسخه‌اند",
      "fwVersion=" + w.eval("S.fwVersion"));
@@ -341,6 +343,7 @@ async function main() {
   g = await loadGui(httpPort, { silent: true });
   w = g.dom.window;
   w.document.getElementById("selBaud").value = "115200";
+  w.eval("S.serial.readyWaitMs = 400");   /* برد ساکت است — انتظارِ کاملِ ۵ ثانیه لازم نیست */
   await w.eval("toggleSerial()");
   await sleep(400);
   ok(w.eval("S.serial.rxCount") === 0, "RX صفر ماند — همان علامتِ کاربر");
@@ -365,6 +368,7 @@ async function main() {
   g = await loadGui(httpPort, { garbage: true });
   w = g.dom.window;
   w.document.getElementById("selBaud").value = "115200";
+  w.eval("S.serial.readyWaitMs = 400");   /* بنرِ خوانا نمی‌آید — انتظارِ کاملِ ۵ ثانیه لازم نیست */
   await w.eval("toggleSerial()");
   await sleep(500);
   w.eval("S._connAt = Date.now() - 7000; updateLinkStats(); updateLinkStats();");

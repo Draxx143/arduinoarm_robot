@@ -28,6 +28,10 @@ class SerialLink {
     this._buff = "";
     this._readLoopActive = false;
     this._label = null;
+    /* دست‌دادنِ بوت: onConnect فقط وقتی می‌آید که بنرِ بوتِ برد دیده شده
+     * باشد (یا readyWaitMs گذشته باشد) — مثلِ «R:» در پلِ پایتون. */
+    this._sawBanner = false;
+    this.readyWaitMs = 5000;
   }
 
   get activeLabel() { return this._label; }
@@ -91,9 +95,29 @@ class SerialLink {
     this.port = port;
     this.connected = true;
     this._buff = "";
+    this._sawBanner = false;
     await this._assertLines(port);
     this._readLoop();
+    /* پالسِ بالا برد را ری‌بوت می‌کند (بوت‌لودر ~۱ ثانیه + ‎delay(500)‎ و
+     * چاپِ بنر در ‎setup()‎). اگر onConnect بی‌درنگ می‌آمد، اولین status
+     * ممکن بود داخلِ پنجره‌ی بوت‌لودر بیفتد و بوت‌لودر آن را بخورد — یعنی
+     * «اتصال» به شانس وابسته می‌شد. پس تا دیدنِ بنرِ واقعیِ بوت صبر می‌کنیم
+     * (حداکثر readyWaitMs)؛ اگر برد ساکت ماند، با همان مهلت ادامه می‌دهیم تا
+     * اتصال hang نشود. تا onConnect نیامده، GUI هیچ فرمانی نمی‌فرستد. */
+    await this._waitForBanner();
+    if (!this.connected) return;   /* وسطِ انتظار disconnect شد — خبرِ اتصال نه */
     if (this.onConnect) this.onConnect(this.baud);
+  }
+
+  /* انتظارِ بنرِ بوت — همان BANNER_MARKERS در bridge/serial_bridge.py
+   * (رشته‌های واقعیِ بنرِ setup() در فریم‌ور، نه پروتکلِ تازه). حلقه‌ی
+   * خواندن هیچ بایتی را نگه نمی‌دارد؛ فقط _sawBanner را ست می‌کند. */
+  async _waitForBanner() {
+    const t0 = Date.now();
+    const limit = Math.max(0, Number(this.readyWaitMs) || 0);
+    while (!this._sawBanner && this.connected && Date.now() - t0 < limit) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
   /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند، و دو مکانیزمِ
@@ -146,6 +170,10 @@ class SerialLink {
             while ((idx = this._buff.search(/[\r\n]/)) !== -1) {
               const line = this._buff.slice(0, idx).replace(/\r/g, "");
               this._buff = this._buff.slice(idx + 1);
+              /* دست‌دادنِ بوت (غیرفعال/منفعل): همه‌ی بایت‌ها مثلِ قبل به
+               * onLine می‌رسند؛ این فقط برای _waitForBanner علامت می‌گذارد. */
+              if (line.indexOf("AXIS-5 Firmware") !== -1 ||
+                  line.indexOf("System initialized.") !== -1) this._sawBanner = true;
               if (line.trim() && this.onLine) this.onLine(line);
             }
           }

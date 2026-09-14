@@ -246,6 +246,13 @@ function createWindow() {
         return pybridge.openBridge({
           portPath: String(portPath),
           baud: Number(baud) || 115200,
+          /* قراردادِ مهلت‌ها (میلی‌ثانیه): پل تا ۵ ثانیه منتظرِ بنرِ بوتِ
+           * برد می‌ماند، پس مهلتِ open باید بزرگ‌تر از آن باشد؛ و چون پیش
+           * از open تا ۲٫۵ ثانیه هم صرفِ خلاص‌کردنِ پل‌های جامانده می‌شود،
+           * جمعِ بدترین حالت (~۱۱٫۵ ثانیه) هنوز زیرِ سقفِ ۲۰ ثانیه‌ی hardCap
+           * است، که خودش زیرِ سقفِ ۲۵ ثانیه‌ی رندرر است:
+           *   5s بنر < 9s پل < 20s پروسه‌ی اصلی < 25s رندرر. */
+          timeoutMs: 9000,
           send: (channel, payload) => {
             if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
           },
