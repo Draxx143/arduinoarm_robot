@@ -50,7 +50,7 @@ if [ ! -f "$SKETCH/RobotArm_Firmware.ino" ]; then
 fi
 
 echo
-echo "===== [1/12] compiling all modules ====="
+echo "===== [1/13] compiling all modules ====="
 OBJS=""
 for f in "$SKETCH"/*.cpp "$OUT/sketch.cpp" "$HT/stubs.cpp"; do
     b=$(basename "$f" | tr '.-' '__')
@@ -67,7 +67,7 @@ done
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [2/12] link + serial smoke test ====="
+    echo "===== [2/13] link + serial smoke test ====="
     printf "  %-24s " "compiling link_main"
     if g++ $CXXFLAGS $INC -c "$HT/link_main.cpp" -o "$OUT/link_main.o" 2> "$OUT/lm.log"; then echo OK; else echo FAIL; FAIL=1; fi
 
@@ -92,7 +92,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [3/12] behavioural simulation (homing order + backoff + motion) ====="
+    echo "===== [3/13] behavioural simulation (homing order + backoff + motion) ====="
     SIM_OBJS=""
     for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager; do
         SIM_OBJS="$SIM_OBJS $OUT/${m}_cpp.o"
@@ -121,7 +121,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [4/12] GUI -> firmware command conformance ====="
+    echo "===== [4/13] GUI -> firmware command conformance ====="
     if command -v node >/dev/null 2>&1; then
         printf "  %-24s " "generating GUI commands"
         if node "$ROOT/tools/gui_cmds.js" > "$OUT/gui_cmds.txt" 2> "$OUT/gui_cmds.err"; then
@@ -156,7 +156,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ]; then
     echo
-    echo "===== [5/12] POS sync channel (sliders follow the board) ====="
+    echo "===== [5/13] POS sync channel (sliders follow the board) ====="
     printf 'pos\ndeg 3 30\npos\nik 210 0 30\npos\nstatus\n' > "$OUT/pos_cmds.txt"
     if "$OUT/firmware" "$OUT/pos_cmds.txt" > "$OUT/pos_run.log" 2>&1; then
         N_POS=$(grep -c '^>> POS ' "$OUT/pos_run.log" || true)
@@ -210,7 +210,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [6/12] kinematics: GUI math + IK parity with the firmware ====="
+    echo "===== [6/13] kinematics: GUI math + IK parity with the firmware ====="
     printf "  %-34s " "Go-to-XYZ reachable band / round-trip"
     if node "$ROOT/tools/test_goto.js" > "$OUT/goto.log" 2>&1; then
         echo "OK — $(tail -1 "$OUT/goto.log")"
@@ -232,7 +232,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [7/12] both GUIs in a real DOM (jsdom) ====="
+    echo "===== [7/13] both GUIs in a real DOM (jsdom) ====="
     printf "  %-34s " "layout + quiet console + POS sync"
     if node "$ROOT/tools/test_gui_dom.js" > "$OUT/gui_dom.log" 2>&1; then
         if grep -q "SKIP" "$OUT/gui_dom.log"; then
@@ -252,7 +252,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     echo
-    echo "===== [8/12] desktop serial bridge (real pty, no hang on failure) ====="
+    echo "===== [8/13] desktop serial bridge (real pty, no hang on failure) ====="
     printf "  %-34s " "openBridge resolves + pty RX/TX"
     if node "$ROOT/tools/test_pybridge.js" > "$OUT/pybridge.log" 2>&1; then
         echo "OK — $(grep -m1 'نتیجه:' "$OUT/pybridge.log")"
@@ -268,7 +268,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v python3 >/dev/null 2>&1; then
     echo
-    echo "===== [9/12] reset pulse leaves the board RUNNING (DTR==RTS) ====="
+    echo "===== [9/13] reset pulse leaves the board RUNNING (DTR==RTS) ====="
     printf "  %-34s " "bridge + diagnose script"
     if python3 "$ROOT/tools/test_reset_lines.py" > "$OUT/reset.log" 2>&1; then
         echo "OK — $(grep -m1 'نتیجه:' "$OUT/reset.log")"
@@ -285,7 +285,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [10/12] connect paths in a real DOM (Web Serial lines, IPC default, auto-reconnect) ====="
+    echo "===== [10/13] connect paths in a real DOM (Web Serial lines, IPC default, auto-reconnect) ====="
     printf "  %-34s " "renderer connect logic"
     if node "$ROOT/tools/test_connect_paths.js" > "$OUT/connect.log" 2>&1; then
         if grep -q "SKIP" "$OUT/connect.log"; then
@@ -308,7 +308,7 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
     echo
-    echo "===== [11/12] port ownership (stable node, phantom ports, orphan bridges, udev rule) ====="
+    echo "===== [11/13] port ownership (stable node, phantom ports, orphan bridges, udev rule) ====="
     printf "  %-34s " "who owns the serial port"
     if node "$ROOT/tools/test_portnames.js" > "$OUT/portnames.log" 2>&1; then
         echo "OK — $(grep -m1 'نتیجه:' "$OUT/portnames.log")"
@@ -326,12 +326,35 @@ fi
 # ---------------------------------------------------------------------
 if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
     echo
-    echo "===== [12/12] main-process chain end to end (real main.js + pybridge + bridge on a pty) ====="
+    echo "===== [12/13] main-process chain end to end (real main.js + pybridge + bridge on a pty) ====="
     printf "  %-34s " "open → RX → TX → close"
     if node "$ROOT/tools/test_main_ipc.js" > "$OUT/mainipc.log" 2>&1; then
         echo "OK — $(grep -m1 'نتیجه:' "$OUT/mainipc.log")"
     else
         echo "FAIL"; sed 's/^/      /' "$OUT/mainipc.log" | tail -22; FAIL=1
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# ۱۳) مسیرِ اتصالِ **GUI مرورگر** (Web Serial مستقیم) — جایی که گزارشِ
+#     «آردوینو به نرم‌افزار وصل نمی‌شود» از آن می‌آمد: این مسیر هیچ پالسِ
+#     DTR/RTS نمی‌زد، پس بردِ Rev3 لبه‌ی ریست نمی‌گرفت (بنرِ بوت و نسخه‌ی
+#     فریم‌ور هرگز نمی‌آمد) و بردهای USB بومی هر Serial.print را بی‌صدا
+#     دور می‌ریختند → RX = 0 با UIِ «متصل شد». سه مسیرِ اتصالِ پروژه باید
+#     یکسان رفتار کنند.
+# ---------------------------------------------------------------------
+if [ $FAIL -eq 0 ] && command -v node >/dev/null 2>&1; then
+    echo
+    echo "===== [13/13] browser GUI connect path (Web Serial: reset pulse, boot banner, silent board) ====="
+    printf "  %-34s " "connect from Chrome/Edge"
+    if node "$ROOT/tools/test_browser_connect.js" > "$OUT/browser_connect.log" 2>&1; then
+        if grep -q "SKIP" "$OUT/browser_connect.log"; then
+            echo "SKIP — jsdom نصب نیست (cd tools && npm install)"
+        else
+            echo "OK — $(grep -m1 'نتیجه:' "$OUT/browser_connect.log")"
+        fi
+    else
+        echo "FAIL"; sed 's/^/      /' "$OUT/browser_connect.log" | tail -25; FAIL=1
     fi
 fi
 

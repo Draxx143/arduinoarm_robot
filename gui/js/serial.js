@@ -4,6 +4,12 @@
 /* ============================================================
  * serial.js — اتصال مستقیم به آردوینو از طریق Web Serial API
  * پشتیبانی: Chrome / Edge / Opera (دسکتاپ)
+ *
+ * ⚠ این فایل باید **دقیقاً** مثلِ desktop-app/renderer/js/serial.js و
+ *   desktop-app/bridge/serial_bridge.py رفتار کند. هر سه یک کار را
+ *   می‌کنند: بازکردنِ پورت + پالسِ خطوطِ مودم (DTR/RTS). اگر یکی‌شان
+ *   پالس نزند، همان برد با یک GUI وصل می‌شود و با دیگری نه — دقیقاً
+ *   همان «ناهماهنگیِ آردوینو و GUI».
  * ============================================================ */
 "use strict";
 
@@ -21,7 +27,10 @@ class SerialLink {
     this.rxCount = 0;
     this._buff = "";
     this._readLoopActive = false;
+    this._label = null;
   }
+
+  get activeLabel() { return this._label; }
 
   static get supported() {
     return typeof navigator !== "undefined" && !!navigator.serial;
@@ -39,21 +48,8 @@ class SerialLink {
     }
     if (this.connected) throw new Error("هم‌اکنون متصل است");
     this.baud = baud || FW.BAUD;
-
-    this.port = await navigator.serial.requestPort();
-    await this.port.open({
-      baudRate: this.baud,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      bufferSize: 4096,
-      flowControl: "none",
-    });
-
-    this.connected = true;
-    this._buff = "";
-    if (this.onConnect) this.onConnect(this.baud);
-    this._readLoop();
+    const port = await navigator.serial.requestPort();
+    await this._openPort(port, this.baud);
   }
 
   /** اتصال مستقیم به یک پورتِ مجازشده (کارت انتخاب پورت) */
@@ -61,16 +57,8 @@ class SerialLink {
     if (!SerialLink.supported) throw new Error("Web Serial در دسترس نیست");
     if (this.connected) throw new Error("هم‌اکنون متصل است");
     this.baud = baud || FW.BAUD;
-    this.port = port;
     this._label = label || null;
-    await this.port.open({
-      baudRate: this.baud, dataBits: 8, stopBits: 1,
-      parity: "none", bufferSize: 4096, flowControl: "none",
-    });
-    this.connected = true;
-    this._buff = "";
-    if (this.onConnect) this.onConnect(this.baud);
-    this._readLoop();
+    await this._openPort(port, this.baud);
   }
 
   /** اتصال به پورت قبلاً-مجوزداده‌شده بدون دیالوگ انتخاب */
@@ -78,16 +66,60 @@ class SerialLink {
     if (!SerialLink.supported) throw new Error("Web Serial در دسترس نیست");
     const ports = await this.previouslyGranted();
     if (!ports.length) throw new Error("پورت قبلی‌ای مجاز نشده است");
-    this.port = ports[ports.length - 1];
     this.baud = baud || FW.BAUD;
-    await this.port.open({
-      baudRate: this.baud, dataBits: 8, stopBits: 1,
-      parity: "none", bufferSize: 4096, flowControl: "none",
+    await this._openPort(ports[ports.length - 1], this.baud);
+  }
+
+  /* ---- تنها مسیرِ بازکردنِ پورت --------------------------------------
+   * ترتیبِ چهار قدم اینجا **بار معنایی دارد** و قبلاً غلط بود:
+   *   ۱. open            ۲. پالسِ خطوطِ مودم
+   *   ۳. حلقه‌ی خواندن   ۴. خبرِ «وصل شد» به UI
+   * حلقه‌ی خواندن **پیش از** onConnect شروع می‌شود: اگر هر هندلری در
+   * onConnect استثنا بدهد (یک المانِ DOM که نیست، یک تابعِ خراب)، قبلاً
+   * پورت باز می‌ماند ولی هیچ خواننده‌ای نداشت → RX برای همیشه صفر و
+   * «وصل شد 🎉» روی صفحه. یعنی بدترین حالتِ ممکن: اتصالِ مرده‌ی بی‌صدا. */
+  async _openPort(port, baud) {
+    await port.open({
+      baudRate: baud,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+      bufferSize: 4096,
+      flowControl: "none",
     });
+
+    this.port = port;
     this.connected = true;
     this._buff = "";
-    if (this.onConnect) this.onConnect(this.baud);
+    await this._assertLines(port);
     this._readLoop();
+    if (this.onConnect) this.onConnect(this.baud);
+  }
+
+  /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند و این دو
+   * پیامدِ جدی دارد:
+   *   · بردهای USB بومی (32u4/ESP32) تا وقتی DTR asserted نباشد «میزبان وصل
+   *     نیست» فرض می‌کنند و هر Serial.print را **بی‌صدا دور می‌ریزند** → RX=0؛
+   *   · بردهای Rev3 (Uno/Mega) لبه‌ی ریست را نمی‌گیرند، پس بنرِ بوت و نسخه‌ی
+   *     فریم‌ور هرگز نمی‌آید و GUI نمی‌داند آن سوی سیم چه چیزی هست.
+   * پس همان پالسِ avrdude را می‌زنیم که پلِ دسکتاپ می‌زند، با همان قانونِ
+   * حیاتی: پایان با **هر دو خط در یک سطح**. در Rev3 خطِ RESET با جفت
+   * ترانزیستور از DTR/RTS هدایت می‌شود و تا وقتی این دو متفاوت باشند AVR در
+   * ریست **نگه داشته می‌شود** — یعنی پورت باز است، TX می‌رود، RX صفر می‌ماند. */
+  async _assertLines(port) {
+    if (!port || typeof port.setSignals !== "function") return;
+    const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+    const both = { dataTerminalReady: true, requestToSend: true };
+    try {
+      await port.setSignals(both);                                             /* میزبان وصل است */
+      await nap(50);
+      await port.setSignals({ dataTerminalReady: true, requestToSend: false }); /* تفاوت → RESET پایین */
+      await nap(120);
+      await port.setSignals(both);                                             /* یکسان → برد آزاد و در حالِ بوت */
+      await nap(50);
+    } catch (e) {
+      /* برخی مبدل‌ها setSignals را پس می‌زنند — نباید اتصال را بشکند */
+    }
   }
 
   async _readLoop() {

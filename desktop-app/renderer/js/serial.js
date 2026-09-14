@@ -93,8 +93,12 @@ class SerialLink {
     this.connected = true;
     this._buff = "";
     await this._assertLines(port);
-    if (this.onConnect) this.onConnect(this.baud);
+    /* ترتیب مهم است: حلقه‌ی خواندن **پیش از** onConnect شروع می‌شود. اگر
+     * هندلری در onConnect استثنا بدهد، قبلاً پورت باز می‌ماند ولی هیچ
+     * خواننده‌ای نداشت → RX برای همیشه صفر و UI روی «متصل». یعنی بدترین
+     * حالتِ ممکن: یک اتصالِ مرده‌ی بی‌صدا که هیچ خطایی هم نشان نمی‌دهد. */
     this._readLoop();
+    if (this.onConnect) this.onConnect(this.baud);
   }
 
   /* Web Serial خطوطِ مودم را در وضعیتِ پیش‌فرضِ درایور رها می‌کند و این دو

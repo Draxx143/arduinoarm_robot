@@ -275,8 +275,13 @@ function send(text, opts = {}) {
   return true;
 }
 
+/* نشانه‌های قطعیِ خودِ فریم‌ور. با baudِ غلط هم بایت می‌آید — ولی بی‌معنی؛
+   پس «RX > 0» به‌تنهایی دلیلِ سالم بودنِ اتصال نیست. */
+const BOARD_MARKERS = /AXIS-5 Firmware|System Status|>>\s*POS|State:|Homed:|Unknown command|System initialized/i;
+
 function rxLine(line, fromSim = false) {
   const trimmed = line.trim();
+  if (BOARD_MARKERS.test(trimmed)) S._sawBoardText = true;
   const isPosSync = /^>>\s*POS\s/.test(trimmed);
 
   /* ---------- کنسول: فقط چیزی که خودِ کاربر خواسته ----------
@@ -481,12 +486,12 @@ function setStateUI(key) {
   renderStats();
 }
 
-/* ============================================================
- * حالت اتصال: سریال / شبیه‌ساز / خاموش
- * ============================================================ */
-/* دکمه تاییدیه (ACK) — وضعیت از جواب خود برد همگام می‌شود */
-function setAckUI(on) {
-/* ---- v1.0.33: جداکننده — بکش تا عرض کنسول عوض شود؛ پنل کناری هم‌زمان جابه‌جا می‌شود ---- */
+/* ---- v1.0.33: جداکننده — بکش تا عرض کنسول عوض شود؛ پنل کناری هم‌زمان جابه‌جا می‌شود ----
+ * ⚠ این دو بلوکِ «{ … }» عمداً در سطحِ بالای فایل‌اند: در زمانِ بارگذاریِ صفحه
+ * اجرا می‌شوند. قبلاً اشتباهاً **داخلِ بدنه‌ی setAckUI** گیر افتاده بودند، پس
+ * (۱) جداکننده و پنجره‌ی آزادِ کنسول هیچ‌وقت راه نمی‌افتادند و (۲) هر بار که
+ * setAckUI صدا می‌شد — یعنی هر اتصال و هر تغییرِ ACK — یک دست listenerِ تازه
+ * روی همان المان‌ها ثبت می‌شد. */
 {
   const split = $("colSplit");
   const root = document.documentElement;
@@ -606,6 +611,11 @@ function setAckUI(on) {
   }
 }
 
+/* ============================================================
+ * حالت اتصال: سریال / شبیه‌ساز / خاموش
+ * ============================================================ */
+/* دکمه تاییدیه (ACK) — وضعیت از جواب خود برد همگام می‌شود */
+function setAckUI(on) {
   const b = $("btnAck");
   if (!b) return;
   b.textContent = on ? "\u2713 تاییدیه: روشن" : "\u2713 تاییدیه: خاموش";
@@ -681,17 +691,29 @@ async function toggleSerial() {
 
 S.serial.onConnect = (baud) => {
   setMode("serial");
-  addConsole("sys", `[SYS] متصل شد @ ${baud} — در انتظار پاسخ آردوینو…`);
-  addFeed("rx-ok", "🔗 متصل شد @" + baud);
-  toast("به آردوینو وصل شدی 🎉", "ok");
+  /* «پورت باز شد» نه «وصل شد»: پالسِ DTR/RTS موقعِ باز‌شدن، برد را ریست
+     می‌کند (دقیقاً مثلِ Arduino IDE و پلِ دسکتاپ)، پس بنرِ بوت حدودِ
+     ۱٫۵ ثانیه بعد می‌آید — نه بلافاصله. تا آن لحظه حتی یک بایت هم
+     از برد نرسیده، پس گفتنِ «وصل شدی 🎉» گمراه‌کننده است. */
+  addConsole("sys", `[SYS] پورت باز شد @ ${baud} — برد ریست شد و در حالِ بالا آمدن است…`);
+  addFeed("rx-ok", "🔗 پورت باز شد @" + baud);
+  toast("پورت باز شد — منتظرِ پاسخِ برد…", "ok");
   setStateUI("INIT");
+  /* مبدأِ سنجشِ «برد ساکت است» — بدونِ آن هیچ عیب‌یابی‌ای در کار نیست */
+  S._connAt = Date.now(); S._rxWarned = false; S._sawBoardText = false; S._diagDone = false;
   try {
     const info = S.serial.port && S.serial.port.getInfo ? S.serial.port.getInfo() : {};
     Store.set("last_port", hex4(info.usbVendorId) + ":" + hex4(info.usbProductId));
   } catch (e) {}
   setAckUI(false); /* برد موقع اتصال ریست شده — ack به پیش‌فرض (خاموش) برگشته */
   renderConnCard();
-  setTimeout(() => send(Cmd.status(), { auto: true }), 600);
+  /* دو سلام، نه یکی:
+     · ۶۰۰ms → بردی که ریست نشده و از قبل اجرا می‌شد همین را جواب می‌دهد
+     · ۳۰۰۰ms → بعد از پنجره‌ی بوت‌لودر و delay(500) داخلِ setup()؛ بردی که
+       با پالسِ DTR ریست شده **فقط** به این یکی جواب می‌دهد (سلامِ ۶۰۰ms را
+       خودِ بوت‌لودر می‌خورد). بدونِ آن GUI هرگز با برد همگام نمی‌شد. */
+  setTimeout(() => { if (S.mode === "serial") send(Cmd.status(), { auto: true }); }, 600);
+  setTimeout(() => { if (S.mode === "serial") send(Cmd.status(), { auto: true }); }, 3000);
 };
 S.serial.onDisconnect = () => {
   if (S.mode === "serial") setMode("off");
@@ -1369,6 +1391,36 @@ function fmtBytes(n) {
   return n < 1024 ? n + " B" : (n / 1024).toFixed(1) + " KB";
 }
 
+/* ---- عیب‌یابیِ «پورت باز است ولی برد جواب نمی‌دهد» ----------------------
+   این دقیقاً همان حالتی است که کاربر «وصل نمی‌شود» می‌نامد. قبلاً GUI فقط
+   «متصل شد 🎉» می‌گفت و بعد تا ابد ساکت می‌ماند: RX = 0، بدون یک کلمه
+   راهنما. حالا **یک بار** (نه پشتِ سرِ هم) علت‌های واقعی را به ترتیبِ
+   احتمال می‌گوید. مهم‌تر از همه: پورت را باز و بسته **نمی‌کند** — روی
+   CH340 همان باز و بسته‌کردنِ پشتِ سرِ هم خودش افتِ تغذیه و بیرون‌افتادنِ
+   دستگاه از BUS می‌سازد، یعنی ابزارِ عیب‌یابی مشکل را بدتر می‌کرد. */
+function linkDiagnosis() {
+  const silentMs = S._connAt ? Date.now() - S._connAt : 0;
+  if (silentMs < 6000 || S._diagDone) return;
+  const h = $("portHint");
+  if (S.serial.rxCount === 0) {
+    S._diagDone = true;
+    addConsole("err", "!! ۶ ثانیه است یک بایت هم از برد نیامده (RX = 0) — پورت باز است، ولی برد حرف نمی‌زند.");
+    addConsole("warn", "   → ۱) برنامه‌ی دیگری پورت را گرفته؟ در لینوکس tty انحصاری نیست: Arduino IDE / Serial Monitor / minicom / screen / یک نسخه‌ی دوم از همین GUI همه‌ی بایت‌ها را می‌بلعند (دستور می‌رود، جواب برنمی‌گردد). چک کن: sudo fuser -v /dev/ttyUSB0");
+    addConsole("warn", "   → ۲) ModemManager یا brltty پورت را قاپیده‌اند (روی چیپ CH340 رایج است). یک بار برای همیشه: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arduinoarm_robot/arena/01a091da-arduinoarm-robot/tools/fix-serial-port-ownership.sh) و بعد کابل را دوباره بزن.");
+    addConsole("warn", "   → ۳) دکمه‌ی RESET روی برد را بزن — GUI وصل می‌ماند و گوش می‌دهد (پورت را نمی‌بندد).");
+    addConsole("warn", "   → ۴) باودریت باید " + FW.BAUD + " باشد؛ فریم‌ور با همان Serial.begin(" + FW.BAUD + ") کامپایل شده.");
+    addConsole("warn", "   → ۵) اگر موتورهای استپ سفت/وزوز‌کنان‌اند و یک بایت هم نمی‌آید: تغذیه‌ی موتورها را بکش (فقط USB بماند) و برد را خاموش/روشن کن — یعنی ریل ۵ ولت افت کرده و AVR در brown-out است.");
+    toast("برد جواب نمی‌دهد — RESET را بزن و کنسول را بخوان", "err", 9000);
+    if (h) h.textContent = "پورت باز است ولی RX = 0: یا برنامه‌ی دیگری پورت را گرفته (sudo fuser -v /dev/ttyUSB0) یا برد در حالِ اجرا نیست. RESET را بزن؛ GUI وصل می‌ماند.";
+  } else if (!S._sawBoardText) {
+    S._diagDone = true;
+    addConsole("err", "!! " + S.serial.rxCount + " بایت رسید ولی هیچ‌کدام شبیهِ فریم‌ور نیست — یعنی باودریت غلط است، نه بردِ خراب.");
+    addConsole("warn", "   → باودریت را روی " + FW.BAUD + " بگذار و دوباره وصل شو (فریم‌ور با همان سرعت حرف می‌زند).");
+    toast("کاراکترِ بی‌معنی = باودریتِ غلط (" + FW.BAUD + " را انتخاب کن)", "err", 9000);
+    if (h) h.textContent = "بایت می‌آید ولی بی‌معنی است: باودریت غلط. این فریم‌ور " + FW.BAUD + " است — همان را انتخاب کن و دوباره وصل شو.";
+  }
+}
+
 function updateLinkStats() {
   if (S.mode === "serial") {
     $("txCount").textContent = fmtBytes(S.serial.txCount);
@@ -1378,6 +1430,7 @@ function updateLinkStats() {
       led.classList.remove("blink"); void led.offsetWidth; led.classList.add("blink");
       updateLinkStats._lastRx = S.serial.rxCount;
     }
+    linkDiagnosis();
   } else {
     $("txCount").textContent = "—";
     $("rxCount").textContent = "—";
