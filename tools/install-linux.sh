@@ -105,12 +105,23 @@ purge_old() {
         run $(need_root)apt-get remove --purge -y "$PKG"
     fi
 
+    # بسته‌ی قدیمیِ axis5 (نسخه‌ی ۵محوره‌ی قبلی — اسم بسته فرق داشت)
+    if command -v dpkg >/dev/null 2>&1 && dpkg -l "axis5-robot-control" 2>/dev/null | grep -q "^ii"; then
+        found=1
+        echo "  بسته‌ی قدیمی: axis5-robot-control"
+        run $(need_root)apt-get remove --purge -y "axis5-robot-control"
+    fi
+
     # فایل‌های باقی‌مانده
     local leftovers=(
         /usr/bin/axis3-robot-control
         /opt/AXIS3-Robot-Control
         /opt/axis3-robot-control
         /opt/AXIS-3-Robot-Control
+        /usr/bin/axis5-robot-control
+        /opt/AXIS5-Robot-Control
+        /opt/axis5-robot-control
+        /etc/udev/rules.d/99-axis5-serial.rules
     )
     for f in "${leftovers[@]}"; do
         if [ -e "$f" ]; then found=1; echo "  باقی‌مانده: $f"; run $(need_root)rm -rf "$f"; fi
@@ -118,7 +129,9 @@ purge_old() {
 
     # میانبرهای منو
     for f in /usr/share/applications/*axis3*.desktop /usr/share/applications/*AXIS3*.desktop \
-             "$HOME"/.local/share/applications/*axis3*.desktop "$HOME"/.local/share/applications/*AXIS3*.desktop; do
+             /usr/share/applications/*axis5*.desktop /usr/share/applications/*AXIS5*.desktop \
+             "$HOME"/.local/share/applications/*axis3*.desktop "$HOME"/.local/share/applications/*AXIS3*.desktop \
+             "$HOME"/.local/share/applications/*axis5*.desktop "$HOME"/.local/share/applications/*AXIS5*.desktop; do
         [ -e "$f" ] || continue
         found=1; echo "  میانبر: $f"
         case "$f" in /usr/*) run $(need_root)rm -f "$f" ;; *) rm -f "$f" ;; esac
@@ -136,7 +149,9 @@ purge_old() {
     else
         for f in "$HOME/.config/axis3-robot-control" "$HOME/.config/AXIS3-Robot-Control" \
                  "$HOME/.config/AXIS-3 Robot Control" "$HOME/.config/axis3 robot control" \
-                 "$HOME/.cache/axis3-robot-control" "$HOME/.axis3"; do
+                 "$HOME/.cache/axis3-robot-control" "$HOME/.axis3" \
+                 "$HOME/.config/axis5-robot-control" "$HOME/.config/AXIS5-Robot-Control" \
+                 "$HOME/.cache/axis5-robot-control" "$HOME/.axis5"; do
             [ -e "$f" ] || continue
             found=1; echo "  داده‌ی کاربر: $f"; rm -rf "$f"
         done
@@ -311,8 +326,10 @@ cat <<'HOWTO'
 ────────────────────────────────────────────────────────────────
    bash tools/install-linux.sh --purge              # با نگه‌داشتن تنظیمات: --keep-config
    یا دستی:
-     sudo apt-get remove --purge axis3-robot-control
-     sudo rm -f /usr/bin/axis3-robot-control
-     sudo rm -rf /opt/AXIS3-Robot-Control
+     sudo apt-get remove --purge axis3-robot-control axis5-robot-control
+     sudo rm -f /usr/bin/axis3-robot-control /usr/bin/axis5-robot-control
+     sudo rm -rf /opt/AXIS3-Robot-Control /opt/AXIS5-Robot-Control
+     sudo rm -f /etc/udev/rules.d/99-axis5-serial.rules
      rm -rf ~/.config/axis3-robot-control ~/.cache/axis3-robot-control ~/.axis3
+     rm -rf ~/.config/axis5-robot-control ~/.cache/axis5-robot-control ~/.axis5
 HOWTO
