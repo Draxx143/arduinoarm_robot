@@ -1,0 +1,2609 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright (c) 2026 Draxx143 — AXIS-3 Robot Arm
+ * https://github.com/Draxx143/arm-3-axis */
+/* ============================================================
+ * app.js — AXIS-3 Robot Control, main UI logic
+ * Transport: Web Serial (browser) / Electron bridge / Simulator
+ * ============================================================ */
+"use strict";
+
+/* ---------- Safe storage ---------- */
+const Store = {
+  mem: {},
+  get(k, d) {
+    try { const v = localStorage.getItem("arm_" + k); return v === null ? d : v; }
+    catch (e) { return (k in this.mem) ? this.mem[k] : d; }
+  },
+  set(k, v) {
+    try { localStorage.setItem("arm_" + k, v); } catch (e) { this.mem[k] = v; }
+  },
+};
+
+const $ = (id) => document.getElementById(id);
+
+/* ---------- Global state ---------- */
+const S = {
+  mode: "off",                 // off | serial | sim
+  serial: new SerialLink(),
+  sim: null,
+  state: "INIT",
+  profileName: "—",
+  sleeping: false,
+  autoSleep: false,
+  demo: { running: false, step: 0, total: FW.DEMO_MOVES.length },
+  axes: FW.AXES.map(() => ({ steps: 0, deg: 0, homed: false, enabled: false, moving: false, endstop: "Open" })),
+  targets: [0, 0, 0, 0],
+  teachLocal: [],
+  teachCountFw: null,
+  timersFw: null,
+  timersLocal: [],
+  slots: new Array(FW.MAX_POSITIONS).fill(null),
+  history: [],
+  histIdx: -1,
+  pollTimer: null,
+  degMode: true,
+  lastWarnAt: 0,
+  inStatus: false,
+  tmpDemo: null,
+  tmpSleep: false,
+  pendingSlots: null,
+  consoleLines: 0,
+};
+
+const AXC = ["#00c2d1", "#ffb020", "#ff7a1a", "#9e86ff"];
+
+/* keep slider/number inputs in sync with (possibly dragged) targets */
+function syncJointInputs() {
+  for (let i = 0; i < FW.NUM_AXES; i++) {
+    const s = $("jSlider" + i), n = $("jNum" + i);
+    if (!s || !n) continue;
+    const v = S.degMode ? S.targets[i] : Kin.degToSteps(i, S.targets[i]);
+    s.value = v; n.value = S.degMode ? v.toFixed(1) : Math.round(v);
+    const pct = ((v - s.min) / (s.max - s.min)) * 100;
+    s.style.setProperty("--val", pct + "%");
+  }
+}
+
+/* ============================================================
+ * Console / feed / toasts / modal
+ * ============================================================ */
+function addConsole(cls, text) {
+  const box = $("consoleBox");
+  const near = box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+  /* یک خطای تکراری (مثلِ «[Errno 5] Input/output error» که در لاگِ کاربر
+     بیست بار پشتِ سرِ هم آمد) کنسول را پر می‌کند و پیام‌های مهم را بیرون
+     می‌اندازد. خطاهای پشتِ سرِ همِ یکسان را در یکی با شمارنده جمع می‌کنیم. */
+  if (cls === "err" || cls === "warn") {
+    const last = box.lastElementChild;
+    if (last && last.dataset && last.dataset.msg === text) {
+      const n = (parseInt(last.dataset.dup, 10) || 1) + 1;
+      last.dataset.dup = String(n);
+      const badge = last.querySelector(".dup");
+      if (badge) badge.textContent = "  (×" + n + ")";
+      if (near) box.scrollTop = box.scrollHeight;
+      return;
+    }
+  }
+  const div = document.createElement("div");
+  div.className = "ln " + cls;
+  div.dataset.msg = String(text);
+  div.dataset.dup = "1";
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = Fmt.time(Date.now());
+  div.appendChild(ts);
+  div.appendChild(document.createTextNode(text));
+  const dup = document.createElement("span");
+  dup.className = "dup";
+  div.appendChild(dup);
+  box.appendChild(div);
+  if (++S.consoleLines > 600) { box.removeChild(box.firstChild); S.consoleLines--; }
+  if (near) box.scrollTop = box.scrollHeight;
+}
+
+const Feed = {
+  paused: false,
+  lastText: null,
+  lastEl: null,
+  count: 1,
+  total: 0,
+};
+const FEED_ICONS = { tx: "▸", "rx-ok": "✓", "rx-err": "✗", warn: "⚠" };
+
+function addFeed(cls, text) {
+  /* Event Feed card removed by design — no-op */
+  return;
+  Feed.total++;
+  $("feedStat").textContent = Feed.total + " events";
+  if (Feed.paused) return;
+  const box = $("feedBox");
+
+  /* aggregate repeats (e.g. polling spam) into one line with a ×N badge */
+  if (text === Feed.lastText && Feed.lastEl && Feed.lastEl.isConnected) {
+    Feed.count++;
+    Feed.lastEl.querySelector(".fx").textContent = "×" + Feed.count;
+    return;
+  }
+  Feed.lastText = text;
+  Feed.count = 1;
+
+  const div = document.createElement("div");
+  div.className = "f-line " + cls;
+  const icon = FEED_ICONS[cls] || "·";
+  div.innerHTML = `<span class="f-i">${icon}</span><span class="f-x"></span><span class="f-t"></span><span class="fx"></span>`;
+  div.querySelector(".f-x").textContent = text.replace(/^» /, "");
+  div.querySelector(".f-t").textContent = Fmt.time(Date.now());
+  box.prepend(div);
+  Feed.lastEl = div;
+  while (box.children.length > 80) box.removeChild(box.lastChild);
+}
+
+function toast(msg, type = "info", ms = 3200) {
+  const box = $("toasts");
+  const t = document.createElement("div");
+  t.className = "toast " + type;
+  t.textContent = msg;
+  box.appendChild(t);
+  setTimeout(() => { t.classList.add("hide"); setTimeout(() => t.remove(), 400); }, ms);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
+}
+
+function confirmModal(title, body) {
+  return new Promise((res) => {
+    $("modalTitle").textContent = title;
+    $("modalBody").textContent = body;
+    $("portList").innerHTML = "";
+    $("portList").style.display = "none";
+    $("modalBack").classList.add("show");
+    const ok = $("modalOk"), cancel = $("modalCancel");
+    ok.style.display = ""; cancel.style.display = "";
+    const done = (v) => {
+      $("modalBack").classList.remove("show");
+      ok.onclick = cancel.onclick = null;
+      res(v);
+    };
+    ok.onclick = () => done(true);
+    cancel.onclick = () => done(false);
+  });
+}
+
+/* ---------- Electron in-app serial port chooser ---------- */
+let _portChooserDone = null;
+window.addEventListener("arm-choose-serial-port", (e) => {
+  const ports = e.detail || [];
+  /* Connection-card scan mode: render into the card instead of the modal */
+  if (S._scanActive) { renderScanRows(ports); return; }
+  const list = $("portList");
+  list.innerHTML = "";
+  list.style.display = "flex";
+  $("modalTitle").textContent = "Select Serial Port";
+  $("modalOk").style.display = "none";
+  $("modalCancel").style.display = "";
+
+  if (!ports.length) {
+    $("modalBody").textContent = "No serial ports found. Plug in the Arduino over USB and try again.";
+    $("modalCancel").onclick = () => {
+      $("modalBack").classList.remove("show");
+      if (window.electronAPI) window.electronAPI.cancelChoose();
+    };
+    $("modalBack").classList.add("show");
+    return;
+  }
+
+  $("modalBody").textContent = "Choose the port your Arduino Mega 2560 is connected to.";
+  $("modalBack").classList.add("show");
+
+  ports.forEach((p) => {
+    const b = document.createElement("button");
+    b.className = "port-item";
+    const vid = p.usbVendorId ? (p.usbVendorId.toString(16).padStart(4, "0")) : null;
+    const pid = p.usbProductId ? (p.usbProductId.toString(16).padStart(4, "0")) : null;
+    b.innerHTML = `<span class="p-name">${p.portName || p.portId}</span>
+      <span class="p-meta">${p.displayName || "Serial port"}${vid ? " · USB " + vid + ":" + pid : ""}</span>`;
+    b.onclick = () => {
+      $("modalBack").classList.remove("show");
+      if (window.electronAPI) window.electronAPI.choosePort(p.portId);
+      if (_portChooserDone) { _portChooserDone(); _portChooserDone = null; }
+    };
+    list.appendChild(b);
+  });
+
+  $("modalCancel").onclick = () => {
+    $("modalBack").classList.remove("show");
+    if (window.electronAPI) window.electronAPI.cancelChoose();
+    if (_portChooserDone) { _portChooserDone(); _portChooserDone = null; }
+  };
+  _portChooserDone = () => { $("modalOk").style.display = ""; $("modalCancel").onclick = null; };
+});
+
+/* ============================================================
+ * Connection card — pick / scan / auto-connect the serial port
+ * ============================================================ */
+const hex4 = (v) => (v || 0).toString(16).padStart(4, "0");
+const escH = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* common boards & USB-serial chips — shown instead of raw VID:PID */
+const USB_NAMES = {
+  "2341:0042": "Arduino Mega 2560",
+  "2341:0010": "Arduino Mega (ADK)",
+  "2341:0043": "Arduino UNO",
+  "2341:0044": "Arduino Micro",
+  "1a86:7523": "CH340 USB-Serial (clone board)",
+  "1a86:5523": "CH341 USB-Serial",
+  "10c4:ea60": "CP210x USB-Serial",
+  "0403:6001": "FTDI FT232 USB-Serial",
+};
+function friendlyUsb(info) {
+  const key = portKeyFromInfo(info);
+  return USB_NAMES[key] || (info && info.usbVendorId ? "USB device " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : null);
+}
+const PORT_TROUBLE_HTML =
+  `<div class="p-none" style="line-height:1.8">&bull; use a <b>data</b> USB cable (not charge-only), try another socket
+   <br>&bull; terminal check: <code>lsusb | grep -i 2341</code> and <code>ls /dev/ttyACM* /dev/ttyUSB*</code>
+   <br>&bull; permission fix: <code>sudo usermod -aG dialout $USER</code> then <b>log out &amp; back in</b>
+   <br>&bull; if dmesg mentions <i>brltty</i>: <code>sudo apt purge brltty</code> and replug</div>`;
+const BUSY_TROUBLE_HTML =
+  `<div style="line-height:1.8">&bull; <b>close the Arduino IDE</b> (especially its Serial Monitor) and any other serial monitor
+   <br>&bull; close a second copy of this app: <code>pkill -f axis3</code> then reopen
+   <br>&bull; see who holds the port: <code>sudo fuser -v /dev/ttyUSB0</code> (use your port path)
+   <br>&bull; if nothing shows: <code>sudo systemctl stop ModemManager</code> and connect again</div>`;
+function connErrorHint(e, portPath) {
+  const m = e && e.message ? e.message : String(e);
+  const pp = portPath ? " (" + portPath + ")" : "";
+  /* «[Errno 5] Input/output error» یعنی مبدلِ USB از کار افتاد — دستگاه از
+     BUS بیرون افتاده. این هرگز باگِ نرم‌افزار نیست: EMIِ موتورِ استپ، افتِ
+     تغذیه، یا کابلِ بلند/بی‌کیفیت. در dmesg به شکلِ
+     «disabled by hub (EMI?), re-enabling» و «USB disconnect» دیده می‌شود. */
+  if (/Errno 5|Input\/output error|\bEIO\b/i.test(m))
+    return { html: `<b>The USB device dropped off the bus</b>${pp} &mdash; the kernel returned an I/O error, so the CH340 stopped answering. This is electrical, not software: run <code>sudo dmesg | tail -30</code> and look for <code>disabled by hub (EMI?), re-enabling</code> or repeated <code>USB disconnect</code>.<div><b>Fixes, in order:</b> a shorter <b>shielded</b> USB cable &rarr; a rear motherboard port (no hub/front panel) &rarr; <b>common ground</b> between the motor supply and the Arduino &rarr; keep the USB cable away from the stepper wiring &rarr; a USB isolator.</div>`,
+             plain: "USB I/O error — the device dropped off the bus (EMI from the motors, a power dip, or a thin/long cable). Try a short shielded cable, a rear USB port, and tie the motor supply ground to the Arduino ground." };
+  /* open هرگز settles نشد: یا یک فرایندِ جامانده پورت را نگه داشته، یا
+     دستگاه نصفه enumerate شده. این حالت قبلاً **بی‌صدا** بود: کاربر فقط
+     «[SYS] opening …» را می‌دید و بعد هیچ. */
+  if (/OPEN_STALLED|never answered while opening/i.test(m))
+    return { html: `<b>The port open never finished</b>${pp} &mdash; the app asked the system to open it and got no answer at all. Two causes, in order:
+      <div>1. <b>A leftover process is holding it.</b> Close the app, then run:
+      <div><code>sudo pkill -f serial_bridge.py</code> &nbsp;·&nbsp; <code>sudo fuser -k ${escH(portPath || "/dev/ttyUSB0")}</code></div>
+      2. <b>The USB device is half-enumerated</b> (it dropped off the bus and did not come back cleanly): <b>unplug the cable, wait 5 s, replug</b>, then Connect. Watch <code>sudo dmesg -w</code> while you replug &mdash; if the kernel prints <code>disabled by hub (EMI?), re-enabling</code> the cause is electrical (motor supply on the USB rail, no common ground, or a thin/long cable).</div>
+      <div>Permanent fix for the daemon case: <code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arm-3-axis/main/tools/fix-serial-port-ownership.sh)</code></div>`,
+             plain: "The port open never finished" + pp + " — a leftover process is holding it, or the USB device is half-enumerated. Run: sudo pkill -f serial_bridge.py && sudo fuser -k " + (portPath || "/dev/ttyUSB0") + " — then unplug, wait 5 s, replug and Connect." };
+  /* پلِ Linux/macOS به python3 نیاز دارد — بدون آن «اتصال» فقط شکست می‌خورد */
+  if (/cannot run python|python3|bridge spawn|bridge timeout/i.test(m))
+    return { html: `<b>python3 is missing</b>${pp} &mdash; the Linux/macOS serial bridge runs on it:<div><code>sudo apt install python3</code></div>then Disconnect &amp; Connect again.`,
+             plain: "python3 is required for the serial bridge — install it (sudo apt install python3), then reconnect." };
+  /* برچسب/مسیری که اصلاً در سیستم وجود ندارد (کابل کشیده شده، یا برچسبِ Web Serial) */
+  if (/port not found|termios failed|before the port opened/i.test(m))
+    return { html: `<b>No device at that path</b>${pp} &mdash; replug the USB cable, press &#8635; Scan and pick the path that appears (for example <code>/dev/ttyUSB0</code>). If it still fails, check <code>dmesg | tail</code> right after plugging in.`,
+             plain: "No device at that path" + pp + " — replug, rescan, and pick the real /dev/… path." };
+  if (/busy|lock|EBUSY|resource temporarily|device is/i.test(m))
+    return { html: `<b>The port is BUSY</b>${pp} &mdash; another program is holding it:<div>${BUSY_TROUBLE_HTML}</div>
+      <div><b>On Linux the usual culprits are system daemons, not your apps:</b> <code>ModemManager</code> probes every new serial device with AT commands (and toggles DTR, which resets the board), and <code>brltty</code> mistakes the CH340 chip (1a86:7523) for a braille display. One command fixes both, permanently:
+      <div><code>bash &lt;(curl -fsSL https://raw.githubusercontent.com/Draxx143/arm-3-axis/main/tools/fix-serial-port-ownership.sh)</code></div>
+      then replug the USB cable. It also creates a stable <code>/dev/axis3</code> name that survives USB drop-outs.</div>`,
+             plain: "Port busy" + pp + " — close the Arduino IDE / Serial Monitor (or a 2nd copy of this app). On Linux also check ModemManager/brltty: run tools/fix-serial-port-ownership.sh, then replug." };
+  if (/Permission|Access denie|Unauthorized/i.test(m))
+    return { html: `<b>Permission denied</b>${pp} &mdash; run <code>sudo usermod -aG dialout $USER</code>, then <b>log out &amp; back in</b> (a reboot counts) and connect again.`,
+             plain: "Permission denied" + pp + " — dialout group + logout/login required." };
+  if (/No such file|No such device|disconnected|not configured|unplugged|break/i.test(m))
+    return { html: `<b>The board dropped out</b>${pp} &mdash; replug the USB cable and scan again.`,
+             plain: "Board disappeared" + pp + " — replug the USB cable." };
+  return null;
+}
+S._scanActive = false;
+S._portNames = {};   /* vid:pid -> human-readable port name from the last scan */
+
+function portKeyFromInfo(info) {
+  if (!info) return "";
+  return hex4(info.usbVendorId) + ":" + hex4(info.usbProductId);
+}
+function portLabelFor(info) {
+  return S._portNames[portKeyFromInfo(info)] || friendlyUsb(info) || "Serial port";
+}
+
+let _scanWatchdog = null;
+const isBestMatch = (name) => /Mega|Arduino|CH340|CH341|CP210|FTDI/i.test(name || "");
+
+/* rows shown while the chooser reports the system port list */
+function renderScanRows(ports) {
+  const rows = $("portRows");
+  if (!rows) return;
+  if (_scanWatchdog) { clearTimeout(_scanWatchdog); _scanWatchdog = null; }
+  rows.innerHTML = "";
+  if (!ports) {
+    rows.innerHTML = `<div class="p-none">&#128269; Searching for serial devices&hellip;</div>`;
+    /* if the system list never arrives, fall back to the checklist */
+    _scanWatchdog = setTimeout(() => {
+      if (!S._scanActive) return;
+      rows.innerHTML = `<div class="p-none">No serial device appeared within 12 s &mdash; run through this checklist:</div>` + PORT_TROUBLE_HTML;
+    }, 12000);
+    return;
+  }
+  S._lastChooserCount = ports.length;
+  ports.forEach((p) => {
+    S._portNames[portKeyFromInfo(p)] = p.portName || p.displayName || p.portId;
+  });
+  if (!ports.length) {
+    rows.innerHTML = `<div class="p-none">No serial devices found &mdash; run through this checklist:</div>` + PORT_TROUBLE_HTML;
+  } else {
+    ports.forEach((p) => {
+      const vid = p.usbVendorId ? hex4(p.usbVendorId) : null;
+      const pid = p.usbProductId ? hex4(p.usbProductId) : null;
+      const row = document.createElement("div");
+      row.className = "port-row";
+      const best = isBestMatch(friendlyUsb(p) || p.displayName);
+      row.innerHTML = `<span class="p-dot"></span>
+        <div class="p-info"><span class="p-name">${escH(p.portName || p.portId)}</span>
+        <span class="p-meta">${escH(friendlyUsb(p) || p.displayName || "Serial port")}${vid ? " &middot; USB " + vid + ":" + pid : ""}</span></div>
+        ${best ? '<span class="p-badge">BEST MATCH</span>' : ""}`;
+      const b = document.createElement("button");
+      b.className = "btn small";
+      b.textContent = "Connect";
+      b.onclick = () => { if (window.electronAPI) window.electronAPI.choosePort(p.portId); };
+      row.appendChild(b);
+      rows.appendChild(row);
+    });
+  }
+  const cancel = document.createElement("button");
+  cancel.className = "btn small";
+  cancel.textContent = "Cancel scan";
+  cancel.onclick = () => { if (window.electronAPI) window.electronAPI.cancelChoose(); };
+  const wrap = document.createElement("div");
+  wrap.className = "conn-tools";
+  wrap.style.marginTop = "0";
+  wrap.appendChild(cancel);
+  rows.appendChild(wrap);
+}
+
+/* idle / connected view of the Connection card */
+async function renderConnCard() {
+  const sel = $("hdrPort");
+  if (!sel) return;
+  const scan = $("hdrScan"), chk = $("chkAutoPort");
+  if (!scan) return;
+  const supported = SerialLink.supported || IpcSerialLink.supported;
+  chk.checked = Store.get("auto_port", "0") === "1";
+  scan.style.display = S.mode === "serial" ? "none" : "";
+  scan.disabled = !supported;
+  const connected = S.mode === "serial";
+
+  if (!supported) {
+    sel.innerHTML = `<option value="">no serial transport</option>`;
+    sel.disabled = true;
+    $("portHint").textContent = S.mode === "sim"
+      ? "Simulator active — no real port needed."
+      : "Use the simulator, or run in Chrome / Edge / Electron.";
+    return;
+  }
+
+  if (connected) {
+    const info = S.serial.activeInfo || {};
+    const name = S.serial.activeLabel || portLabelFor(info);
+    sel.innerHTML = `<option value="">${escH(name)} @ ${S.serial.baud}</option>`;
+    sel.disabled = true;
+    $("portHint").textContent = "Board is linked — commands go to the real firmware.";
+    return;
+  }
+
+  sel.disabled = false;
+  const prev = sel.value || Store.get("last_port", "");
+  const opts = new Map();
+  let granted = [];
+  try { granted = await navigator.serial.getPorts(); } catch (e) {}
+  granted.forEach((port) => {
+    const info = SerialLink._safeInfo(port);
+    const label = portLabelFor(info);
+    opts.set(label, { label,
+      best: isBestMatch(label),
+      meta: info.usbVendorId ? "USB " + hex4(info.usbVendorId) + ":" + hex4(info.usbProductId) : "saved" });
+  });
+  /* OS-level devices (Electron): mirror exactly what the OS sees */
+  try {
+    if (IpcSerialLink.supported) {
+      const res = await window.electronAPI.ipcSerial.list();
+      (res && res.ports ? res.ports : []).forEach((p) => {
+        if (!opts.has(p.path)) opts.set(p.path, { label: p.path,
+          best: /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.path + " " + (p.friendly || "")),
+          meta: p.friendly || "OS serial device" });
+      });
+    } else if (window.electronAPI && window.electronAPI.listSystemPorts) {
+      (await window.electronAPI.listSystemPorts()).forEach((n) => {
+        if (!opts.has(n)) opts.set(n, { label: n, best: /ttyUSB|ttyACM/i.test(n), meta: "OS serial device" });
+      });
+    }
+  } catch (e) { /* scan failed — keep whatever we already have */ }
+  S._sysPorts = { t: Date.now(), ports: [...opts.keys()] };
+
+  let html = `<option value="">pick port…</option>`;
+  [...opts.values()].sort((a, b) => (b.best - a.best) || a.label.localeCompare(b.label)).forEach((o) => {
+    html += `<option value="${escH(o.label)}">${escH(o.label)}${o.best ? "  \u2605" : ""}</option>`;
+  });
+  sel.innerHTML = html;
+  if (prev && opts.has(prev)) sel.value = prev;
+  else {
+    const best = [...opts.values()].find((o) => o.best);
+    if (best) sel.value = best.label;
+  }
+  $("portHint").textContent = opts.size
+    ? "Port picked — press \u26a1 Connect Arduino."
+    : "No serial device found — plug the Arduino in and press \u21bb.";
+}
+
+async function connectDirect(port, label) {
+  if (S.mode === "serial" || !SerialLink.supported) return;
+  stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+  try {
+    addConsole("sys", `[SYS] opening ${label || "port"} @ ${baud} baud…`);
+    await S.serial.connectPort(port, baud, label || null);
+  } catch (e) {
+    const hint = connErrorHint(e, label);
+    const msg = hint ? hint.plain : "Connection failed: " + (e && e.message);
+    addConsole("err", "!! " + msg);
+    await renderConnCard();
+    $("portHint").innerHTML = hint ? hint.html : "Connection failed: " + escH(e && e.message);
+    toast(msg, "err", 6000);
+  }
+}
+
+/* scan from the Connection card.
+ * Electron: enumerate at OS level (ls /dev/ttyUSB* /dev/ttyACM*) — this
+ * always matches what the OS/Arduino IDE sees, unlike Chromium's scan.
+ * Browser: open the native chooser. */
+async function scanPorts() {
+  if (!SerialLink.supported && !IpcSerialLink.supported) {
+    toast("No serial transport available in this environment", "err", 5000);
+    return;
+  }
+  if (S.mode === "serial") return;
+  if (!(window.electronAPI && window.electronAPI.isElectron)) {
+    toggleSerial(); /* plain browser: the native chooser does the picking */
+    return;
+  }
+  addConsole("sys", "[SYS] scanning serial ports (system)…");
+  S._sysPorts = null; /* force a fresh OS-level scan */
+  await renderConnCard();
+}
+
+/* The dropdown can hold either a real device path (/dev/ttyUSB0, COM3) or a
+ * Web Serial *label* ("USB 2341:0042", "Arduino Mega"). The system bridge needs
+ * a PATH — feeding it a label used to fail (and, before the pybridge fix, to
+ * hang the Connect button forever with no message at all). Translate first. */
+const looksLikeDevPath = (n) => /^\/dev\/|^COM\d+$/i.test(String(n || "").trim());
+
+async function resolvePortPath(name) {
+  const n = String(name || "").trim();
+  if (!n) return null;
+  if (looksLikeDevPath(n)) return n;
+  try {
+    const res = window.electronAPI && window.electronAPI.ipcSerial
+      ? await window.electronAPI.ipcSerial.list() : null;
+    const ports = (res && res.ports) || [];
+    if (!ports.length) return null;
+    const byPath = ports.find((p) => p.path === n);
+    if (byPath) return byPath.path;
+    const byName = ports.find((p) => {
+      const f = String(p.friendly || "");
+      return (f && (f.includes(n) || n.includes(f))) || n.includes(p.path);
+    });
+    if (byName) return byName.path;
+    /* nothing matched the label — if the system shows exactly one (likely)
+       candidate, use it rather than refusing to connect at all */
+    const likely = ports.filter((p) =>
+      /ttyUSB|ttyACM|COM\d|CH340|CH341|CP210|FTDI|arduino|mega/i.test(p.path + " " + (p.friendly || "")));
+    if (ports.length === 1) return ports[0].path;
+    if (likely.length === 1) return likely[0].path;
+  } catch (e) { /* scan failed — fall back to the chooser below */ }
+  return null;
+}
+
+/* وقتی کاربر پورتی انتخاب نکرده، خودمان از فهرستِ سطحِ سیستم برمی‌داریم:
+   اگر یکی هست همان؛ اگر چند تا هست، اولی از میانِ ttyACM/ttyUSB/COM و بقیه
+   در کنسول گفته می‌شوند تا کاربر بداند می‌تواند عوضش کند. */
+async function autoPickPort() {
+  try {
+    if (!(window.electronAPI && window.electronAPI.ipcSerial)) return null;
+    const res = await window.electronAPI.ipcSerial.list();
+    const paths = (((res && res.ports) || []).map((p) => p && p.path)).filter(Boolean);
+    const real = paths.filter((p) => /ttyACM|ttyUSB|COM\d/i.test(p));
+    const cand = real.length ? real : paths;
+    if (!cand.length) return null;
+    if (cand.length > 1) {
+      addConsole("warn", `[SYS] several ports found (${cand.join(", ")}) — using ${cand[0]}; pick another in the dropdown if that one is wrong`);
+    }
+    const sel = $("hdrPort");
+    if (sel && !sel.value) sel.value = cand[0];
+    return cand[0];
+  } catch (e) { return null; }
+}
+
+/* connect to an OS-level device path (e.g. /dev/ttyUSB0, COM3).
+ * Preferred: the python/system bridge in the main process (always works).
+ * Fallback: Web Serial chooser auto-resolved by port name in main.js. */
+async function connectSystemPort(name) {
+  if (S.mode === "serial") return;
+  /* لاگِ کاربر نشان داد که کلیکِ دوباره‌ی «اتصال» وسطِ نردبانِ baud یک نشستِ
+   * دوم باز کرد: دو خواننده روی یک پورت، بایت‌های هم را می‌دزدند و RX در همه‌ی
+   * سرعت‌ها صفر می‌شود. پس تا بازیابی/اسکن تمام نشده، کلیکِ دوم رد می‌شود. */
+  if (S._correcting || S._reconnecting || S._nodeSweep) {
+    addConsole("warn", "[SYS] busy — the app is working on the connection; wait for it to finish (a second session would steal the port's bytes)");
+    toast("Wait — the app is already working on the connection", "warn", 5000);
+    return;
+  }
+  stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+
+  /* let نه const: اگر گره‌ی انتخابی مرده باشد (بعد از افتِ USB کرنل اسمش را
+     عوض می‌کند) باید بتوانیم همان‌جا گره‌ی زنده را جایگزین کنیم. با const
+     انتصاب داخل try استثنا می‌داد و بی‌صدا خورده می‌شد — اپ می‌گفت «از
+     ttyUSB1 استفاده می‌کنم» ولی همان گره‌ی مرده را باز می‌کرد. */
+  let devPath = IpcSerialLink.supported ? await resolvePortPath(name) : null;
+  if (IpcSerialLink.supported && !devPath) {
+    addConsole("warn", `[SYS] "${name}" is not a device path and could not be matched to one — falling back to the port chooser`);
+  }
+
+  if (IpcSerialLink.supported && devPath) {
+    /* بعد از هر افتِ USB، کرنل دستگاه را دوباره enumerate می‌کند و ممکن است
+       نامش عوض شود (ttyUSB0 → ttyUSB1). گره‌ی قبلی دیگر وجود ندارد ولی هنوز در
+       کشوی پورت و در حافظه‌ی اپ است — بازکردنش یعنی «وصل نمی‌شود». پس پیش از
+       بازکردن، مسیر را با فهرستِ زنده چک کن و در صورتِ لزوم گره‌ی زنده را
+       بردار. این حدس نیست: همان چیزی است که dmesg نشان می‌دهد. */
+    try {
+      const live = await window.electronAPI.listSystemPorts();
+      if (Array.isArray(live) && live.length && live.indexOf(devPath) === -1) {
+        const pick = await findLiveNode(devPath);
+        if (pick && pick.node) {
+          addConsole("sys", `[SYS] ${devPath} no longer exists — the kernel re-enumerated the board; using ${pick.node} instead`);
+          devPath = pick.node;
+        }
+      }
+    } catch (e) { /* فهرست گرفته نشد — همان مسیرِ انتخابی را امتحان کن */ }
+    name = devPath;
+    const link = new IpcSerialLink();
+    bindLinkEvents(link);
+    S.serial = link;
+    addConsole("sys", `[SYS] opening ${name} @ ${baud} (system driver)…`);
+    try {
+      /* سقفِ مستقلِ سمتِ رندرر: اگر پروسه‌ی اصلی کلاً بی‌پاسخ بماند (هر
+         حلقه‌ای که settle نشود)، دکمه‌ی «اتصال» نباید برای همیشه روی
+         «opening …» بماند. ۲۵ ثانیه = بعد از سقفِ ۲۰ ثانیه‌ی خودِ main. */
+      await Promise.race([
+        link.connectVia(name, baud),
+        new Promise((_, rej) => setTimeout(() => rej(new Error(
+          "OPEN_STALLED: the main process never answered while opening " + name +
+          " — the port is stuck (a leftover process is holding it, or the USB device is half-enumerated)")), 25000)),
+      ]);
+      Store.set("prefer_hw", "1");
+    } catch (e) {
+      const hint = connErrorHint(e, name);
+      addConsole("err", "!! " + (hint ? hint.plain : "Connection failed: " + e.message));
+      await renderConnCard();          /* repaint first… */
+      $("portHint").innerHTML = hint   /* …then the error, so it sticks */
+        ? hint.html + `<span class="tiny">raw: ${escH(e.message)}</span>`
+        : "Connection failed: " + escH(e.message);
+      toast(hint ? hint.plain : "Connection failed: " + e.message, "err", 7000);
+    }
+    return;
+  }
+
+  if (!SerialLink.supported) {
+    toast("No serial transport available in this environment", "err", 5000);
+    return;
+  }
+  window.electronAPI.expectPort(name);
+  addConsole("sys", `[SYS] opening ${name} @ ${baud}…`);
+  let tmr = null;
+  try {
+    await Promise.race([
+      S.serial.connect(baud),
+      new Promise((_, rej) => { tmr = setTimeout(() => rej(new Error("chooser-timeout")), 10000); }),
+    ]);
+    Store.set("prefer_hw", "1");
+  } catch (e) {
+    const hint = e.message === "chooser-timeout" ? null : connErrorHint(e, name);
+    const msg = e.message === "chooser-timeout"
+      ? "The port chooser did not respond — try the ⚡ Connect Arduino button once, then report this."
+      : (hint ? hint.plain : "Connection failed: " + e.message);
+    addConsole("err", "!! " + msg);
+    await renderConnCard();
+    $("portHint").innerHTML = hint ? hint.html : msg;
+    toast(msg, "err", 6000);
+  } finally {
+    if (tmr) clearTimeout(tmr);
+  }
+}
+
+/* ============================================================
+ * Send / receive
+ * ============================================================ */
+function send(text, opts = {}) {
+  if (!text) return false;
+  const auto = !!opts.auto; /* automatic poll — keep it out of the console */
+  if (!auto && S.mode === "off") {
+    const now = Date.now();
+    addConsole("warn", "✗ not sent ('" + text + "') — connect first or start the simulator");
+    if (now - S.lastWarnAt > 3000) {
+      toast("Connect to the Arduino or turn on the simulator first", "warn");
+      S.lastWarnAt = now;
+    }
+    return false;
+  }
+  if (!auto) {
+    addConsole("tx", "» " + text);
+    /* a manual command means the user wants to SEE its reply: drop any
+       suppression and give the poll a short pause so the reply is not
+       interleaved with (or swallowed by) a poll response */
+    S._pollBlock = false;
+    S.manualAt = Date.now();
+    if (/^pos\b/i.test(text.trim())) S._posManual = true;  /* show that one POS line */
+  }
+  if (text === "status") S._statusFromPoll = auto; /* suppress the reply block only for polls */
+  if (auto) {
+    /* also hide the board's echo of our own poll ("> status" / "> pos") —
+       those echoes were what filled the console several times a second and
+       pushed the user's own commands off screen */
+    S._autoEcho = text.trim().toLowerCase();
+    S._autoEchoAt = Date.now();
+  } else {
+    S._autoEcho = null;   /* a manual command shows its echo */
+  }
+  if (text !== "status") addFeed("tx", "» " + text);
+  if (S.mode === "serial") {
+    S.serial.write(text).catch((e) => {
+      addConsole("err", "!! send error: " + e.message);
+      toast("Send error: " + e.message, "err");
+    });
+  } else if (S.sim) {
+    S.sim.handle(text);
+  }
+  return true;
+}
+
+function rxLine(line) {
+  const t = line.trim();
+  if (boardTextScore(t).known) S._sawBoardText = true;   /* این واقعاً حرفِ برد است */
+  /* ">> POS ..." is the slider-sync channel: it arrives several times a
+     second, so it is parsed but never printed (the console would drown). */
+  const isPosSync = /^>>\s*POS\s/.test(t);
+  if (/^>>\s*ALL JOINTS HOMED/i.test(t)) zeroHomedSliders();
+  /* firmware complaints ("!! ...") must be impossible to miss */
+  if (/^!!/.test(t)) {
+    const now = Date.now();
+    if (now - (S._lastFwErrAt || 0) > 2500) {
+      S._lastFwErrAt = now;
+      toast(t, "err", 6000);
+    }
+  }
+
+  if (t.startsWith(">> Ack mode ON")) setAckUI(true);
+  else if (t.startsWith(">> Ack mode OFF")) setAckUI(false);
+
+  /* ---- status block: loose matching + hard caps (suppression can never stick) ---- */
+  const RE_STATUS_HEADER = /^=*\s*System Status/;
+  const RE_STATUS_FOOTER = /^={6,}$/;   /* any long '=' run closes the block */
+  const RE_BLOCK_BREAKER = /^(Moving |>> |!!|Format:|Invalid|Unknown|Saved |Loaded |Slot )/;
+  /* the echo of a command the GUI sent itself (a poll), not of the user's */
+  const echoOf = /^>(?!>)\s*(.+)$/.exec(t);
+  const isAutoEcho = !!echoOf && S._autoEcho != null &&
+    Date.now() - (S._autoEchoAt || 0) < 1500 &&
+    echoOf[1].trim().toLowerCase() === S._autoEcho;
+
+  if (RE_STATUS_HEADER.test(t)) {
+    S.inStatus = true;
+    /* a poll-triggered block is parsed but not printed */
+    S._pollBlock = S._statusFromPoll === true;
+    S._statusFromPoll = false;
+    S._blockLines = 0;
+    if (!S._pollBlock) addConsole("rx", line);
+    S.tmpDemo = null;
+    S.tmpSleep = false;
+    S.pendingSlots = null;
+    return;
+  }
+  if (S.inStatus && RE_STATUS_FOOTER.test(t)) {
+    S.inStatus = false;
+    const show = !S._pollBlock;
+    S._pollBlock = false;
+    if (show) addConsole("rx", line);
+    S.demo = S.tmpDemo || { running: false, step: 0, total: FW.DEMO_MOVES.length };
+    S.sleeping = S.tmpSleep;
+    renderStats();
+    renderEnergy();
+    renderSlots();
+    return;
+  }
+  if (S.inStatus && S._pollBlock) {
+    S._blockLines = (S._blockLines || 0) + 1;
+    if (S._blockLines > 30 || RE_BLOCK_BREAKER.test(t)) {
+      /* safety valve: a real reply line or an over-long block ends suppression */
+      S.inStatus = false;
+      S._pollBlock = false;
+      addConsole("rx", line);
+      return;
+    }
+    /* parsing only — no console spam */
+  } else if (isAutoEcho) {
+    /* "> status" / "> pos" from our own poll: silent */
+  } else if (isPosSync) {
+    /* POS is never printed — except for one the user asked for by typing "pos" */
+    if (S._posManual) { S._posManual = false; addConsole("rx", line); }
+  } else {
+    addConsole("rx", line);
+  }
+  if (/^>(?!>)/.test(t)) return; /* firmware echo */
+  const ev = Parse.line(line);
+  if (!ev) return;
+
+  /* after the periodic status block lands, nudge if the board cannot move */
+  if (line.trim() === "======================" ) {
+    setTimeout(() => {
+      if (S.mode !== "serial") return;
+      const noneHomed = S.axes.every((a) => !a.homed);
+      const noneEnabled = S.axes.every((a) => a.enabled === false);
+      const hint = $("portHint");
+      if (!hint) return;
+      /* v1.0.38: OLD FIRMWARE is the #1 "nothing works" cause — it outranks the other hints */
+      if (S.mode === "serial" && !FW.versionOk(S.fwVersion)) {
+        hint.innerHTML = S.fwVersion
+          ? `<b style="color:#ff9b9e">&#9888; Board firmware is v${S.fwVersion}</b> — v${FW.EXPECTED_FW}+ has the instant E-STOP / smooth-J2 / homing fixes. Flash <b>firmware/RobotArm_Firmware/</b> to the Mega, then reconnect.`
+          : `<b style="color:#ff9b9e">&#9888; Board firmware version unknown</b> (pre-1.0.36?) — flash <b>firmware/RobotArm_Firmware/</b> to the Mega, then reconnect. Without it, E-STOP and homing fixes are NOT on the board.`;
+        return;
+      }
+      if (noneHomed) {
+        hint.innerHTML = "<b>Board rebooted on connect</b> (normal for Mega/CH340) — axes are disabled &amp; not homed, so moves are ignored. Press <b>⌂ Home All</b> on the Motion tab, then move.";
+      } else if (noneEnabled) {
+        hint.innerHTML = "Axes are <b>disabled</b> — press <b>Enable</b> (chip or Motion tab) before moving.";
+      }
+    }, 60);
+  }
+
+  switch (ev.type) {
+    case "axis": {
+      const a = S.axes[ev.axis];
+      if (!a) break;
+      /* live speed telemetry (deg/s, smoothed) */
+      const now = Date.now();
+      if (a._lt && ev.deg !== a._ld) {
+        const dt = (now - a._lt) / 1000;
+        if (dt > 0.05) {
+          const inst = Math.abs(ev.deg - a._ld) / dt;
+          a.vel = (a.vel || 0) * 0.45 + inst * 0.55;
+        }
+      }
+      a._lt = now; a._ld = ev.deg;
+      a.steps = ev.steps; a.deg = ev.deg; a.homed = ev.homed;
+      a.enabled = ev.enabled; a.moving = ev.moving; a.endstop = ev.endstop;
+      renderAxisCard(ev.axis);
+      break;
+    }
+    case "state": setStateUI(ev.key); break;
+    case "profile":
+      S.profileName = ev.name;
+      $("profileNow").textContent = ev.name;
+      syncProfileRadios(ev.name);
+      break;
+    case "sleeping": S.tmpSleep = true; break;
+    case "demoRun": S.tmpDemo = { running: true, step: ev.step, total: ev.total }; break;
+    case "demoStep":
+      S.demo = { running: true, step: ev.step, total: ev.total };
+      renderStats(); highlightDemoPose(ev.step);
+      addFeed("rx-ok", `Demo: move ${ev.step}/${ev.total}`);
+      break;
+    case "posSaved":
+      S.slots[ev.slot] = { name: "Pos" + ev.slot };
+      renderSlots();
+      toast(`Pose saved to slot ${ev.slot}`, "ok");
+      break;
+    case "posLoaded":
+      toast(`Slot ${ev.slot} loaded — arm is moving`, "info");
+      setTimeout(() => send(Cmd.status(), { auto: true }), 900);
+      break;
+    case "slotEmpty": toast(`Slot ${ev.slot} is empty`, "warn"); break;
+    case "slotsListStart": S.pendingSlots = {}; break;
+    case "slotItem":
+      if (S.pendingSlots) S.pendingSlots[ev.slot] = { name: ev.name };
+      break;
+    case "teachCount":
+      S.teachCountFw = ev.count;
+      $("teachCountLabel").textContent = ev.count;
+      break;
+    case "teachStepSaved":
+      S.teachLocal.push(currentDegs());
+      renderTeachTimeline();
+      break;
+    case "teachStart":
+      S.teachLocal = [];
+      renderTeachTimeline();
+      toast("Teach recording started — use “Teach Step” to capture poses", "info");
+      break;
+    case "teachStopped":
+      S.teachCountFw = ev.count;
+      $("teachCountLabel").textContent = ev.count;
+      toast(`Recording finished — ${ev.count} steps captured`, "ok");
+      break;
+    case "playStart": toast(`Playing back ${ev.count} steps`, "info"); break;
+    case "playDone": toast("Playback complete ✓", "ok"); break;
+    case "timers":
+      S.timersFw = ev.count;
+      renderTimersLocal();
+      break;
+    case "ikResult":
+      $("ikResult").textContent = "IK ⇒ " + ev.angles.map((a) => a.toFixed(1) + "°").join(" | ");
+      toast("IK solved — arm is moving", "ok");
+      break;
+    case "fkResult":
+      $("fkResult").textContent = `FK ⇒ X=${ev.x}  Y=${ev.y}  Z=${ev.z} (mm)`;
+      break;
+    case "ready":
+      toast("✓ System ready!", "ok");
+      setStateUI("READY");
+      break;
+    case "moveDone": addFeed("rx-ok", "✓ Move complete"); break;
+    case "estop":
+      S._estopAckAt = Date.now();   /* v1.0.36: single-press E-STOP confirmation */
+      toast("⛔ EMERGENCY STOP triggered!", "err", 5000);
+      setStateUI("ESTOP");
+      S.demo.running = false;
+      break;
+    case "pos":                       /* v1.0.36: board-driven slider sync */
+      applyJointPos(ev.deg);
+      break;
+    case "fw":                        /* v1.0.38: firmware version gate */
+      S.fwVersion = ev.version;
+      if (!FW.versionOk(ev.version) && !S._fwWarned) {
+        S._fwWarned = true;
+        toast(`Board firmware is v${ev.version} — v${FW.EXPECTED_FW}+ required. Flash firmware/RobotArm_Firmware/, then reconnect.`, "err", 9000);
+      }
+      break;
+    case "rangeError":
+      toast(`Axis ${ev.axis + 1} angle is out of range!`, "err");
+      break;
+    case "unknown":
+      /* if this "unknown" came from our own sync poll, silence it instead */
+      if (disablePosIfUnsupported()) break;
+      toast("Unknown command — see the Reference tab", "warn");
+      break;
+    case "homingStart": toast("Smart homing started…", "info"); break;
+    case "demoStart": S.demo.running = true; renderStats(); break;
+    case "demoStop": S.demo.running = false; renderStats(); break;
+    case "demoDone":
+      S.demo.running = false; renderStats();
+      toast("Demo finished", "ok");
+      break;
+    case "sleepNow": S.sleeping = true; renderEnergy(); break;
+    case "wakeNow": S.sleeping = false; renderEnergy(); break;
+    case "autoSleepOn": S.autoSleep = true; renderEnergy(); break;
+    case "autoSleepOff": S.autoSleep = false; renderEnergy(); break;
+    case "error": addFeed("rx-err", "!! " + ev.msg); break;
+  }
+}
+
+function setStateUI(key) {
+  S.state = key;
+  const st = FW.STATES[key] || FW.STATES.INIT;
+  /* state badge pill removed — the header lamps carry the state now */
+  $("lampRun").classList.toggle("on", key === "READY" || key === "MOVING");
+  $("lampErr").classList.toggle("on", key === "ESTOP" || key === "ERROR");
+  renderStats();
+}
+
+/* ============================================================
+ * Connection modes
+ * ============================================================ */
+function setMode(mode) {
+  S.mode = mode;
+  renderConnCard();
+  const led = $("led");
+  led.className = "led" + (mode === "serial" ? " on" : mode === "sim" ? " sim" : "");
+  /* Link Status card removed */
+  $("lampCom").classList.toggle("on", mode === "serial" || mode === "sim");
+  $("simBanner").classList.toggle("show", mode === "sim");
+  $("btnConnect").textContent = mode === "serial" ? "✕ Disconnect" : "⚡ Connect Arduino";
+  $("btnSim").textContent = mode === "sim" ? "■ Stop Simulator" : "▦ Simulator";
+  restartPoll();
+}
+
+function startSim() {
+  if (S.mode === "serial") { toast("Disconnect the serial link first", "warn"); return; }
+  S.sim = new SimFirmware((l) => rxLine(l));
+  setMode("sim");
+  setStateUI("INIT");
+  ["======================================",
+   "3+1 DOF Robot Arm - TEST MODE (No ROS)",
+   "[SIM] Firmware simulator running in-app",
+   "System initialized.",
+   "======================================"].forEach((l) => addConsole("sys", l));
+  addFeed("warn", "Simulator started");
+  toast("Simulator active — everything behaves like the real board", "info", 4200);
+  Store.set("prefer_hw", "0");
+}
+
+function stopSim() {
+  S.sim = null;
+  if (S.mode === "sim") setMode("off");
+}
+
+async function toggleSerial() {
+  if (S.mode === "serial") {
+    S._userClosed = true;          /* قطعِ دستی → وصلِ دوباره‌ی خودکار نه */
+    await S.serial.disconnect();
+    S._userClosed = false;
+    return;
+  }
+  /* پورتی در کشو انتخاب شده؟ مستقیم بگیرش (مسیرِ درایورِ سیستم).
+   * FIX: در اپِ دسکتاپ **همیشه** از پلِ سیستمی می‌رویم، حتی وقتی کشو خالی
+   * است. قبلاً در آن حالت به وب‌سریالِ کرومیوم می‌افتادیم — مسیری که نه
+   * پالسِ ریستِ درست دارد، نه عیب‌یاب، نه راهنمای خطا، نه کاوشِ baud.
+   * یعنی کاربری که فقط دکمه‌ی «اتصال» را می‌زد، بی‌سروصدا واردِ ضعیف‌ترین
+   * مسیرِ ممکن می‌شد و «کامل وصل نمی‌شد». */
+  if (IpcSerialLink.supported) {
+    const picked = ($("hdrPort") && $("hdrPort").value) || "";
+    const target = picked || await autoPickPort();
+    if (target) {
+      stopSim();
+      await connectSystemPort(target);
+      return;
+    }
+    addConsole("warn", "[SYS] the OS reports no serial device — falling back to the browser chooser (is the cable plugged in?)");
+  }
+  if (!SerialLink.supported) {
+    toast("Web Serial is not available in this environment", "err", 5000);
+    return;
+  }
+  stopSim();
+  const baud = parseInt($("selBaud").value, 10);
+  try {
+    addConsole("sys", `[SYS] connecting @ ${baud} baud…`);
+    await S.serial.connect(baud);
+    Store.set("prefer_hw", "1");
+  } catch (e) {
+    const msg = e.message === "PORT_CANCELLED"
+      ? "Port selection cancelled"
+      : "Connection failed: " + e.message;
+    addConsole("err", "!! " + msg);
+    if (e.message !== "PORT_CANCELLED") toast(msg, "err");
+  }
+}
+
+/* ---- وصلِ دوباره‌ی خودکار بعد از افتِ USB ----------------------------
+ * لاگِ کاربر نشان داد برد مدام از BUS بیرون می‌افتد و برمی‌گردد
+ * («disabled by hub (EMI?), re-enabling…» و «USB disconnect» در dmesg) و
+ * گره‌ی دستگاه هم اسم عوض می‌کند: ttyUSB0 → ttyUSB1 → ttyUSB0. اپ قبلاً در
+ * اولین افت، [Errno 5] چاپ می‌کرد و تسلیم می‌شد. حالا منتظرِ برگشتِ برد
+ * می‌ماند، گره‌ی تازه را **خودش پیدا می‌کند** (چون کرنل ممکن است اسمش را
+ * عوض کند) و با همان سرعتِ قبلی وصل می‌شود. */
+/* ---- یک دورِ محدود روی بقیه‌ی گره‌های زنده -----------------------------
+   بعد از افتِ USB ممکن است برد روی گره‌ی دیگری باشد، یا گره‌ی فعلی مرده باشد
+   ولی باز شود و ساکت بماند. این **یک دور** است: هر گره یک بار، فقط با سرعتِ
+   خودِ فریم‌ور، با پیامِ روشن. نردبانِ قدیمیِ «۵ سرعت × همه‌ی پورت‌ها» نبود —
+   همان ده‌ها بار پورت را باز و بسته می‌کرد و روی CH340 خودش باعثِ افتِ
+   تغذیه و بیرون‌افتادنِ دستگاه از BUS می‌شد. */
+async function tryOtherNodes() {
+  if (S._nodeSweep || S._correcting || S._reconnecting) return false;
+  if (!IpcSerialLink.supported) return false;
+  S._nodeSweep = true;
+  const cur = (S.serial && S.serial.activeLabel) || "";
+  const baud = FW.BAUD;
+  try {
+    let names = [];
+    try { names = (await window.electronAPI.listSystemPorts()) || []; } catch (e) {}
+    const cands = names.filter((n) => n && n !== cur &&
+      /tty(USB|ACM)\d|rfcomm\d|\/axis3$/i.test(String(n)));
+    if (!cands.length) {
+      addConsole("sys", "[SYS] no other serial device to try — " + (cur || "this port") + " is the only one, and it stays silent");
+      return false;
+    }
+    addConsole("sys", `[SYS] nothing came back on ${cur || "?"} — one pass over the other live device(s): ${cands.join(", ")} @ ${baud}`);
+    const selB = $("selBaud"); if (selB) selB.value = String(baud);
+    try { await S.serial.disconnect(); } catch (e) {}
+    await nap(300);
+    for (const node of cands) {
+      if (S._userClosed) break;
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      try {
+        await link.connectVia(node, baud);
+      } catch (e) {
+        addConsole("warn", `[SYS] ${node} did not open: ${e.message}`);
+        continue;
+      }
+      const t0 = Date.now();
+      while (Date.now() - t0 < 1800) {
+        await nap(200);
+        try { send(Cmd.status(), { auto: true }); } catch (e) {}
+        if (S._sawBoardText || link.rxCount > 0) break;
+      }
+      if (S._sawBoardText || link.rxCount > 0) {
+        addConsole("sys", `[SYS] ✓ the board answered on ${node} @ ${baud} — staying here`);
+        const hp = $("hdrPort"); if (hp) hp.value = node;
+        try { Store.set("last_port", node); } catch (e) {}
+        S._connAt = Date.now(); S._rxStage = 0; S._rxWarned = false; S._holdersChecked = false;
+        renderConnCard();
+        toast("Board found on " + node, "ok", 6000);
+        return true;
+      }
+      addConsole("warn", `[SYS] ${node}: opened but silent (${link.rxCount} B received)`);
+      try { await link.disconnect(); } catch (e) {}
+      await nap(200);
+    }
+    /* هیچ‌کدام جواب نداد → نشست را روی همان گره‌ی اول برگردان تا کاربر
+       بتواند RESET را بزند و اپ وصل بماند (نه اینکه بی‌اتصال رها شود) */
+    if (cur) {
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      try {
+        await link.connectVia(cur, baud);
+        addConsole("sys", `[SYS] back on ${cur} — press the board's RESET button now`);
+      } catch (e) {
+        addConsole("warn", `[SYS] could not re-open ${cur}: ${e.message}`);
+      }
+    }
+    addConsole("err", "!! no serial device on this system answered — the board is not running or not transmitting");
+    toast("No device answered — check the board's power and RESET", "err", 8000);
+    return false;
+  } finally {
+    S._nodeSweep = false;
+  }
+}
+
+/* یک بار بگو RESET بزن — بردِ بدونِ مدارِ ریستِ خودکار تا RESET نزند حرف
+   نمی‌زند. پورت را باز و بسته نمی‌کند. */
+function promptBoardReset() {
+  addConsole("warn", "👉 Nothing came from the board in 6 s — press the RESET button on the Arduino NOW and leave the app connected (this board has no auto-reset circuit, so it only starts talking after that).");
+  toast("Press the board's RESET button", "info", 8000);
+  const hintR = $("portHint");
+  if (hintR) hintR.innerHTML = "<b>Press the RESET button on the Arduino</b> &mdash; the app stays connected and keeps listening.";
+  setTimeout(() => { try { send(Cmd.status(), { auto: true }); } catch (e) {} }, 500);
+}
+
+async function findLiveNode(preferred) {
+  try {
+    const names = (await window.electronAPI.listSystemPorts()) || [];
+    /* /dev/axis3 نامِ ثابتی است که قاعده‌ی udev می‌سازد: با افتِ USB و
+       شماره‌گذاریِ دوباره‌ی کرنل عوض نمی‌شود، پس اولویت با آن است. */
+    const real = names.filter((n) => /tty(USB|ACM)\d|rfcomm\d|^\/dev\/axis3$/i.test(String(n)));
+    const stable = real.find((n) => /\/axis3$/.test(n));
+    if (stable) return { node: stable, renamed: stable !== preferred };
+    if (real.indexOf(preferred) !== -1) return { node: preferred, renamed: false };
+    if (real.length) return { node: real[0], renamed: true };
+    return { node: null, renamed: false };
+  } catch (e) { return { node: null, renamed: false }; }
+}
+
+async function autoReconnect(path, baud) {
+  if (S._reconnecting) return false;
+  S._reconnecting = true;
+  const ATTEMPTS = 10;
+  const waits = [400, 800, 1500, 2500];
+  addConsole("warn", `[RECONNECT] the link dropped — watching for the board to come back on ${path} (a USB drop-out is usually electrical: EMI or a power dip)`);
+  toast("Board dropped off USB — waiting for it to come back…", "warn", 6000);
+  let node = path;
+  for (let i = 1; i <= ATTEMPTS; i++) {
+    if (S._userClosed || S.mode === "serial") break;
+    await nap(waits[Math.min(i - 1, waits.length - 1)]);
+    if (S._userClosed || S.mode === "serial") break;
+    const live = await findLiveNode(node);
+    if (!live.node) {
+      addConsole("warn", `[RECONNECT] no serial device in the system — waiting for the board to re-enumerate (${i}/${ATTEMPTS})…`);
+      continue;
+    }
+    if (live.renamed && live.node !== node) {
+      addConsole("warn", `[RECONNECT] the kernel re-enumerated the board as ${live.node} (it was ${node}) — using the new node`);
+      node = live.node;
+      const sel = $("hdrPort");
+      if (sel) sel.value = node;
+    }
+    try {
+      const link = new IpcSerialLink();
+      bindLinkEvents(link);
+      S.serial = link;
+      await link.connectVia(node, baud);
+      addConsole("sys", `[RECONNECT] ✓ linked again on ${node} @ ${baud} (attempt ${i}/${ATTEMPTS})`);
+      toast("✓ Reconnected to the board", "ok", 4000);
+      S._reconnecting = false;
+      renderConnCard();
+      return true;
+    } catch (e) {
+      const hint = connErrorHint(e, node);
+      addConsole("err", `[RECONNECT] !! attempt ${i}/${ATTEMPTS}: ${hint ? hint.plain : e.message}`);
+    }
+  }
+  S._reconnecting = false;
+  if (S.mode !== "serial" && !S._userClosed) {
+    addConsole("err", "[RECONNECT] ✗ the board did not come back — check the USB cable/port, the motor supply ground, and sudo dmesg | tail -30 for 'disabled by hub (EMI?)'");
+    const hint = $("portHint");
+    if (hint) hint.innerHTML = "<b>The board keeps dropping off the USB bus.</b> This is electrical: short shielded cable, rear USB port, common ground with the motor supply &mdash; then check <code>sudo dmesg | tail -30</code>.";
+    toast("Board did not come back — likely an EMI/power problem", "err", 9000);
+  }
+  return false;
+}
+
+
+const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/* ---- «آیا این واقعاً حرفِ برد است یا بایتِ به‌هم‌ریخته؟» ---------------
+ * با baudِ اشتباه، برد همچنان بایت می‌فرستد — فقط کاراکترِ بی‌معنی. نردبانِ
+ * قبلی فقط rxCount را می‌شمرد، برای همین بایتِ آشغال را «پاسخِ برد» گرفت و
+ * اپ را روی ۱۹۲۰۰ قفل کرد: دقیقاً همان «یک پیام می‌آید ولی کاراکترهای
+ * بی‌معنی و غیرقابلِ خواندن» که کاربر گزارش داد. */
+function boardTextScore(text) {
+  const t = String(text || "");
+  if (!t.length) return { bytes: 0, ratio: 0, known: false };
+  let printable = 0;
+  for (let k = 0; k < t.length; k++) {
+    const c = t.charCodeAt(k);
+    if (c === 9 || c === 10 || c === 13 || (c >= 32 && c <= 126)) printable++;
+  }
+  return {
+    bytes: t.length,
+    ratio: printable / t.length,
+    known: /AXIS-3 Firmware|System Status|>>\s*POS|State:|Homed:|Unknown command|System initialized/i.test(t),
+  };
+}
+/* تنها متنی را باور کن که هم خوانا باشد هم نشانه‌های فریم‌ور را داشته باشد */
+function looksLikeBoard(text) {
+  const sc = boardTextScore(text);
+  return sc.known && sc.ratio >= 0.85;
+}
+
+/* ---- اصلاحِ خودکارِ baud ---------------------------------------------
+ * اگر داده می‌آید ولی خوانا نیست، یعنی سرعت غلط است — نه بردِ خراب. خودمان
+ * به سرعتِ فریم‌ور برمی‌گردیم و دوباره وصل می‌شویم. */
+async function autoCorrectBaud(from) {
+  if (!IpcSerialLink.supported || S._correcting) return false;
+  const path = (S.serial && S.serial.activeLabel) || (($("hdrPort") && $("hdrPort").value) || "");
+  if (!path || !looksLikeDevPath(path)) return false;
+  S._correcting = true;
+  const sel = $("selBaud");
+  if (sel) sel.value = String(FW.BAUD);
+  addConsole("sys", `[SYS] switching ${from} → ${FW.BAUD} baud (this firmware's own speed) and reconnecting…`);
+  try { await S.serial.disconnect(); } catch (e) {}
+  await nap(300);
+  const link = new IpcSerialLink();
+  bindLinkEvents(link);
+  S.serial = link;
+  try {
+    await link.connectVia(path, FW.BAUD);
+    S._connAt = Date.now(); S._rxWarned = false; S._baudWarned = false;
+    S._sawBoardText = false; S._rxStage = 0; S._holdersChecked = false;
+    renderConnCard();
+    S._correcting = false;
+    return true;
+  } catch (e) {
+    addConsole("err", `!! reconnect at ${FW.BAUD} failed: ${e.message}`);
+    S._correcting = false;
+    return false;
+  }
+}
+
+/* ACK toggle — state is synced from the board's own reply */
+function setAckUI(on) {
+  const b = $("btnAck");
+  if (!b) return;
+  b.textContent = on ? "\u2713 ACK: ON" : "\u2713 ACK: OFF";
+  b.classList.toggle("on", on);
+}
+
+function bindLinkEvents(link) {
+  link.onConnect = (baud) => {
+    setMode("serial");
+    addConsole("sys", `[SYS] linked @ ${baud} — waiting for board…`);
+    addFeed("rx-ok", "Linked @" + baud);
+    toast("Connected to the Arduino ✓", "ok");
+    setStateUI("INIT");
+    try { Store.set("last_port", link.transport === "system" ? link.activeLabel : portKeyFromInfo(link.activeInfo || {})); } catch (e) {}
+    setAckUI(false); /* the board rebooted on connect — ack mode is back to its default (off) */
+    S.inStatus = false; S._pollBlock = false; S._blockLines = 0; S._statusFromPoll = false;
+    S._userClosed = false;
+    S._connAt = Date.now(); S._rxWarned = false; S._rxStage = 0;
+    S._holdersChecked = false; S._sweepTried = false;
+    S._sawBoardText = false; S._baudWarned = false; S._correcting = false;
+    S._eioExplained = false;
+    renderConnCard();
+    setTimeout(() => send(Cmd.status(), { auto: true }), 600);
+    /* second hello after the bootloader window: boards that reboot on open
+     * (DTR pulse) answer this one and the UI syncs right after boot */
+    setTimeout(() => send(Cmd.status(), { auto: true }), 3000);
+  };
+  link.onDisconnect = () => {
+    const was = S.mode === "serial";
+    if (was) setMode("off");
+    addConsole("sys", "[SYS] link closed");
+    renderConnCard();
+    /* افتِ ناگهانی (نه به خواستِ کاربر) → خودمان دنبالش می‌رویم */
+    const path = link.activeLabel || "";
+    if (was && !S._userClosed && IpcSerialLink.supported && looksLikeDevPath(path) &&
+        !S._reconnecting && !S._nodeSweep) {
+      setTimeout(() => { autoReconnect(path, link.baud || FW.BAUD).catch(() => {}); }, 200);
+    }
+  };
+  link.onLine = (l) => rxLine(l);
+  link.onNotice = (m) => {
+    /* پل اطلاع می‌دهد که یک فرایندِ جامانده را متوقف کرد — همان چیزی که
+       «دستور می‌رود ولی جواب برنمی‌گردد» را می‌سازد، پس باید دیده شود. */
+    addConsole("sys", "[SYS] " + m);
+  };
+  link.onError = (m) => {
+    addConsole("err", "!! " + m);
+    /* Errno 5 = دستگاه از BUS افتاد. اولین بار کامل توضیح بده، بعد خلاصه. */
+    if (/Errno 5|Input\/output error/i.test(String(m)) && !S._eioExplained) {
+      S._eioExplained = true;
+      addConsole("warn", "!! [Errno 5] means the CH340 stopped answering — the board dropped OFF THE USB BUS. It is electrical, not software: EMI from the stepper wiring, a power dip, or a long/thin cable. The app now waits for it to come back by itself.");
+      addConsole("warn", "   → confirm with: sudo dmesg | tail -30   (look for 'disabled by hub (EMI?), re-enabling' or repeated 'USB disconnect')");
+    }
+    toast(m, "err");
+  };
+}
+bindLinkEvents(S.serial);
+
+/* ============================================================
+ * Polling
+ * ============================================================ */
+function restartPoll() {
+  /* every fresh connection gives the POS channel another chance — the board
+     may have been reflashed in the meantime */
+  S.posUnsupported = false;
+  if (S.pollTimer) clearInterval(S.pollTimer);
+  S.pollTimer = null;
+  if (S.posTimer) clearInterval(S.posTimer);
+  S.posTimer = null;
+  const v = parseInt($("selPoll").value, 10);
+  if (v > 0 && S.mode !== "off") S.pollTimer = setInterval(pollStatus, v);
+  /* Slider sync, independent of the status rate: "pos" is one short line with
+     no echo, so asking 3x a second costs nothing and the sliders now follow
+     motion started anywhere else (typed console, teach, timer, macro). */
+  if (S.mode !== "off") S.posTimer = setInterval(pollPos, 330);
+}
+
+/* A board running older firmware does not know "pos". As soon as we see that,
+   switch the sync channel off and say so ONCE — otherwise a toast would pop up
+   every 330 ms. The status poll keeps working untouched. */
+function disablePosIfUnsupported() {
+  if (!S.posTimer || S.posUnsupported) return false;
+  if (Date.now() - (S._lastPosPollAt || 0) > 1500) return false;  /* not our poll */
+  clearInterval(S.posTimer);
+  S.posTimer = null;
+  S.posUnsupported = true;
+  toast("The board does not know the 'pos' command (older firmware) — slider sync is off. Flash firmware/RobotArm_Firmware/ to the Mega and reconnect.", "err", 10000);
+  const h = $("portHint");
+  if (h) h.innerHTML = `<b style="color:#ff9b9e">&#9888; Board firmware has no 'pos' channel</b> — to make the sliders follow the real board (and to get the gripper (J4) zero offset), flash <b>firmware/RobotArm_Firmware/</b> to the Mega and reconnect.`;
+  return true;
+}
+
+function pollStatus() {
+  if (S.mode === "off") return;
+  /* pause briefly after a manual command so its reply lands clean and readable */
+  if (Date.now() - (S.manualAt || 0) < 900) return;
+  send(Cmd.status(), { auto: true });
+}
+
+function pollPos() {
+  if (S.mode === "off") return;
+  if (Date.now() - (S.manualAt || 0) < 900) return;
+  /* drag-safe: never yank a value out from under the user's cursor */
+  const ae = document.activeElement;
+  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
+  if (S.jHeld && S.jHeld.some(Boolean)) return;
+  if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
+  S._lastPosPollAt = Date.now();
+  send(Cmd.pos(), { auto: true });
+}
+
+/* ============================================================
+ * Dashboard
+ * ============================================================ */
+function buildAxisCards() {
+  /* Dashboard removed — the per-axis live cards lived there */
+  return;
+  const row = $("axesRow");
+  row.innerHTML = "";
+  FW.AXES.forEach((ax, i) => {
+    const c = document.createElement("div");
+    c.className = "axis-card";
+    c.id = "axisCard" + i;
+    c.style.setProperty("--jc", AXC[i]);
+    c.innerHTML = `
+      <div class="head"><span class="jid">J${ax.joint}</span>
+      <span class="jname">${ax.name}</span></div>
+      <div class="deg" id="axDeg${i}">0.0°</div>
+      <div class="steps" id="axSteps${i}">0 steps</div>
+      <div class="bar"><i id="axBar${i}" style="width:0%"></i></div>
+      <div class="flags" id="axFlags${i}"></div>`;
+    row.appendChild(c);
+  });
+}
+
+function renderAxisCard(i) {
+  /* Dashboard removed — per-axis live cards lived there */
+  return;
+  const ax = FW.AXES[i], a = S.axes[i];
+  $("axDeg" + i).textContent = a.deg.toFixed(1) + "°";
+  $("axSteps" + i).textContent = a.steps + " steps";
+  const pct = Math.max(0, Math.min(100, ((a.deg - ax.min) / (ax.max - ax.min)) * 100));
+  $("axBar" + i).style.width = pct + "%";
+  const fl = (txt, ok) => `<span class="flag ${ok ? "y" : "n"}">${txt}</span>`;
+  const spd = (a.moving && a.vel && a.vel > 1) ? `<span class="flag info">▲ ${a.vel.toFixed(0)}°/s</span>` : "";
+  $("axFlags" + i).innerHTML =
+    fl("HOME", a.homed) + fl("PWR", a.enabled) +
+    (spd || (a.moving ? `<span class="flag info">MOVING</span>` : "")) +
+    `<span class="flag ${a.endstop === "Open" ? "" : "n"}">ES:${a.endstop === "Open" ? "OK" : "TRIG"}</span>`;
+  renderStats();
+}
+
+function renderStats() {
+  /* Dashboard removed — kept as no-op (still called from renderAxis) */
+}
+
+/* ============================================================
+ * Motion tab
+ * ============================================================ */
+function buildJoints() {
+  const list = $("jointsList");
+  list.innerHTML = "";
+  FW.AXES.forEach((ax, i) => {
+    const deg = S.axes[i].deg;
+    const lo = S.degMode ? ax.min : ax.soft.min;
+    const hi = S.degMode ? ax.max : ax.soft.max;
+    const row = document.createElement("div");
+    row.className = "joint-row";
+    /* Zero-offset for this joint (Config.h: HOMING_ZERO_OFFSET_DEG).
+       J4 (gripper) = 90°: after homing it travels 90° forward and THAT spot is zero. */
+    const offNote = ax.zeroOffsetDeg
+      ? ` · zero ${ax.zeroOffsetDeg > 0 ? "+" : ""}${ax.zeroOffsetDeg}° from endstop` : "";
+    /* the blue "jCur" number is gone from this row: it always read 0 and
+       duplicated the J1..J4 cards. Live position rides the POS channel and
+       those cards. The row has EXACTLY four grid children — name | slider |
+       number box | buttons. Any extra node (even a stray comment) becomes an
+       implicit grid column and squashes the slider, so nothing else goes in
+       this template string. */
+    row.innerHTML = `
+      <div class="jl"><b style="color:${AXC[i]}">${ax.name} <span class="tiny">J${ax.joint} · ${ax.id}</span></b>
+        <span>${lo}…${hi}${S.degMode ? "°" : " steps"}${offNote}</span></div>
+      <input type="range" id="jSlider${i}" min="${lo}" max="${hi}" step="${S.degMode ? 0.5 : 1}"
+        value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}" style="--axc:${AXC[i]}">
+      <input type="number" id="jNum${i}" step="${S.degMode ? 0.5 : 1}"
+        min="${lo}" max="${hi}"
+        value="${S.degMode ? deg.toFixed(1) : Kin.degToSteps(i, deg)}">
+      <div style="display:flex;gap:4px">
+        <button class="btn small teal" id="jGo${i}" title="Send move">GO ➤</button>
+        <button class="btn small" id="jHome${i}" title="Home this axis">⌂</button>
+      </div>`;
+    list.appendChild(row);
+
+    const slider = $("jSlider" + i), num = $("jNum" + i);
+    /* FIX: نوار اسلایدر در بار اول با درصد درست رنگ شود
+       (قبلاً پیش‌فرض CSS یعنی ۵۰٪ می‌ماند — برای J2/J3 که صفرشان
+       ابتدای محدوده است، نیمه‌رنگ دیده می‌شد) */
+    const initV = S.degMode ? deg : Kin.degToSteps(i, deg);
+    slider.style.setProperty("--val", (((initV - lo) / (hi - lo)) * 100) + "%");
+    const sync = (v, fromSlider) => {
+      v = Math.max(+slider.min, Math.min(+slider.max, v));
+      const pct = ((v - slider.min) / (slider.max - slider.min)) * 100;
+      slider.style.setProperty("--val", pct + "%");
+      if (fromSlider) num.value = S.degMode ? (+v).toFixed(1) : Math.round(v);
+      else slider.value = v;
+      S.targets[i] = S.degMode ? +v : Kin.stepsToDeg(i, v);
+      return v;
+    };
+    /* v1.0.36: while the user drags this slider, POS events must not fight it */
+    slider.addEventListener("pointerdown", () => { S.jHeld = S.jHeld || []; S.jHeld[i] = true; });
+    window.addEventListener("pointerup", () => { if (S.jHeld) S.jHeld[i] = false; });
+    slider.addEventListener("pointercancel", () => { if (S.jHeld) S.jHeld[i] = false; });
+    slider.addEventListener("blur", () => { if (S.jHeld) S.jHeld[i] = false; });
+    slider.addEventListener("input", () => sync(+slider.value, true));
+    slider.addEventListener("change", () => {
+      const v = sync(+slider.value, true);
+      if ($("swLive").checked) sendJointLive(i, v);
+    });
+    num.addEventListener("change", () => {
+      const v = sync(+num.value || 0, false);
+      if ($("swLive").checked) sendJointLive(i, v);
+    });
+    $("jGo" + i).addEventListener("click", () => sendJoint(i, +num.value || 0));
+    $("jHome" + i).addEventListener("click", () => send(Cmd.homeAxis(i + 1)));
+  });
+}
+
+/* Coalesce rapid slider/spinner changes into at most 2 commands
+ * (leading + trailing). A flood of `deg` lines overruns the AVR's 64-byte
+ * UART ring while it is busy -> dropped middle bytes -> garbled lines the
+ * board reports as "Unknown command" / bogus angles. */
+const _jtPending = {};
+
+/* v1.0.36: sliders follow the board. A joint whose slider is being dragged
+ * (or focused) is skipped so the user is never fought mid-gesture. */
+function applyJointPos(deg4) {
+  for (let i = 0; i < FW.NUM_AXES; i++) {
+    if (S.jHeld && S.jHeld[i]) continue;
+    const sl = $("jSlider" + i);
+    if (!sl) continue;
+    if (document.activeElement === sl) continue;
+    const num = $("jNum" + i);
+    const ax = FW.AXES[i];
+    const deg = Math.max(ax.min, Math.min(ax.max, deg4[i]));
+    const v = S.degMode ? deg : Kin.degToSteps(i, deg);
+    sl.value = v;
+    sl.style.setProperty("--val", (((v - +sl.min) / (+sl.max - +sl.min)) * 100) + "%");
+    if (num && document.activeElement !== num) num.value = S.degMode ? deg.toFixed(1) : Math.round(v);
+    /* keep the J-cards on the same channel, so card and slider never disagree */
+    const a = S.axes[i];
+    if (a && Math.abs(a.deg - deg) > 0.05) {
+      a.deg = deg;
+      a.steps = Math.round(Kin.degToSteps(i, deg));
+      renderAxisCard(i);
+    }
+  }
+}
+
+/* Zero the sliders/cards of the joints that just finished homing — straight
+   away, without waiting for the next poll. (J4 reads zero too: its 90°
+   offset spot IS the new zero, and that is what the board reports.) */
+function zeroHomedSliders() {
+  applyJointPos(S.axes.map((a) => (a.homed ? 0 : a.deg)));
+  S.axes.forEach((a, i) => {
+    if (!a.homed) return;
+    a.deg = 0; a.steps = 0;
+    renderAxisCard(i);
+  });
+}
+
+/* ============================================================
+ * Go to XYZ — same geometry the firmware solves in IK.cpp
+ * (effective forearm L2+L3 because the gripper stays at zero).
+ * Kin.ik in core.js uses the identical model, so "Solve only"
+ * shows exactly what the board will do.
+ * ============================================================ */
+function gotoGeom() {
+  const { L1, L2, L3 } = FW.LINKS;
+  const L2e = L2 + L3;
+  return { L1, L2e, max: L1 + L2e, min: Math.abs(L1 - L2e) };
+}
+
+/* closest distance at which the elbow (J3) still fits inside its degree limit */
+function gotoMinReach() {
+  const g = gotoGeom();
+  const j3max = (FW.AXES[2].max * Math.PI) / 180;
+  const sq = g.L1 * g.L1 + g.L2e * g.L2e + 2 * g.L1 * g.L2e * Math.cos(j3max);
+  return Math.sqrt(Math.max(0, sq));
+}
+
+function gotoRead() {
+  const x = parseFloat($("gtX").value), y = parseFloat($("gtY").value), z = parseFloat($("gtZ").value);
+  if (![x, y, z].every((v) => isFinite(v))) { toast("Enter numeric X/Y/Z", "warn"); return null; }
+  return { x, y, z };
+}
+
+function gotoCheck(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z);
+  const lo = Math.max(g.min, gotoMinReach());
+  const base = { L, lo, hi: g.max };
+  if (L > g.max + 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `tip is ${L.toFixed(0)}mm from the base; the arm fully stretched reaches ${g.max.toFixed(0)}mm` });
+  }
+  if (L < lo - 0.001) {
+    return Object.assign(base, { ok: false,
+      why: `tip is ${L.toFixed(0)}mm from the base; closer than ${lo.toFixed(0)}mm the elbow bends past ${FW.AXES[2].max}°` });
+  }
+  const ang = Kin.ik(t.x, t.y, t.z);
+  if (!ang) return Object.assign(base, { ok: false, why: "outside the workspace" });
+  const bad = [];
+  ang.forEach((d, i) => {
+    const a = FW.AXES[i];
+    if (d < a.min - 0.001 || d > a.max + 0.001) bad.push(`J${i + 1}=${d.toFixed(1)}° (allowed ${a.min}..${a.max}°)`);
+  });
+  if (bad.length) return Object.assign(base, { ok: false, ang, why: "joint limits: " + bad.join(" · ") });
+  return Object.assign(base, { ok: true, ang });
+}
+
+/* nearest reachable point in the same direction (base angle and elevation kept) */
+function gotoNearest(t) {
+  const g = gotoGeom();
+  const L = Math.hypot(Math.hypot(t.x, t.y), t.z) || 1e-6;
+  const lo = Math.max(g.min, gotoMinReach()) + 1.0;
+  const hi = g.max - 1.0;
+  const k = Math.max(lo, Math.min(hi, L)) / L;
+  return { x: t.x * k, y: t.y * k, z: t.z * k };
+}
+
+function gotoShow(res, t) {
+  const box = $("gotoResult");
+  if (!box) return;
+  if (!res.ok) {
+    box.innerHTML = `<b style="color:#ff9b9e">&#10006; ${res.why}</b><br>` +
+      (res.ang ? `angles: ${res.ang.map((d, i) => `J${i + 1}=${d.toFixed(1)}°`).join(" · ")}` : "") +
+      `<br><span class="tiny">"&#8596; Nearest point" pulls the target into the reachable band, same direction.</span>`;
+    return;
+  }
+  box.innerHTML =
+    `<b style="color:#7ee787">&#10004; reachable</b> — ${res.L.toFixed(1)}mm from the base<br>` +
+    res.ang.map((d, i) => `J${i + 1}=<b>${d.toFixed(1)}°</b>`).join(" · ") +
+    `<br><span class="tiny">command: <code>ik ${t.x.toFixed(1)} ${t.y.toFixed(1)} ${t.z.toFixed(1)}</code></span>`;
+}
+
+function gotoCalc() {
+  const t = gotoRead();
+  if (!t) return null;
+  const res = gotoCheck(t);
+  gotoShow(res, t);
+  return res.ok ? { t, res } : null;
+}
+
+function gotoInit() {
+  const g = gotoGeom();
+  const lo = Math.max(g.min, gotoMinReach());
+  const h = $("gotoHint");
+  if (h) {
+    h.innerHTML = `Reachable band: tip distance from the base between <b>${lo.toFixed(0)}</b> and <b>${g.max.toFixed(0)}</b> mm` +
+      ` (L1=${g.L1}mm, effective forearm L2+L3=${g.L2e}mm). Below ${lo.toFixed(0)}mm the elbow exceeds J3's ${FW.AXES[2].max}° and the firmware rejects the move.`;
+  }
+}
+
+function sendJointLive(i, v) {
+  const p = _jtPending[i] || (_jtPending[i] = { t: null, last: 0, fired: false, sent: null });
+  p.last = v;
+  if (p.fired) return;            /* a leading send already went out for this burst */
+  p.fired = true;
+  p.sent = v;
+  sendJoint(i, v);                /* leading: first change is sent immediately */
+  p.t = setTimeout(() => {
+    const val = p.last;
+    const sent = p.sent;
+    p.t = null; p.fired = false; p.last = 0; p.sent = null;
+    _jtPending[i] = null;
+    /* FIX: a single slider release must send exactly ONCE — the trailing
+     * send only fires when the value moved on after the leading one */
+    if (val !== sent) sendJoint(i, val);
+  }, 160);
+}
+
+function sendJoint(i, v) {
+  if (S.degMode) {
+    const ax = FW.AXES[i];
+    if (v < ax.min || v > ax.max) {
+      toast(`Axis ${i + 1} range: ${ax.min}° to ${ax.max}°`, "err");
+      return;
+    }
+    send(Cmd.deg(i + 1, v));
+  } else {
+    send(Cmd.move(i + 1, Math.round(v)));
+  }
+}
+
+/* ---------- moveall ---------- */
+function buildMoveAll() {
+  const box = $("moveAllInputs");
+  box.innerHTML = "";
+  FW.AXES.forEach((ax, i) => {
+    const f = document.createElement("div");
+    f.className = "field";
+    f.innerHTML = `<label style="color:${AXC[i]}">J${ax.joint} ${ax.name}</label>
+      <input type="number" id="ma${i}" value="0" min="${ax.min}" max="${ax.max}" step="1">`;
+    box.appendChild(f);
+  });
+  const sel = $("selPreset");
+  FW.DEMO_MOVES.forEach((p, i) => {
+    const o = document.createElement("option");
+    o.value = "demo" + i;
+    o.textContent = `${p.label}  [${p.angles.join(", ")}]`;
+    sel.appendChild(o);
+  });
+}
+
+function readMoveAll() {
+  const vals = [];
+  for (let i = 0; i < FW.NUM_AXES; i++) {
+    let v = parseFloat($("ma" + i).value);
+    if (isNaN(v)) v = 0;
+    const ax = FW.AXES[i];
+    if (v < ax.min || v > ax.max) {
+      toast(`J${i + 1} (${ax.name}) out of range ${ax.min}…${ax.max}`, "err");
+      return null;
+    }
+    vals.push(v);
+  }
+  return vals;
+}
+
+function goMoveAll(vals, silent) {
+  send(Cmd.moveAll(vals));
+  S.targets = vals.slice();
+  syncJointInputs();
+  if (!silent) toast("moveall sent → " + vals.map((v) => v + "°").join(" "), "info");
+}
+
+/* ============================================================
+ * Program Sequencer — run a list of poses step by step
+ * ============================================================ */
+S.seq = { items: [], playing: false, idx: 0 };
+
+function addCurrentPoseToSeq() {
+  if (S.seq.items.length >= 50) { toast("Program is full (50 steps)", "warn"); return; }
+  const pose = currentDegs();
+  S.seq.items.push({ label: "Step " + (S.seq.items.length + 1), pose, dwell: 800 });
+  renderSeqList();
+  toast("Pose added: [" + pose.join(", ") + "]", "ok");
+}
+
+function renderSeqList() {
+  const box = $("seqList");
+  if (!box) return;
+  box.innerHTML = "";
+  S.seq.items.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.className = "seq-item" + (S.seq.playing && S.seq.idx === i ? " active" : "");
+    d.innerHTML = `
+      <span class="seq-n">${String(i + 1).padStart(2, "0")}</span>
+      <input type="text" class="seq-label" value="${it.label.replace(/"/g, "&quot;")}">
+      <code>[${it.pose.map((v) => v.toFixed(0)).join(", ")}]</code>
+      <label class="seq-dwell"><input type="number" value="${it.dwell}" min="0" step="100">ms</label>
+      <button class="btn small teal" title="Run this step now">▶</button>
+      <button class="btn small" title="Move up">↑</button>
+      <button class="btn small" title="Move down">↓</button>
+      <button class="btn small red" title="Delete">✕</button>`;
+    const [bRun, bUp, bDown, bDel] = d.querySelectorAll("button");
+    bRun.onclick = () => { goMoveAll(it.pose.slice()); };
+    bUp.onclick = () => { if (i > 0) { [S.seq.items[i - 1], S.seq.items[i]] = [S.seq.items[i], S.seq.items[i - 1]]; renderSeqList(); } };
+    bDown.onclick = () => { if (i < S.seq.items.length - 1) { [S.seq.items[i + 1], S.seq.items[i]] = [S.seq.items[i], S.seq.items[i + 1]]; renderSeqList(); } };
+    bDel.onclick = () => { S.seq.items.splice(i, 1); renderSeqList(); };
+    d.querySelector(".seq-label").addEventListener("change", (e) => { it.label = e.target.value; });
+    d.querySelector(".seq-dwell input").addEventListener("change", (e) => { it.dwell = Math.max(0, parseInt(e.target.value, 10) || 0); });
+    box.appendChild(d);
+  });
+  if (!S.seq.items.length) {
+    box.innerHTML = `<p class="tiny" style="text-align:center;padding:14px">Empty program — pose the arm (drag the joints!) then press "Add current pose".</p>`;
+  }
+}
+
+function seqPlay() {
+  if (!S.seq.items.length) { toast("Program is empty — add poses first", "warn"); return; }
+  S.seq.playing = true;
+  seqRunFrom(0);
+}
+
+function seqStop() {
+  S.seq.playing = false;
+  const p = $("seqProgress");
+  if (p) p.textContent = "idle";
+}
+
+function seqRunFrom(i) {
+  if (!S.seq.playing) return;
+  if (i >= S.seq.items.length) {
+    S.seq.playing = false;
+    $("seqProgress").textContent = "✓ done";
+    toast("Program finished ✓", "ok");
+    renderSeqList();
+    return;
+  }
+  S.seq.idx = i;
+  const it = S.seq.items[i];
+  $("seqProgress").textContent = `▶ ${i + 1}/${S.seq.items.length}`;
+  renderSeqList();
+  goMoveAll(it.pose.slice(), true);
+  /* wait until the arm reports all axes stopped, then dwell, then next */
+  setTimeout(() => {
+    let waited = 0;
+    const iv = setInterval(() => {
+      if (!S.seq.playing) { clearInterval(iv); return; }
+      send(Cmd.status(), { auto: true });
+      waited += 400;
+      const still = S.axes.some((a) => a.moving);
+      if ((!still && waited > 800) || waited > 30000) {
+        clearInterval(iv);
+        setTimeout(() => seqRunFrom(i + 1), Math.max(0, it.dwell || 800));
+      }
+    }, 400);
+  }, 150);
+}
+
+function seqExport() {
+  const blob = new Blob([JSON.stringify({ app: "AXIS-3", type: "program", items: S.seq.items }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "axis3-program.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function seqImport(file) {
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const data = JSON.parse(rd.result);
+      if (!Array.isArray(data.items)) throw new Error("bad format");
+      S.seq.items = data.items
+        .filter((it) => Array.isArray(it.pose) && it.pose.length === 5)
+        .map((it) => ({
+          label: String(it.label || "Step"),
+          pose: it.pose.map((v, i) => Kin.clampDeg(i, parseFloat(v) || 0)),
+          dwell: Math.max(0, parseInt(it.dwell, 10) || 800),
+        }));
+      renderSeqList();
+      toast(`Imported ${S.seq.items.length} steps`, "ok");
+    } catch (e) { toast("Invalid program file", "err"); }
+  };
+  rd.readAsText(file);
+}
+
+/* ---------- profile ---------- */
+function syncProfileRadios(name) {
+  const key = FW.PROFILES.find((p) => name.includes(p.label))?.key
+    || (name.includes("SLOW") ? "slow" : name.includes("FAST") ? "fast" : "normal");
+  const r = document.querySelector(`#profileSeg input[value="${key}"]`);
+  if (r) r.checked = true;
+}
+
+/* ============================================================
+ * Kinematics tab
+ * ============================================================ */
+function buildFkInputs() {
+  const box = $("fkInputs");
+  box.innerHTML = "";
+  FW.AXES.forEach((ax, i) => {
+    const f = document.createElement("div");
+    f.className = "field";
+    f.innerHTML = `<label style="color:${AXC[i]}">J${ax.joint} ${ax.id} (°)</label>
+      <input type="number" id="fkA${i}" value="0" min="${ax.min}" max="${ax.max}" step="1">`;
+    box.appendChild(f);
+  });
+}
+
+function calcIKLocal(move) {
+  const x = parseFloat($("ikX").value) || 0;
+  const y = parseFloat($("ikY").value) || 0;
+  const z = parseFloat($("ikZ").value) || 0;
+  const res = Kin.ik(x, y, z);
+  const box = $("ikResult");
+  if (!res) {
+    box.textContent = `✗ Out of reach! Required distance = ${Math.round(Math.hypot(Math.hypot(x, y), z))} mm (max 250 mm)`;
+    box.style.color = "#ff9b9e";
+    return null;
+  }
+  /* FIX: همان چیزی که نمایش داده می‌شود = همان چیزی که اجرا می‌شود */
+  const clamped = res.map((a, i) => Math.max(FW.AXES[i].min, Math.min(FW.AXES[i].max, a)));
+  const wasClamped = clamped.some((a, i) => a !== res[i]);
+  box.style.color = "#7ce7ef";
+  box.textContent = "IK ⇒ " + clamped.map((a) => a.toFixed(1) + "°").join(" | ") + (wasClamped ? "  (clamped)" : "");
+  if (move) {
+    S.targets = clamped.slice();
+  }
+  return clamped;
+}
+
+function calcFKLocal() {
+  const angles = [];
+  for (let i = 0; i < FW.NUM_AXES; i++) angles.push(parseFloat($("fkA" + i).value) || 0);
+  const p = Kin.fk(angles);
+  $("fkResult").style.color = "#ffcd69";
+  $("fkResult").textContent = `FK ⇒ X=${p.x.toFixed(1)}  Y=${p.y.toFixed(1)}  Z=${p.z.toFixed(1)} (mm) — reach ${Math.round(p.reach)} mm`;
+  S.targets = angles.slice();
+  return p;
+}
+
+/* ============================================================
+ * Memory tab
+ * ============================================================ */
+function buildSlots() {
+  const g = $("slotsGrid");
+  g.innerHTML = "";
+  for (let i = 0; i < FW.MAX_POSITIONS; i++) {
+    const d = document.createElement("div");
+    d.className = "slot";
+    d.id = "slot" + i;
+    d.innerHTML = `
+      <div class="s-num">SLOT ${i}</div>
+      <div class="s-name" id="slotName${i}">—</div>
+      <div class="s-btns">
+        <button class="btn small green" title="savepos">SAVE</button>
+        <button class="btn small teal" title="loadpos">LOAD</button>
+        <button class="btn small red" title="clearpos">CLR</button>
+      </div>`;
+    const [bSave, bLoad, bClear] = d.querySelectorAll("button");
+    bSave.onclick = () => send(Cmd.savePos(i));
+    bLoad.onclick = () => send(Cmd.loadPos(i));
+    bClear.onclick = async () => {
+      if (await confirmModal("Clear slot", `Erase slot ${i}?`)) send(Cmd.clearPos(i));
+    };
+    g.appendChild(d);
+  }
+}
+
+function renderSlots() {
+  if (S.pendingSlots) {
+    S.slots = new Array(FW.MAX_POSITIONS).fill(null);
+    for (const k in S.pendingSlots) S.slots[+k] = S.pendingSlots[k];
+    S.pendingSlots = null;
+  }
+  for (let i = 0; i < FW.MAX_POSITIONS; i++) {
+    const s = S.slots[i];
+    $("slot" + i).classList.toggle("saved", !!s);
+    $("slotName" + i).textContent = s ? s.name : "—";
+  }
+}
+
+
+/* --- export / import the sequencer program as JSON --- */
+function seqExport() {
+  if (!S.seq.items.length) { toast("Nothing to export — the program is empty", "warn"); return; }
+  const data = { type: "axis3-program", version: 1, items: S.seq.items };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "arm-program-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast("Exported " + S.seq.items.length + " step(s)", "ok");
+}
+
+function seqImport(input) {
+  const f = input && input.files && input.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const data = JSON.parse(String(r.result));
+      const items = Array.isArray(data) ? data : data.items;
+      if (!Array.isArray(items)) throw new Error("no items[] array");
+      S.seq.items = items.slice(0, 50).map((it, i) => ({
+        label: String(it.label || "Step " + (i + 1)),
+        pose: (it.pose || []).slice(0, 5).map((v) => Math.round((parseFloat(v) || 0) * 10) / 10),
+        dwell: Math.max(0, parseInt(it.dwell, 10) || 800),
+      })).filter((it) => it.pose.length === 5);
+      renderSeqList();
+      toast("Imported " + S.seq.items.length + " step(s)", "ok");
+    } catch (e) {
+      toast("Import failed: " + e.message, "err");
+    }
+    input.value = "";
+  };
+  r.onerror = () => { toast("Could not read the file", "err"); input.value = ""; };
+  r.readAsText(f);
+}
+
+function renderTeachTimeline() {
+  const tl = $("teachTimeline");
+  tl.innerHTML = "";
+  S.teachLocal.forEach((d, i) => {
+    const s = document.createElement("span");
+    s.className = "t-step";
+    s.textContent = `#${i + 1} [${d.map((v) => v.toFixed(0)).join(",")}]`;
+    tl.appendChild(s);
+  });
+}
+
+function currentDegs() {
+  return S.axes.map((a) => Math.round(a.deg * 10) / 10);
+}
+
+function buildDemoPoses() {
+  const box = $("demoPosesList");
+  box.innerHTML = "";
+  FW.DEMO_MOVES.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.id = "demoPose" + (i + 1);
+    row.style.cssText = "border:1px dashed #232c39;border-radius:4px;padding:6px 10px;transition:.3s";
+    row.innerHTML = `
+      <b style="font-size:12px">${p.label}</b>
+      <span class="tiny" style="font-family:var(--mono)">[${p.angles.join(", ")}]°</span>
+      <span style="margin-left:auto;display:flex;gap:5px">
+        <button class="btn small teal">↧ Insert</button>
+        <button class="btn small amber">▶ Run</button>
+      </span>`;
+    const [bIns, bGo] = row.querySelectorAll("button");
+    bIns.onclick = () => {
+      p.angles.forEach((v, j) => ($("ma" + j).value = v));
+      toast("Inserted into moveall — press “Execute moveall” to apply", "info");
+    };
+    bGo.onclick = () => goMoveAll(p.angles.slice());
+    box.appendChild(row);
+  });
+}
+
+function highlightDemoPose(step) {
+  FW.DEMO_MOVES.forEach((_, i) => {
+    const el = $("demoPose" + (i + 1));
+    if (el) el.style.borderColor = i + 1 === step ? "rgba(255,176,32,.8)" : "#232c39";
+  });
+}
+
+/* ============================================================
+ * Scheduler tab
+ * ============================================================ */
+function buildTimerAxis() {
+  const sel = $("timAxis");
+  FW.AXES.forEach((ax, i) => {
+    const o = document.createElement("option");
+    o.value = i + 1;
+    o.textContent = `J${ax.joint} — ${ax.name} (${ax.id})`;
+    sel.appendChild(o);
+  });
+}
+
+function renderTimersLocal() {
+  const box = $("timersList");
+  box.innerHTML = "";
+  const now = Date.now();
+  S.timersLocal = S.timersLocal.filter((t) => t.fireAt > now);
+  S.timersLocal.forEach((t) => {
+    const s = document.createElement("span");
+    s.className = "t-step";
+    s.textContent = `◷ ${Math.ceil((t.fireAt - now) / 1000)}s → J${t.axis}`;
+    box.appendChild(s);
+  });
+  $("timersLocalCount").textContent =
+    S.timersLocal.length + (S.timersFw !== null && S.timersFw !== undefined ? ` (fw: ${S.timersFw})` : "");
+}
+
+/* ============================================================
+ * Console tab
+ * ============================================================ */
+function buildChips() {
+  const box = $("chipsBox");
+  box.innerHTML = "";
+  /* فقط دستورات پرکاربرد و «کامل» — هر رشته اینجا عیناً توسط پارسر
+     فریم‌ور پذیرفته می‌شود (بدون آرگومان الزامی، بدون تکرار). */
+  const QUICK_CMDS = [
+    { cmd: "home", cls: "" },
+    { cmd: "status", cls: "" },
+    { cmd: "estop", cls: "danger" },
+    { cmd: "reset", cls: "" },
+    { cmd: "enable", cls: "" },
+    { cmd: "disable", cls: "" },
+    { cmd: "demo", cls: "" },
+    { cmd: "stopdemo", cls: "" },
+    { cmd: "stop", cls: "" },
+    { cmd: "teach", cls: "" },
+    { cmd: "teach step", cls: "" },
+    { cmd: "teach stop", cls: "" },
+    { cmd: "play", cls: "" },
+    { cmd: "play stop", cls: "" },
+    { cmd: "listpos", cls: "" },
+    { cmd: "timers", cls: "" },
+    { cmd: "cleartimers", cls: "" },
+    { cmd: "profile slow", cls: "warn" },
+    { cmd: "profile normal", cls: "warn" },
+    { cmd: "profile fast", cls: "warn" },
+    { cmd: "log on", cls: "" },
+    { cmd: "log off", cls: "" },
+    { cmd: "log show", cls: "" },
+    { cmd: "log clear", cls: "" },
+    { cmd: "sleep", cls: "" },
+    { cmd: "wake", cls: "" },
+    { cmd: "autosleep on", cls: "" },
+    { cmd: "autosleep off", cls: "" },
+  ];
+  QUICK_CMDS.forEach((it) => {
+    const b = document.createElement("button");
+    b.className = "chip " + it.cls;
+    b.textContent = it.cmd;
+    b.onclick = () => send(it.cmd);
+    box.appendChild(b);
+  });
+}
+
+function sendFromInput() {
+  const inp = $("cmdInput");
+  const v = inp.value.trim();
+  if (!v) return;
+  S.history.push(v);
+  if (S.history.length > 60) S.history.shift();
+  S.histIdx = S.history.length;
+  inp.value = "";
+  send(v);
+}
+
+/* ============================================================
+ * Reference tab
+ * ============================================================ */
+function buildHelp() {
+  const tb = $("refTableBody");
+  tb.innerHTML = "";
+  COMMAND_REF.forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td><code>${c.cmd}${c.args ? " " + c.args : ""}</code></td><td>${c.desc}</td><td><span class="flag info">${c.cat}</span></td>`;
+    tb.appendChild(tr);
+  });
+  const ab = $("axisCfgBody");
+  ab.innerHTML = "";
+  FW.AXES.forEach((ax) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><b style="color:${AXC[ax.joint - 1]}">J${ax.joint} ${ax.id}</b> ${ax.name}</td>
+      <td class="tiny">${ax.role}</td>
+      <td><code>${ax.min}…${ax.max}°</code></td>
+      <td><code>${ax.stepsPerDeg}</code></td>
+      <td><code>${ax.gear}</code></td>
+      <td><code>${ax.maxSpeed}</code></td>
+      <td><code>${ax.accel}</code></td>
+      <td><code>${ax.pins.step}/${ax.pins.dir}/${ax.pins.enable}/${ax.pins.endstop}${ax.pins.step2 ? ` + M2: ${ax.pins.step2}/${ax.pins.dir2}/${ax.pins.enable2} (mirrored)` : ""}</code></td>`;
+    ab.appendChild(tr);
+  });
+}
+
+/* ============================================================
+ * Helpers
+ * ============================================================ */
+function updateLinkStats() {
+  const rm = $("ioMeter");
+  if (rm) rm.textContent = S.mode === "serial"
+    ? "TX " + Fmt.bytes(S.serial.txCount) + " · RX " + Fmt.bytes(S.serial.rxCount)
+    : "TX — · RX —";
+  if (S.mode === "serial") {
+    const led = $("led");
+    if (S.serial.rxCount !== updateLinkStats._lastRx) {
+      led.classList.remove("blink"); void led.offsetWidth; led.classList.add("blink");
+      updateLinkStats._lastRx = S.serial.rxCount;
+    }
+    /* داده می‌آید ولی هیچ نشانه‌ای از فریم‌ور دیده نشده؟ یعنی سرعت غلط است.
+       این همان «کاراکترِ بی‌معنی» است: باید صریح گفته شود و خودکار درست شود،
+       نه اینکه کاربر به آشغالِ روی صفحه خیره بماند. */
+    if (S.serial.rxCount > 40 && !S._sawBoardText && S._connAt &&
+        Date.now() - S._connAt > 3000 && !S._baudWarned && !S._correcting && !S._reconnecting) {
+      S._baudWarned = true;
+      const curB = S.serial.baud || parseInt($("selBaud").value, 10) || FW.BAUD;
+      addConsole("err", `!! ${S.serial.rxCount} bytes arrived but none of it is readable — the BAUD RATE IS WRONG (app at ${curB}, this firmware uses ${FW.BAUD})`);
+      addConsole("warn", `   → unreadable characters are never a broken board, always a speed mismatch. Switching to ${FW.BAUD} automatically…`);
+      const hintB = $("portHint");
+      if (hintB) hintB.innerHTML = `<b>Unreadable reply = wrong baud rate.</b> The app was at ${curB}; this firmware uses <b>${FW.BAUD}</b> &mdash; switching automatically.`;
+      toast(`Wrong baud rate — switching to ${FW.BAUD}`, "err", 9000);
+      setTimeout(() => { autoCorrectBaud(curB).catch(() => {}); }, 300);
+    }
+    /* ---- برد ساکت است؟ دو پله، بدونِ باز و بسته کردنِ پورت ----
+       پله‌ی ۱ (۶ ثانیه): فقط بگو دکمه‌ی RESET را بزند — بردِ کاربر مدارِ
+       ریستِ خودکار ندارد و تا RESET نزند حرف نمی‌زند.
+       پله‌ی ۲ (۱۶ ثانیه): حکمِ روشن + علتِ واقعی (افتِ USB / EMI).
+       هیچ‌کدام پورت را دوباره باز نمی‌کند: باز و بسته‌کردنِ پشتِ سرِ هم روی
+       CH340 خودش افتِ تغذیه و بیرون‌افتادن از BUS را بیشتر می‌کند. */
+    const silentMs = (S._connAt && S.mode === "serial") ? Date.now() - S._connAt : 0;
+    const busyNow = S._correcting || S._reconnecting || S._nodeSweep;
+    /* پله‌ی ۰ (۳.۵ ثانیه): اول ببین کسِ دیگری پورت را گرفته. در لینوکس tty
+       انحصاری نیست: یک خواننده‌ی دوم همه‌ی بایت‌های برد را می‌بلعد درحالی‌که
+       دستورهای اپ به برد می‌رسند — یعنی موتورها تکان می‌خورند ولی RX صفر
+       می‌ماند. تا این رد نشده، گفتنِ «RESET بزن» نشانه‌ی غلط است. */
+    if (S.serial.rxCount === 0 && silentMs > 3500 && !S._holdersChecked && !busyNow) {
+      S._holdersChecked = true;
+      const lbl = S.serial.activeLabel || "";
+      if (window.electronAPI && window.electronAPI.portHolders) {
+        window.electronAPI.portHolders(lbl).then((h) => {
+          if (!h || !h.procs || !h.procs.length) return;
+          S._rxStage = 3;                       /* علت پیدا شد — نصیحتِ RESET لازم نیست */
+          addConsole("err", "!! another program is holding this port: " + h.procs.join(", ") + " (PID " + h.pids.join(", ") + ")");
+          addConsole("warn", "   → on Linux a tty is NOT exclusive, so that program swallows every byte the board sends. Your commands still reach the board (that is why a motor moved) but no reply ever comes back.");
+          addConsole("warn", "   → close it: Arduino IDE / Serial Monitor / minicom / screen, a second copy of this app (pkill -f serial_bridge.py), or a system daemon — ModemManager probes the port and brltty claims the CH340 chip. Permanent one-line fix: bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arm-3-axis/main/tools/fix-serial-port-ownership.sh)");
+          toast("Port is held by " + h.procs.join(", ") + " — close it and reconnect", "err", 9000);
+          const hintH = $("portHint");
+          if (hintH) hintH.innerHTML = "<b>Another program is reading this port:</b> " + h.procs.map(escH).join(", ") +
+            " &mdash; <b>close it</b> and press Connect again. Two readers steal each other's bytes, so your commands reach the board but no reply comes back.";
+        }).catch(() => {});
+      }
+    }
+    if (S.serial.rxCount === 0 && silentMs > 5500 && S._rxStage === 0 && S._holdersChecked && !busyNow && !S._sweepTried) {
+      /* اول یک دورِ محدود روی بقیه‌ی گره‌های زنده (شاید برد جای دیگری است)،
+         بعد — اگر هیچ‌کدام جواب نداد — درخواستِ RESET. */
+      S._rxStage = 1; S._rxWarned = true; S._sweepTried = true;
+      tryOtherNodes().then((found) => {
+        if (found) { S._rxStage = 0; return; }
+        if (S.mode === "serial" && S.serial.rxCount === 0 && !S._userClosed) promptBoardReset();
+      }).catch(() => {
+        if (S.mode === "serial" && S.serial.rxCount === 0) promptBoardReset();
+      });
+    } else if (S.serial.rxCount === 0 && silentMs > 16000 && S._rxStage === 1 && !busyNow) {
+      S._rxStage = 2;
+      const label = S.serial.activeLabel || "";   /* پیش از هر استفاده‌ای */
+      addConsole("err", "!! still nothing after RESET — the board is not transmitting to the app.");
+      /* نشانه‌ی کلیدی: در فریم‌ور Axis::init() موتورها را **غیرفعال** می‌کند
+         (ENABLE=HIGH) و فقط دستورِ enable/home سفتشان می‌کند؛ اپ هم هنگامِ
+         اتصال فقط status می‌فرستد. پس اگر موتورها سفت/وزوز‌کنان هستند و یک
+         بایت هم نمی‌آید، AVR **اجرا نمی‌شود**: در ریست یا brown-out پین‌هایش
+         شناور می‌مانند و ENِ درایورها را فعال می‌کنند. این سخت‌افزار است. */
+      if (!S._sawBoardText) {
+        addConsole("warn", "   → no boot banner ever arrived, so the AVR is not running (not a baud problem, not a permissions problem).");
+        addConsole("warn", "   → if the motors feel STIFF or hum: that confirms it. This firmware DISABLES the motors at boot, so stiffness means the chip is held in reset / browning out and its pins are floating, which energises the drivers.");
+        addConsole("warn", "   → 30-second test: unplug the motor power supply (leave only USB), power-cycle the board, then Connect. If it links now, the motor supply is dragging the 5 V rail down — keep motors off USB power and tie the supply GND to the Arduino GND.");
+        addConsole("warn", "   → still dead with motors unpowered? The board/cable/port is at fault: try another USB port and a short data cable, and watch `sudo dmesg -w` while you replug.");
+      }
+      addConsole("warn", "   → on Linux a tty is NOT exclusive: another process can hold the same port and swallow every byte (your commands still reach the board, but no reply ever comes back). Check with: `sudo fuser -v " + (label || "/dev/ttyUSB0") + "` and `pgrep -af 'ModemManager|brltty|serial_bridge|screen|minicom'`.");
+      addConsole("warn", "   → one command fixes the usual culprits (ModemManager probing + brltty claiming the CH340): bash <(curl -fsSL https://raw.githubusercontent.com/Draxx143/arm-3-axis/main/tools/fix-serial-port-ownership.sh) — then replug.");
+      addConsole("warn", "   → if nothing holds it, the board is dropping off the USB bus: `sudo dmesg | tail -30` and look for 'disabled by hub (EMI?), re-enabling'. That is electrical: motors powered from USB, no common ground, or a long/thin cable.");
+      const hintV = $("portHint");
+      if (hintV) hintV.innerHTML = "<b>The board is silent and the AVR is not running</b> (no boot banner ever arrived). If the motors feel <b>stiff</b> that proves it: this firmware <i>disables</i> the motors at boot, so stiffness means the chip is held in reset or browning out and its floating pins are energising the drivers.<div><b>30-second test:</b> unplug the motor supply (USB only) &rarr; power-cycle the board &rarr; Connect. If it links now, the motors were dragging the 5&nbsp;V rail down: keep them off USB power and tie the supply <b>GND</b> to the Arduino <b>GND</b>.</div><div><b>Then rule out a stolen port:</b> <code>sudo fuser -v " + escH(label || "/dev/ttyUSB0") + "</code> and <code>pgrep -af ModemManager</code> &mdash; on Linux a second reader swallows every reply while your commands still reach the board. And <code>sudo dmesg | tail -30</code> for USB drop-outs (EMI).</div>";
+      if (window.electronAPI && window.electronAPI.portHolders) {
+        window.electronAPI.portHolders(label).then((h) => {
+          if (h && h.procs && h.procs.length) {
+            const hint = $("portHint"); if (!hint) return;
+            hint.innerHTML = "<b>RX 0 B — another program is reading the port:</b> " +
+              h.procs.map(escH).join(", ") +
+              " &mdash; <b>close it</b> (two readers steal each other's bytes!), then Disconnect &amp; Connect.";
+            addConsole("warn", "!! port ALSO held by: " + h.procs.join(", ") + " (PIDs " + h.pids.join(", ") + ") — close it and reconnect");
+          } else {
+            addConsole("sys", "[SYS] no other program is holding the port — so the board itself is silent");
+          }
+        }).catch(() => {});
+      }
+    }
+    if (S.serial.rxCount > 0) { S._rxStage = 0; S._rxWarned = false; }
+  }
+  renderTimersLocal();
+}
+
+function initTabs() {
+  document.querySelectorAll(".tab-btn").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach((x) => x.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      $("tab-" + b.dataset.tab).classList.add("active");
+    });
+  });
+}
+
+function buildMotors() {
+  const g = $("motorsGrid");
+  FW.AXES.forEach((ax, i) => {
+    const d = document.createElement("div");
+    d.className = "row";
+    d.style.cssText = "border:1px dashed #232c39;border-radius:4px;padding:6px 10px";
+    d.innerHTML = `
+      <b style="color:${AXC[i]};font-size:12.5px">J${ax.joint} ${ax.name}</b>
+      <button class="btn small green" id="mEn${i}">⚡ enable</button>
+      <button class="btn small" id="mDis${i}">◌ disable</button>`;
+    g.appendChild(d);
+  });
+}
+
+function renderEnergy() {
+  $("energyStatus").textContent = S.sleeping ? "ASLEEP" : (S.autoSleep ? "normal + auto-sleep armed" : "normal");
+  $("swAutoSleep").checked = S.autoSleep;
+}
+
+/* ============================================================
+ * Bindings
+ * ============================================================ */
+/* ------------------------------------------------------------
+ * Safe wiring helpers.
+ * A plain $("id").onclick = ... throws a TypeError when the element is
+ * missing, and because every button is wired inside ONE function, that
+ * single throw killed the wiring of everything after it. These helpers
+ * warn instead of throwing, so one missing element can never take down
+ * the rest of the panel.
+ * ------------------------------------------------------------ */
+function bindClick(id, fn) {
+  const el = $(id);
+  if (!el) { console.warn("[wire] no element #" + id + " — button not wired"); return; }
+  el.onclick = fn;
+}
+function bindChange(id, fn) {
+  const el = $(id);
+  if (!el) { console.warn("[wire] no element #" + id + " — handler not wired"); return; }
+  el.onchange = fn;
+}
+
+function bindActions() {
+  $("btnConnect").onclick = toggleSerial;
+  $("btnSim").onclick = () => (S.mode === "sim" ? (stopSim(), toast("Simulator stopped", "info")) : startSim());
+  $("selPoll").onchange = restartPoll;
+
+  $("btnEstop").onclick = doEstop;   /* v1.0.36: visible header E-STOP (Esc still works) */
+  function doEstop() {
+    /* v1.0.36: pending slider/jog sends are dropped so E-STOP goes FIRST;
+       if the board's EMERGENCY STOP! line doesn't land, resend (max 3). */
+    for (const k in _jtPending) {
+      const p = _jtPending[k];
+      if (p && p.t) { clearTimeout(p.t); }
+      _jtPending[k] = null;
+    }
+    if (!send(Cmd.estop())) return;
+    toast("⛔ E-STOP sent", "err"); addFeed("rx-err", "⛔ E-STOP");
+    S._estopSentAt = Date.now();
+    /* up to 2 automatic retries until the board confirms with EMERGENCY STOP! */
+    [1, 2].forEach((n) => setTimeout(() => {
+      if (S._estopAckAt && S._estopAckAt >= S._estopSentAt) return;   /* confirmed */
+      if (S.mode === "off") return;
+      send(Cmd.estop());
+      addFeed("rx-err", "⛔ E-STOP (retry " + n + ")");
+    }, n * 450));
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("modalBack").classList.contains("show")) doEstop();
+    if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); $("cmdInput").focus(); }
+    /* ---- keyboard jog (ignored while typing in a field) ---- */
+    const tag = (e.target && e.target.tagName) || "";
+    if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+    if (["1", "2", "3", "4", "5"].includes(e.key)) {
+      S.selJoint = parseInt(e.key, 10) - 1;
+      document.querySelectorAll(".joint-row").forEach((r) => r.classList.remove("sel"));
+      const sl = $("jSlider" + S.selJoint);
+      if (sl) sl.closest(".joint-row").classList.add("sel");
+      toast(`Jog target: J${S.selJoint + 1} ${FW.AXES[S.selJoint].name} — use ← / →`, "info", 1600);
+    } else if (e.key === "F2") {
+      e.preventDefault();
+      send(Cmd.homeAll());
+      toast("⌂ Home All sent (F2)", "info", 1600);
+    } else if (e.key === "F4") {
+      e.preventDefault();
+      send(Cmd.reset());
+      toast("↺ RESET sent (F4)", "info", 1600);
+    } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if (S.selJoint === null || S.selJoint === undefined) return;
+      e.preventDefault();
+      const j = S.selJoint, delta = (e.key === "ArrowRight" ? 2 : -2) * (e.shiftKey ? 3 : 1);
+      const v = Math.max(FW.AXES[j].min, Math.min(FW.AXES[j].max, S.axes[j].deg + delta));
+      send(Cmd.deg(j + 1, v));
+      S.targets[j] = v; syncJointInputs();
+    }
+  });
+
+
+  /* motion */
+  $("swDegMode").onchange = () => { S.degMode = $("swDegMode").checked; buildJoints(); };
+  $("btnMoveAll").onclick = () => { const v = readMoveAll(); if (v) goMoveAll(v); };
+  $("btnGoHomePose").onclick = () => { FW.DEMO_MOVES[0].angles.forEach((v, i) => ($("ma" + i).value = v)); goMoveAll([0, 0, 0, 0]); };
+  $("btnApplyPreset").onclick = () => {
+    const v = $("selPreset").value;
+    if (!v) return;
+    const idx = parseInt(v.replace("demo", ""), 10);
+    FW.DEMO_MOVES[idx].angles.forEach((a, i) => ($("ma" + i).value = a));
+  };
+  document.querySelectorAll('#profileSeg input[name="profile"]').forEach((r) => {
+    r.addEventListener("change", () => send(Cmd.profile(r.value)));
+  });
+  $("btnTrajStop").onclick = () => send(Cmd.trajStop());
+
+  /* kinematics */
+  $("btnIKSend").onclick = () => {
+    const x = parseFloat($("ikX").value) || 0, y = parseFloat($("ikY").value) || 0, z = parseFloat($("ikZ").value) || 0;
+    if (calcIKLocal(true) !== null) send(Cmd.ik(x, y, z));
+  };
+  $("btnIKCalc").onclick = () => calcIKLocal(true);
+  $("btnFKSend").onclick = () => {
+    calcFKLocal();
+    send(Cmd.fk([0, 1, 2, 3].map((i) => parseFloat($("fkA" + i).value) || 0)));
+  };
+  bindClick("btnGotoCalc", () => gotoCalc());
+  bindClick("btnGotoGo", () => {
+    const r = gotoCalc();
+    if (!r) return;
+    if (send(Cmd.ik(r.t.x, r.t.y, r.t.z))) {
+      toast(`Going to (${r.t.x.toFixed(0)}, ${r.t.y.toFixed(0)}, ${r.t.z.toFixed(0)}) mm`, "ok");
+    }
+  });
+  bindClick("btnGotoNear", () => {
+    const t = gotoRead();
+    if (!t) return;
+    const n = gotoNearest(t);
+    $("gtX").value = n.x.toFixed(1);
+    $("gtY").value = n.y.toFixed(1);
+    $("gtZ").value = n.z.toFixed(1);
+    if (gotoCalc()) toast("Target moved to the nearest reachable point", "ok");
+  });
+
+  $("btnFKFromCurrent").onclick = () => {
+    currentDegs().forEach((d, i) => ($("fkA" + i).value = d));
+    calcFKLocal();
+  };
+
+  /* event feed */
+  $("btnClearConsole").onclick = () => { $("consoleBox").innerHTML = ""; S.consoleLines = 0; };
+  $("btnExportLog").onclick = () => {
+    const text = Array.from($("consoleBox").children).map((d) => d.innerText).join("\n");
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "axis3-log-" + new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") + ".txt";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  /* motors */
+  FW.AXES.forEach((ax, i) => {
+    bindClick("mEn" + i, () => send(Cmd.enableAxis(i + 1)));
+    bindClick("mDis" + i, () => send(Cmd.disableAxis(i + 1)));
+  });
+
+  /* ============================================================
+   * Memory & Teach — these buttons existed in the HTML and their
+   * firmware replies were already parsed, but they were never wired
+   * to anything, so clicking them did nothing at all.
+   * ============================================================ */
+  bindClick("btnListPos", () => send(Cmd.listPos()));
+
+  /* --- Program sequencer --- */
+  bindClick("btnSeqAdd", () => addCurrentPoseToSeq());
+  bindClick("btnSeqPlay", () => seqPlay());
+  bindClick("btnSeqStop", () => { seqStop(); renderSeqList(); toast("Program stopped", "info"); });
+  bindClick("btnSeqClear", async () => {
+    if (!S.seq.items.length) { toast("Program is already empty", "info"); return; }
+    const n = S.seq.items.length;
+    if (await confirmModal("Clear program", `Delete all ${n} step(s)?`)) {
+      seqStop();
+      S.seq.items = [];
+      renderSeqList();
+      toast("Program cleared", "ok");
+    }
+  });
+  bindClick("btnSeqExport", () => seqExport());
+  bindClick("btnSeqImport", () => { const f = $("seqFile"); if (f) f.click(); else toast("File picker missing", "warn"); });
+  bindChange("seqFile", (e) => seqImport(e.target));
+
+  /* --- Teach & playback --- */
+  bindClick("btnTeachStart", () => { send(Cmd.teachStart()); S.teachLocal = []; renderTeachTimeline(); });
+  bindClick("btnTeachStep", () => send(Cmd.teachStep()));
+  bindClick("btnTeachStop", () => send(Cmd.teachStop()));
+  bindClick("btnTeachCount", () => send(Cmd.teachCount()));
+  bindClick("btnPlay", () => send(Cmd.play()));
+  bindClick("btnPlayStop", () => send(Cmd.playStop()));
+
+  /* ============================================================
+   * Scheduler & Power
+   * ============================================================ */
+  bindChange("timAxis", () => {
+    /* convenient default: the angle this joint is currently commanded to */
+    const ax = parseInt($("timAxis").value, 10);
+    const deg = $("timDeg");
+    if (ax >= 1 && ax <= 5 && deg) deg.value = currentDegs()[ax - 1];
+  });
+  bindClick("btnTimerSet", () => {
+    const ms = parseInt($("timMs").value, 10);
+    const ax = parseInt($("timAxis").value, 10);      /* 1..4 — firmware is 1-based */
+    const degEl = $("timDeg");
+    const deg = degEl ? (parseFloat(degEl.value) || 0) : currentDegs()[ax - 1];
+    if (!(ms >= 100)) { toast("Delay must be at least 100 ms", "warn"); return; }
+    if (!(ax >= 1 && ax <= FW.AXES.length)) { toast("Pick an axis first", "warn"); return; }
+    const lim = FW.AXES[ax - 1];
+    if (deg < lim.min || deg > lim.max) {
+      toast(`J${ax} target ${deg}° out of range (${lim.min}..${lim.max}°)`, "err");
+      return;
+    }
+    /* all THREE arguments are required: with only "timer <ms> <axis>" the
+       firmware defaults the target to 0 deg and drives the joint to zero. */
+    send(Cmd.timer(ms, ax, deg));
+  });
+  bindClick("btnTimersCount", () => send(Cmd.timers()));
+  bindClick("btnClearTimers", () => send(Cmd.clearTimers()));
+  bindClick("btnSleep", () => send(Cmd.sleep()));
+  bindClick("btnWake", () => send(Cmd.wake()));
+
+  /* --- on-board logger --- */
+  bindClick("btnLogOn", () => send(Cmd.logOn()));
+  bindClick("btnLogOff", () => send(Cmd.logOff()));
+  bindClick("btnLogShow", () => send(Cmd.logShow()));
+  bindClick("btnLogClear", () => send(Cmd.logClear()));
+}
+
+/* ============================================================
+ * Main loop & init
+ * ============================================================ */
+let _lastT = performance.now();
+function mainLoop(t) {
+  const dt = Math.min(100, t - _lastT);
+  _lastT = t;
+  if (S.sim) S.sim.tick();
+  requestAnimationFrame(mainLoop);
+}
+
+function init() {
+  if (window.__armPanelInit) return;
+  window.__armPanelInit = true;
+  buildAxisCards();
+  gotoInit();
+  buildJoints();
+  buildMoveAll();
+  buildFkInputs();
+  buildSlots();
+  buildDemoPoses();
+  buildTimerAxis();
+  buildChips();
+  buildMotors();
+  buildHelp();
+  initTabs();
+  bindActions();
+  renderStats();
+  renderEnergy();
+  renderSlots();
+  renderTimersLocal();
+  renderSeqList();
+  FW.AXES.forEach((_, i) => renderAxisCard(i));
+
+  const inElectron = !!(window.electronAPI && window.electronAPI.isElectron);
+  if (!SerialLink.supported) {
+    $("serialHint").textContent = IpcSerialLink.supported
+      ? "Web Serial missing — the Connection card uses the system serial driver instead."
+      : (inElectron ? "Serial support missing in this build."
+                    : "This browser has no Web Serial. Use the simulator, or Chrome/Edge.");
+    /* btnConnect stays enabled — it dials the port picked in hdrPort */
+  } else {
+    $("serialHint").textContent = inElectron
+      ? "Pick the port in the Connection card (sidebar), or click “Connect Arduino”."
+      : "Pick the port in the Connection card — the browser chooser opens.";
+  }
+
+  $("appVersion").textContent = (window.electronAPI && window.electronAPI.appVersion) || "web";
+
+  /* ---------- Connection card wiring ---------- */
+  /* FIX: این بایندها در جابه‌جایی کارت کنسول به سایدبار گم شده بودند —
+     Enter/Send دوباره کار می‌کند (+ تاریخچه با ↑/↓) */
+  $("btnSend").onclick = sendFromInput;
+  $("cmdInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); sendFromInput(); }
+    else if (e.key === "ArrowUp") {
+      if (!S.history.length) return;
+      e.preventDefault();
+      if (S.histIdx > 0) S.histIdx--;
+      $("cmdInput").value = S.history[S.histIdx] || "";
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (S.histIdx < S.history.length - 1) { S.histIdx++; $("cmdInput").value = S.history[S.histIdx]; }
+      else { S.histIdx = S.history.length; $("cmdInput").value = ""; }
+    }
+  });
+
+  /* ---- v1.0.34: console = real window (move by header, resize W+H by corner, persisted) ---- */
+  {
+    const sb = document.querySelector(".sidebar");
+    const layout = document.querySelector(".layout");
+    const head = sb ? sb.querySelector(".card h3") : null;
+    const grip = $("winGrip");
+    const btnF = $("btnFloatConsole");
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const save = () => {
+      const f = sb.classList.contains("float-win");
+      /* while floating, the inline styles are the source of truth (exact) */
+      const g = f ? {
+        x: parseInt(sb.style.left, 10) || 0,
+        y: parseInt(sb.style.top, 10) || 0,
+        w: parseInt(sb.style.width, 10) || 0,
+        h: parseInt(sb.style.height, 10) || 0,
+      } : (r => ({ x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }))(sb.getBoundingClientRect());
+      Store.set("win_console", JSON.stringify({ f: f ? 1 : 0, x: g.x, y: g.y, w: g.w, h: g.h }));
+    };
+    const load = () => { try { return JSON.parse(Store.get("win_console", "{}") || "{}"); } catch (e) { return {}; } };
+    const setFloat = (on, geom) => {
+      sb.classList.toggle("float-win", on);
+      layout.classList.toggle("float-mode", on);
+      if (btnF) btnF.classList.toggle("on", on);
+      if (on) {
+        const g = geom || load();
+        const W = g.w || clamp(Math.round(window.innerWidth * 0.36), 420, 980);
+        const H = g.h || Math.round(window.innerHeight * 0.82);
+        const X = (g.x === undefined || g.x === null) ? Math.max(8, window.innerWidth - W - 18) : g.x;
+        const Y = (g.y === undefined || g.y === null) ? 96 : g.y;
+        sb.style.width = W + "px";
+        sb.style.height = H + "px";
+        sb.style.left = clamp(X, 4, Math.max(4, window.innerWidth - W - 4)) + "px";
+        sb.style.top = clamp(Y, 4, Math.max(4, window.innerHeight - H - 4)) + "px";
+        if (btnF) btnF.textContent = "\u2921 Dock";
+      } else {
+        sb.style.cssText = "";
+        if (btnF) btnF.textContent = "\u2922 Free";
+      }
+      save();
+    };
+    const g0 = load();
+    if (g0 && g0.f === 1) setFloat(true, g0);
+    if (btnF) btnF.onclick = () => setFloat(!sb.classList.contains("float-win"));
+    if (head) {
+      head.addEventListener("dblclick", () => { if (sb.classList.contains("float-win")) setFloat(false); });
+      let drag = null;
+      head.addEventListener("pointerdown", (e) => {
+        if (!sb.classList.contains("float-win") || (e.target.closest && e.target.closest("button"))) return;
+        const r = sb.getBoundingClientRect();
+        drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+        document.body.classList.add("win-dragging");
+        try { head.setPointerCapture(e.pointerId); } catch (er) {}
+        e.preventDefault();
+      });
+      head.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const W = sb.offsetWidth, H = sb.offsetHeight;
+        sb.style.left = clamp(e.clientX - drag.dx, 4, Math.max(4, window.innerWidth - W - 4)) + "px";
+        sb.style.top = clamp(e.clientY - drag.dy, 4, Math.max(4, window.innerHeight - H - 4)) + "px";
+      });
+      const endD = () => { if (drag) { drag = null; document.body.classList.remove("win-dragging"); save(); } };
+      head.addEventListener("pointerup", endD);
+      head.addEventListener("pointercancel", endD);
+    }
+    if (grip) {
+      let rz = null;
+      grip.addEventListener("pointerdown", (e) => {
+        if (!sb.classList.contains("float-win")) return;
+        rz = { x: e.clientX, y: e.clientY, w: sb.offsetWidth, h: sb.offsetHeight };
+        document.body.classList.add("win-resizing");
+        try { grip.setPointerCapture(e.pointerId); } catch (er) {}
+        e.preventDefault();
+      });
+      grip.addEventListener("pointermove", (e) => {
+        if (!rz) return;
+        sb.style.width = clamp(rz.w + (e.clientX - rz.x), 360, Math.max(360, window.innerWidth - 8)) + "px";
+        sb.style.height = clamp(rz.h + (e.clientY - rz.y), 260, Math.max(260, window.innerHeight - 8)) + "px";
+      });
+      const endR = () => { if (rz) { rz = null; document.body.classList.remove("win-resizing"); save(); } };
+      grip.addEventListener("pointerup", endR);
+      grip.addEventListener("pointercancel", endR);
+    }
+  }
+
+  /* ---- v1.0.33: splitter — drag to resize console; neighbour reflows ---- */
+  {
+    const split = $("colSplit");
+    const root = document.documentElement;
+    const clampW = (w) => Math.max(420, Math.min(980, w));
+    const saved = parseInt(Store.get("side_w", "0"), 10);
+    if (saved >= 420 && saved <= 980) root.style.setProperty("--sideW", saved + "px");
+    let drag = null;
+    split.addEventListener("pointerdown", (e) => {
+      const cur = root.style.getPropertyValue("--sideW") || getComputedStyle(root).getPropertyValue("--sideW") || "600px";
+      drag = { x: e.clientX, w: parseFloat(cur) || 600 };
+      split.classList.add("dragging");
+      document.body.classList.add("col-dragging");
+      try { split.setPointerCapture(e.pointerId); } catch (er) {}
+      e.preventDefault();
+    });
+    split.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const w = clampW(drag.w + (drag.x - e.clientX)); /* sidebar is on the right */
+      root.style.setProperty("--sideW", w + "px");
+    });
+    const endDrag = () => {
+      if (!drag) return;
+      drag = null;
+      split.classList.remove("dragging");
+      document.body.classList.remove("col-dragging");
+      const w = parseInt(root.style.getPropertyValue("--sideW"), 10) || 0;
+      if (w) Store.set("side_w", String(w));
+    };
+    split.addEventListener("pointerup", endDrag);
+    split.addEventListener("pointercancel", endDrag);
+  }
+
+  $("btnAck").onclick = () => {
+    if (S.mode === "off") { toast("Connect to the Arduino (or start the simulator) first", "warn"); return; }
+    const on = !$("btnAck").classList.contains("on");
+    setAckUI(on); /* instant feedback — the board's reply re-syncs it */
+    if (on) toast("Board goes SILENT — no serial output at all (telemetry pauses too)", "warn", 5000);
+    else toast("Confirmations ON — board replies >> ACK: <cmd> after each command", "ok", 5000);
+    send(on ? "ack on" : "ack off");
+  };
+  $("hdrScan").onclick = async () => { S._sysPorts = null; await renderConnCard();
+    addConsole("sys", "[SYS] port scan: " + Math.max(0, ($("hdrPort") ? $("hdrPort").length : 1) - 1) + " device(s)"); };
+  $("chkAutoPort").onchange = () => Store.set("auto_port", $("chkAutoPort").checked ? "1" : "0");
+  if (window.electronAPI && window.electronAPI.onPortAdded) {
+    window.electronAPI.onPortAdded(() => {
+      if (S.mode === "off" && !S._scanActive) $("portHint").textContent = "New device detected — click Scan Ports.";
+    });
+  }
+  renderConnCard();
+
+  /* auto-connect the remembered granted port on start */
+  if (Store.get("auto_port", "0") === "1" && Store.get("last_port", "")) {
+    setTimeout(async () => {
+      if (S.mode !== "off" || !SerialLink.supported) return;
+      try {
+        const ports = await navigator.serial.getPorts();
+        const hit = ports.find((p) => portKeyFromInfo(SerialLink._safeInfo(p)) === Store.get("last_port", ""));
+        if (hit) {
+          const label = portLabelFor(SerialLink._safeInfo(hit));
+          addConsole("sys", "[SYS] auto-connecting last port…");
+          connectDirect(hit, label);
+        }
+      } catch (e) {}
+    }, 900);
+  }
+
+  /* auto-start the simulator for an instant experience */
+  if (Store.get("prefer_hw", "0") !== "1") {
+    setTimeout(() => { if (S.mode === "off") startSim(); }, 600);
+  } else {
+    addConsole("sys", "[SYS] Ready. Connect to the Arduino or start the simulator.");
+  }
+
+  addConsole("sys", "[SYS] AXIS-3 Robot Control loaded — Esc = E-STOP, Ctrl+K = console");
+  setInterval(updateLinkStats, 1000);
+  requestAnimationFrame(mainLoop);
+}
+
+document.addEventListener("DOMContentLoaded", init);

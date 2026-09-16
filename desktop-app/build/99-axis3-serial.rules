@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Draxx143 — AXIS-3 Robot Arm
+# https://github.com/Draxx143/arm-3-axis
+#
+# چرا این فایل وجود دارد
+# ---------------------
+# دو دیمونِ لینوکس به محضِ enumerate شدنِ هر دستگاهِ سریالِ USB آن را می‌قاپند:
+#
+#   ModemManager  هر tty تازه را «مودمِ احتمالی» فرض می‌کند، با دستورِ AT
+#                 کاوشش می‌کند و DTR/RTS را تکان می‌دهد. تکانِ DTR یعنی
+#                 **ریستِ آردوینو** (خطِ RESET با جفت ترانزیستور به DTR/RTS
+#                 وصل است) و همه‌ی بایت‌هایی که برد چاپ می‌کند به‌جای اپ،
+#                 خوراکِ کاوشِ مودم‌منیجر می‌شود. علامتش دقیقاً همین است:
+#                 با زدنِ «اتصال» موتورها سفت می‌شوند (برد ریست شده)، ولی
+#                 RX صفر می‌ماند و هیچ دستوری جواب نمی‌گیرد.
+#
+#   brltty        قاعده‌ی udev خودش را برای چیپِ CH340 (1a86:7523) دارد چون
+#                 بعضی نمایشگرهای بریل همان چیپ را دارند؛ اوبونتو ۲۰.۰۴ به
+#                 بعد، بردِ آردوینو را «نمایشگرِ بریل» تشخیص می‌دهد و
+#                 دستگاه را busy می‌کند (Launchpad #1958224).
+#
+# ID_MM_DEVICE_IGNORE / ID_MM_CANDIDATE به ModemManager می‌گوید دست نزند.
+# SYMLINK یک نامِ **ثابت** می‌سازد (/dev/axis3) که با افتِ USB و
+# شماره‌گذاریِ دوباره‌ی کرنل (ttyUSB0 → ttyUSB1) عوض نمی‌شود، پس اپ همیشه
+# همان برد را باز می‌کند.
+#
+# نصب:  sudo cp 99-axis3-serial.rules /etc/udev/rules.d/
+#       sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=tty
+#       (یک بار کابل را بکش و دوباره بزن)
+
+# ---- CH340 / CH341 (بردِ این پروژه: idVendor=1a86 idProduct=7523) ----
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7522", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+
+# ---- Arduino Mega 2560 R3 / Uno R3 (16u2) و کلون‌ها ----
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0010", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0042", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2a03", ATTRS{idProduct}=="0042", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+
+# ---- CP210x / FTDI / PL2303 / ESP32 native USB ----
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660", SYMLINK+="axis3"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="067b", ATTRS{idProduct}=="2303", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660"
+
+# ---- بردهای USB بومی (Leonardo/Micro/ESP32-S3) روی ttyACM ----
+SUBSYSTEM=="tty", KERNEL=="ttyACM[0-9]*", ATTRS{idVendor}=="?*", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_CANDIDATE}="0", GROUP="dialout", MODE="0660"

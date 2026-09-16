@@ -1,0 +1,714 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Draxx143 — AXIS-3 Robot Arm
+// https://github.com/Draxx143/arm-3-axis
+#include "MotorController.h"
+#include <Arduino.h>
+
+// Global instance for timer interrupt
+MotorController* globalController = nullptr;
+
+ISR(TIMER1_COMPA_vect) {
+    if (globalController) {
+        globalController->update();
+    }
+}
+
+// آفست نقطه‌ی صفر هر جوینت بعد از هومینگ (درجه) — از Config.h
+static const float ZERO_OFFSET_DEG[NUM_AXES] = HOMING_ZERO_OFFSET_DEG;
+
+MotorController::MotorController() {
+    _allHomed = false;
+    _homingInProgress = false;
+    _currentHomingAxis = 0;
+    _zeroOffsetAxis = -1;
+    _singleHomingAxis = NUM_AXES;
+    _estopActive = false;
+    _estopDiv = 0;
+    _idleDiv = 0;
+    _anyActive = false;
+    _estopReg = nullptr;
+    _estopMask = 0;
+
+    // Define homing order
+    uint8_t order[] = HOMING_ORDER;
+    for (int i = 0; i < NUM_AXES; i++) {
+        _homingOrder[i] = order[i];
+    }
+}
+
+MotorController::~MotorController() {
+    for (int i = 0; i < NUM_AXES; i++) {
+        delete _axes[i];
+    }
+}
+
+void MotorController::init() {
+    _axes[0] = new Axis(
+        AXIS_X_STEP_PIN, AXIS_X_DIR_PIN, AXIS_X_ENABLE_PIN,
+        AXIS_X_ENDSTOP_PIN, AXIS_X_INVERT_DIR,
+        AXIS_X_STEPS_PER_REV, AXIS_X_MICROSTEP, AXIS_X_GEAR_RATIO,
+        AXIS_X_MAX_SPEED, AXIS_X_ACCELERATION, AXIS_X_BACKOFF,
+        AXIS_X_SOFT_MIN, AXIS_X_SOFT_MAX, AXIS_X_HOMING_SPEED
+    );
+
+    _axes[1] = new Axis(
+        AXIS_Y_STEP_PIN, AXIS_Y_DIR_PIN, AXIS_Y_ENABLE_PIN,
+        AXIS_Y_ENDSTOP_PIN, AXIS_Y_INVERT_DIR,
+        AXIS_Y_STEPS_PER_REV, AXIS_Y_MICROSTEP, AXIS_Y_GEAR_RATIO,
+        AXIS_Y_MAX_SPEED, AXIS_Y_ACCELERATION, AXIS_Y_BACKOFF,
+        AXIS_Y_SOFT_MIN, AXIS_Y_SOFT_MAX, AXIS_Y_HOMING_SPEED
+    );
+
+    // جوینت ۳ (آرنج): دو استپر روبروی هم — موتور دوم (Z2) همان STEP را
+    // می‌گیرد و DIRش آینه است تا هم‌جهت بچرخد
+    _axes[2] = new Axis(
+        AXIS_Z_STEP_PIN, AXIS_Z_DIR_PIN, AXIS_Z_ENABLE_PIN,
+        AXIS_Z_ENDSTOP_PIN, AXIS_Z_INVERT_DIR,
+        AXIS_Z_STEPS_PER_REV, AXIS_Z_MICROSTEP, AXIS_Z_GEAR_RATIO,
+        AXIS_Z_MAX_SPEED, AXIS_Z_ACCELERATION, AXIS_Z_BACKOFF,
+        AXIS_Z_SOFT_MIN, AXIS_Z_SOFT_MAX, AXIS_Z_HOMING_SPEED,
+        AXIS_Z2_STEP_PIN, AXIS_Z2_DIR_PIN, AXIS_Z2_ENABLE_PIN,
+        AXIS_Z2_MIRROR_DIR
+    );
+
+    // جوینت ۴: گریپر
+    _axes[3] = new Axis(
+        AXIS_G_STEP_PIN, AXIS_G_DIR_PIN, AXIS_G_ENABLE_PIN,
+        AXIS_G_ENDSTOP_PIN, AXIS_G_INVERT_DIR,
+        AXIS_G_STEPS_PER_REV, AXIS_G_MICROSTEP, AXIS_G_GEAR_RATIO,
+        AXIS_G_MAX_SPEED, AXIS_G_ACCELERATION, AXIS_G_BACKOFF,
+        AXIS_G_SOFT_MIN, AXIS_G_SOFT_MAX, AXIS_G_HOMING_SPEED
+    );
+
+    for (int i = 0; i < NUM_AXES; i++) {
+        _axes[i]->init();
+    }
+
+    #ifdef EMERGENCY_STOP_PIN
+    pinMode(EMERGENCY_STOP_PIN, INPUT_PULLUP);
+    _estopReg  = portInputRegister(digitalPinToPort(EMERGENCY_STOP_PIN));
+    _estopMask = digitalPinToBitMask(EMERGENCY_STOP_PIN);
+    #endif
+
+    enableAllMotors();
+
+    globalController = this;
+}
+
+// ============================================
+// ISR — هر STEP_TICK_FREQ بار در ثانیه
+// ============================================
+// نکته‌ی مهم: قبلاً این حلقه 1kHz بود و در هر تیک فقط یک استپ صادر می‌شد،
+// یعنی سقف سرعت کل دستگاه روی 1000 steps/s قفل بود و بالا بردن
+// MAX_SPEED در Config.h هیچ اثری نداشت.
+void MotorController::update() {
+    // ----------------------------------------------------------
+    // مسیر سبک: وقتی هیچ محوری فعال نیست، فقط هر 1ms یک‌بار بررسی
+    // می‌کنیم. این‌طور تایمر 20kHz در حالت بی‌کاری CPU را نمی‌خورد.
+    // (حرکت نهایتاً با 1ms تأخیر شروع می‌شود که محسوس نیست)
+    // ----------------------------------------------------------
+    if (!_anyActive) {
+        if (++_idleDiv < TICKS_PER_CONTROL) return;
+        _idleDiv = 0;
+
+        #ifdef EMERGENCY_STOP_PIN
+        if (_estopReg && ((*_estopReg & _estopMask) == 0)) {
+            emergencyStop();
+            return;
+        }
+        #endif
+
+        for (uint8_t i = 0; i < NUM_AXES; i++) {
+            if (_axes[i]->isActive()) { _anyActive = true; break; }
+        }
+        if (!_anyActive) return;
+    }
+
+    #ifdef EMERGENCY_STOP_PIN
+    // بررسی استپ اضطراری با نرخ CONTROL_LOOP_FREQ (نه هر تیک) تا ISR سبک بماند
+    if (++_estopDiv >= TICKS_PER_CONTROL) {
+        _estopDiv = 0;
+        if (_estopReg && ((*_estopReg & _estopMask) == 0)) {
+            emergencyStop();
+        }
+    }
+    #endif
+
+    Axis* pulsed[NUM_AXES];
+    uint8_t n = 0;
+    bool any = false;
+
+    for (uint8_t i = 0; i < NUM_AXES; i++) {
+        Axis* a = _axes[i];
+        if (a->tick()) {
+            pulsed[n++] = a;
+            any = true;
+        } else if (a->isActive()) {
+            any = true;
+        }
+    }
+    _anyActive = any;
+
+    if (n) {
+        // یک پهنای پالس مشترک برای همه‌ی محورها (به‌جای delay برای هر محور)
+        delayMicroseconds(STEP_PULSE_US);
+        while (n) {
+            pulsed[--n]->endPulse();
+        }
+    }
+}
+
+Axis* MotorController::getAxis(uint8_t index) {
+    if (index < NUM_AXES) {
+        return _axes[index];
+    }
+    return nullptr;
+}
+
+void MotorController::enableAllMotors() {
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->enableMotor();
+}
+
+void MotorController::disableAllMotors() {
+    // اول همه را متوقف کن: اگر موتوری وسط حرکت غیرفعال شود، ISR همچنان
+    // استپ می‌شمارد ولی موتور نمی‌چرخد → موقعیت ثبت‌شده غلط می‌شود
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->stop();
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->disableMotor();
+    _homingInProgress = false;
+}
+
+// فعال‌سازی یک محور
+void MotorController::enableAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return;
+    _axes[axis]->clearHomingFault();
+    _axes[axis]->enableMotor();
+    Serial.print(F(">> Axis "));
+    Serial.print(axis + 1);
+    Serial.println(F(" enabled"));
+}
+
+// غیرفعال‌سازی یک محور
+void MotorController::disableAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return;
+    _axes[axis]->stop();          // جلوگیری از شمارش استپ بدون حرکت واقعی
+    _axes[axis]->disableMotor();
+    if (_homingInProgress) {
+        _homingInProgress = false;
+        _currentHomingAxis = 0;
+    }
+    Serial.print(F(">> Axis "));
+    Serial.print(axis + 1);
+    Serial.println(F(" disabled"));
+}
+
+void MotorController::emergencyStop() {
+    _estopActive = true;
+    for (int i = 0; i < NUM_AXES; i++) {
+        _axes[i]->setEmergencyStop(true);
+    }
+    _homingInProgress = false;
+}
+
+void MotorController::clearEmergencyStop() {
+    _estopActive = false;
+    for (int i = 0; i < NUM_AXES; i++) {
+        _axes[i]->setEmergencyStop(false);
+    }
+}
+
+// ============================================
+// Homing
+// ============================================
+bool MotorController::startHoming() {
+    if (_homingInProgress) return false;
+
+    enableAllMotors();
+
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->clearHomingFault();
+
+    // هومینگ کامل = همه‌ی محورها از نو مرجع می‌گیرند. پرچم «هوم‌شده» همه
+    // همین الان پاک می‌شود تا وضعیت (status) در میانه‌ی توالی درست بگوید
+    // کدام جوینت هنوز مرجع ندارد.
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->clearHomed();
+
+    _currentHomingAxis = 0;
+    _allHomed = false;
+
+    bool started = _axes[_homingOrder[0]]->startHoming();
+    _homingInProgress = started;
+
+    if (started) {
+        Serial.print(F(">> [1/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
+        Serial.print(_homingOrder[0] + 1);
+        Serial.println(F(" homing started"));
+    } else {
+        Serial.print(F("!! Joint "));
+        Serial.print(_homingOrder[0] + 1);
+        Serial.println(F(" refused to start homing (emergency stop / already homing)"));
+    }
+    return started;
+}
+
+bool MotorController::startHomingAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return false;
+    if (_homingInProgress) return false;
+
+    enableAllMotors();
+    _axes[axis]->clearHomingFault();
+
+    _currentHomingAxis = 255;  // نشانگر حالت تک‌محوری
+    _singleHomingAxis = axis;  // تا فاز آفست صفر بداند روی کدام محور کار کند
+    _allHomed = false;
+
+    bool started = _axes[axis]->startHoming();
+    _homingInProgress = started;
+
+    if (!started) {
+        Serial.print(F("!! Axis "));
+        Serial.print(axis + 1);
+        Serial.println(F(" refused to start homing"));
+    }
+    return started;
+}
+
+// گزارش وضعیت endstop ها.
+// آزادسازی واقعی endstop حالا داخل ماشین حالت هومینگ و به‌صورت
+// غیرمسدودکننده انجام می‌شه (قبلاً اینجا با delayMicroseconds تا 5 ثانیه
+// کل دستگاه قفل می‌شد).
+void MotorController::backoffAllFromEndstops() {
+    Serial.println(F(">> Endstop states:"));
+    for (int i = 0; i < NUM_AXES; i++) {
+        Serial.print(F("  Axis "));
+        Serial.print(i + 1);
+        if (_axes[i]->endstopPressed()) {
+            Serial.println(F(": ACTIVE (homing will release it automatically)"));
+        } else {
+            Serial.println(F(": free"));
+        }
+    }
+}
+
+// متن دلیل شکست هومینگ (از کد خطایی که Axis در ISR ست می‌کند)
+static const char* homingFaultText(uint8_t code) {
+    switch (code) {
+        case HOME_FAULT_ESTOP:           return "emergency stop active";
+        case HOME_FAULT_NOT_FOUND:       return "endstop not found within search limit (check wiring / switch)";
+        case HOME_FAULT_BACKOFF_STUCK:   return "endstop stuck - never released, even during backoff";
+        case HOME_FAULT_BACKOFF_PRESSED: return "endstop still pressed after backoff";
+        default:                         return "unknown";
+    }
+}
+
+void MotorController::printHomingOrder() const {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (i) Serial.print(F(" -> "));
+        Serial.print(F("J"));
+        Serial.print(_homingOrder[i] + 1);
+    }
+    Serial.println();
+}
+
+bool MotorController::setHomingOrder(const uint8_t* order, uint8_t count) {
+    if (_homingInProgress) {
+        Serial.println(F("!! Cannot change homing order while homing is running"));
+        return false;
+    }
+    if (order == nullptr || count != NUM_AXES) {
+        Serial.print(F("!! homeorder needs exactly "));
+        Serial.print(NUM_AXES);
+        Serial.println(F(" joint numbers, e.g. homeorder 1 2 3 4"));
+        return false;
+    }
+    // باید جایگشت کاملی از 0..NUM_AXES-1 باشد (بدون تکرار و خارج از محدوده)
+    bool seen[NUM_AXES];
+    for (int i = 0; i < NUM_AXES; i++) seen[i] = false;
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (order[i] >= NUM_AXES) {
+            Serial.print(F("!! homeorder: invalid joint "));
+            Serial.print(order[i] + 1);
+            Serial.println();
+            return false;
+        }
+        if (seen[order[i]]) {
+            Serial.print(F("!! homeorder: joint "));
+            Serial.print(order[i] + 1);
+            Serial.println(F(" listed more than once"));
+            return false;
+        }
+        seen[order[i]] = true;
+    }
+    for (int i = 0; i < NUM_AXES; i++) _homingOrder[i] = order[i];
+    Serial.print(F(">> Homing order is now: "));
+    printHomingOrder();
+    return true;
+}
+
+void MotorController::printHomingFailure(uint8_t axis) const {
+    Serial.print(F("!! Joint "));
+    Serial.print(axis + 1);
+    Serial.print(F(" HOMING FAILED: "));
+    Serial.println(homingFaultText(_axes[axis]->homingFaultCode()));
+}
+
+void MotorController::smartHoming() {
+    if (_homingInProgress) return;
+
+    enableAllMotors();
+    backoffAllFromEndstops();
+    Serial.print(F(">> Homing ALL joints in priority order: "));
+    printHomingOrder();
+    Serial.println(F(">> Strictly sequential: each joint finishes search + backoff"));
+    Serial.println(F(">> before the next one starts. Backoff is mandatory and the"));
+    Serial.println(F(">> endstop release is verified for every joint."));
+    startHoming();
+}
+
+void MotorController::smartHomingAxis(uint8_t axis) {
+    if (axis >= NUM_AXES) return;
+    if (_homingInProgress) return;
+
+    enableAllMotors();
+
+    Serial.print(F(">> Smart homing axis "));
+    Serial.print(axis + 1);
+    Serial.print(F(" at "));
+    Serial.print(_axes[axis]->getHomingSpeed());
+    Serial.println(F(" steps/s"));
+
+    if (_axes[axis]->endstopPressed()) {
+        Serial.println(F("   Endstop ACTIVE - will release it first"));
+    }
+
+    startHomingAxis(axis);
+}
+
+void MotorController::processHoming() {
+    if (!_homingInProgress) return;
+
+    // ---- حالت تک‌محوری ----
+    if (_currentHomingAxis == 255) {
+        for (int i = 0; i < NUM_AXES; i++) {
+            if (_axes[i]->isHoming()) return;   // هنوز در حال هوم شدن
+        }
+        // همان تک‌محور هم آفست نقطه‌ی صفرش را می‌گیرد (مثلاً home 4)
+        if (_singleHomingAxis < NUM_AXES &&
+            !_axes[_singleHomingAxis]->homingFailed() &&
+            _axes[_singleHomingAxis]->isHomed()) {
+            if (runZeroOffsetPhase(_singleHomingAxis)) return;
+        }
+        _homingInProgress = false;
+        _currentHomingAxis = 0;
+        _singleHomingAxis = NUM_AXES;
+
+        for (int i = 0; i < NUM_AXES; i++) {
+            if (_axes[i]->homingFailed()) {
+                printHomingFailure(i);
+                return;
+            }
+        }
+        Serial.println(F(">> Single axis homing complete - backoff verified!"));
+        return;
+    }
+
+    // ---- هومینگ ترتیبی همه‌ی محورها بر اساس اولویت ----
+    uint8_t currentAxis = _homingOrder[_currentHomingAxis];
+    Axis* ax = _axes[currentAxis];
+
+    // خطا -> کل توالی متوقف می‌شود (مرجع موقعیت قابل اعتماد نیست)
+    if (ax->homingFailed()) {
+        _homingInProgress = false;
+        printHomingFailure(currentAxis);
+        Serial.println(F("!! Homing sequence ABORTED - remaining joints were NOT homed"));
+        Serial.println(F("!! Fix the endstop, then send 'home' again"));
+        return;
+    }
+
+    // این جوینت کامل شد: جست‌وجو + بک‌آف + تأیید آزاد شدن endstop
+    if (!ax->isHoming() && ax->isHomed()) {
+        // اول آفست نقطه‌ی صفر (اگر در Config.h برای این جوینت هست): جلو
+        // می‌رود، می‌رسد، و همان‌جا صفر می‌شود. تا تمام نشده، جوینت بعدی
+        // شروع نمی‌شود (هومینگ همچنان کاملاً ترتیبی می‌ماند).
+        if (runZeroOffsetPhase(currentAxis)) return;
+
+        Serial.print(F(">> ["));
+        Serial.print(_currentHomingAxis + 1);
+        Serial.print(F("/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
+        Serial.print(currentAxis + 1);
+        if (ax->backoffDone()) {
+            Serial.println(F(" homed - backoff done, endstop released, position zeroed"));
+        } else {
+            Serial.println(F(" homed (WARNING: backoff not verified)"));
+        }
+
+        _currentHomingAxis++;
+
+        if (_currentHomingAxis >= NUM_AXES) {
+            _homingInProgress = false;
+            _allHomed = true;
+            Serial.println(F(">> ALL JOINTS HOMED in priority order - backoff done for every axis"));
+            return;
+        }
+
+        uint8_t next = _homingOrder[_currentHomingAxis];
+        Serial.print(F(">> ["));
+        Serial.print(_currentHomingAxis + 1);
+        Serial.print(F("/"));
+        Serial.print(NUM_AXES);
+        Serial.print(F("] Joint "));
+        Serial.print(next + 1);
+        Serial.println(F(" homing started"));
+        _axes[next]->startHoming();
+    }
+}
+
+bool MotorController::isHoming() const {
+    return _homingInProgress;
+}
+
+bool MotorController::homingFailed() const {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->homingFailed()) return true;
+    }
+    return false;
+}
+
+void MotorController::abortHoming() {
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->stop();
+    _homingInProgress = false;
+    _currentHomingAxis = 0;
+    _zeroOffsetAxis = -1;
+    _singleHomingAxis = NUM_AXES;
+}
+
+float MotorController::zeroOffsetDeg(uint8_t axis) const {
+    return (axis < NUM_AXES) ? ZERO_OFFSET_DEG[axis] : 0.0f;
+}
+
+int32_t MotorController::zeroOffsetSteps(uint8_t axis) const {
+    if (axis >= NUM_AXES) return 0;
+    float deg = ZERO_OFFSET_DEG[axis];
+    if (deg == 0.0f) return 0;
+    float v = deg * _axes[axis]->getStepsPerDegree();
+    return (int32_t)(v >= 0.0f ? v + 0.5f : v - 0.5f);
+}
+
+// بعد از تمام‌شدن هومِ یک جوینت اجرا می‌شود. اگر در Config.h برای آن
+// جوینت آفست صفر تعریف شده باشد، اول به اندازه‌ی آفست جلو می‌رود و بعد از
+// رسیدن، همان نقطه را صفر می‌کند.
+//   return true  -> هنوز درگیر این فاز است (processHoming باید صبر کند)
+//   return false -> آفستی نبود یا فاز تمام شد
+bool MotorController::runZeroOffsetPhase(uint8_t axis) {
+    if (axis >= NUM_AXES) return false;
+    Axis* ax = _axes[axis];
+    if (!ax) return false;
+
+    if (_zeroOffsetAxis < 0) {
+        int32_t off = zeroOffsetSteps(axis);
+        if (off == 0) return false;                 // این جوینت آفست ندارد
+        _zeroOffsetAxis = (int8_t)axis;
+        Serial.print(F(">> Joint "));
+        Serial.print(axis + 1);
+        Serial.print(F(" zero-offset: moving "));
+        Serial.print(ZERO_OFFSET_DEG[axis], 1);
+        Serial.println(F("° forward, that spot becomes the new 0 ..."));
+        ax->moveRelative(off);
+        return true;
+    }
+
+    if (_zeroOffsetAxis != (int8_t)axis) return false;   // فازِ محور دیگری است
+    if (ax->isMoving()) return true;                     // هنوز دارد می‌رود
+
+    ax->setPosition(0);                                  // ← صفرِ جدید اینجاست
+    _zeroOffsetAxis = -1;
+    Serial.print(F(">> Joint "));
+    Serial.print(axis + 1);
+    Serial.print(F(" zero re-set "));
+    Serial.print(ZERO_OFFSET_DEG[axis], 1);
+    Serial.println(F("° ahead of the endstop (position = 0)"));
+    return false;
+}
+
+bool MotorController::allHomed() const {
+    return _allHomed;
+}
+
+// ============================================
+// Move commands
+// ============================================
+void MotorController::moveTo(uint8_t axis, int32_t position) {
+    if (axis < NUM_AXES) _axes[axis]->moveTo(position);
+}
+
+void MotorController::moveRelative(uint8_t axis, int32_t delta) {
+    if (axis < NUM_AXES) _axes[axis]->moveRelative(delta);
+}
+
+void MotorController::moveAllAxes(const int32_t positions[]) {
+    if (isHoming()) {
+        Serial.println(F("!! moveAllAxes rejected: homing in progress"));
+        return;
+    }
+
+    // چک کردن soft limits قبل از حرکت
+    for (int i = 0; i < NUM_AXES; i++) {
+        int32_t softMin = _axes[i]->getSoftMin();
+        int32_t softMax = _axes[i]->getSoftMax();
+
+        if (positions[i] < softMin || positions[i] > softMax) {
+            Serial.print(F("!! moveAllAxes: Axis "));
+            Serial.print(i + 1);
+            Serial.print(F(" out of range: "));
+            Serial.print(positions[i]);
+            Serial.print(F(" (allowed: "));
+            Serial.print(softMin);
+            Serial.print(F(" to "));
+            Serial.print(softMax);
+            Serial.println(F("). Command REJECTED."));
+            return;   // هیچ حرکتی نکن
+        }
+    }
+
+    // حرکت همزمان همه‌ی محورها
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->isEnabled()) {
+            _axes[i]->moveTo(positions[i]);
+        }
+    }
+}
+
+void MotorController::moveAllAxesTimed(const int32_t positions[], uint32_t durationMs) {
+    if (isHoming()) {
+        Serial.println(F("!! moveAllAxesTimed rejected: homing in progress"));
+        return;
+    }
+
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (positions[i] < _axes[i]->getSoftMin() || positions[i] > _axes[i]->getSoftMax()) {
+            Serial.print(F("!! moveAllAxesTimed: Axis "));
+            Serial.print(i + 1);
+            Serial.print(F(" out of range: "));
+            Serial.println(positions[i]);
+            return;
+        }
+    }
+
+    // اول کوتاه‌ترین زمان ممکن را برای هر محور پیدا می‌کنیم تا همه‌ی محورها
+    // با یک زمان مشترک (و هم‌زمان) به مقصد برسند
+    uint32_t T = durationMs;
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (!_axes[i]->isEnabled()) continue;
+        uint32_t tmin = _axes[i]->minDurationMs(positions[i]);
+        if (tmin > T) T = tmin;
+    }
+    if (T > durationMs) {
+        Serial.print(F(">> Duration raised to "));
+        Serial.print(T);
+        Serial.println(F(" ms (limited by the slowest axis)"));
+    }
+
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->isEnabled()) {
+            _axes[i]->moveToTimed(positions[i], T);
+        }
+    }
+}
+
+void MotorController::streamAllAxes(const int32_t positions[]) {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->isEnabled()) {
+            _axes[i]->streamTo(positions[i]);
+        }
+    }
+}
+
+bool MotorController::isAnyMoving() const {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->isMoving()) return true;
+    }
+    return false;
+}
+
+bool MotorController::isAnyActive() const {
+    for (int i = 0; i < NUM_AXES; i++) {
+        if (_axes[i]->isActive()) return true;
+    }
+    return false;
+}
+
+// ============================================
+// Speed profile — حالا واقعاً روی محورها اعمال می‌شه
+// ============================================
+// (قبلاً SpeedProfileManager فقط ضریب‌ها را در حافظه نگه می‌داشت و هیچ‌وقت
+//  به موتورها نمی‌رسوند، برای همین دستور `profile fast` هیچ اثری نداشت.)
+void MotorController::setSpeedScale(float mult) {
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->setSpeedScale(mult);
+}
+
+void MotorController::setAccelScale(float mult) {
+    for (int i = 0; i < NUM_AXES; i++) _axes[i]->setAccelScale(mult);
+}
+
+float MotorController::getSpeedScale() const {
+    if (_axes[0] && _axes[0]->getBaseMaxSpeed() > 0) {
+        return (float)_axes[0]->getMaxSpeed() / (float)_axes[0]->getBaseMaxSpeed();
+    }
+    return 1.0f;
+}
+
+void MotorController::setAxisSpeed(uint8_t axis, uint32_t stepsPerSec) {
+    if (axis < NUM_AXES) _axes[axis]->setSpeed(stepsPerSec);
+}
+
+void MotorController::setAxisAcceleration(uint8_t axis, uint32_t stepsPerSec2) {
+    if (axis < NUM_AXES) _axes[axis]->setAcceleration(stepsPerSec2);
+}
+
+void MotorController::setAxisHomingSpeed(uint8_t axis, uint32_t stepsPerSec) {
+    if (axis < NUM_AXES) _axes[axis]->setHomingSpeed(stepsPerSec);
+}
+
+// ============================================
+// Status
+// ============================================
+void MotorController::getJointStates(float* positions, int32_t* rawPositions,
+                                     bool* moving, bool* homed, bool* endstopStates) {
+    for (int i = 0; i < NUM_AXES; i++) {
+        int32_t raw = _axes[i]->getCurrentPosition();
+        if (positions)      positions[i] = (float)raw;
+        if (rawPositions)   rawPositions[i] = raw;
+        if (moving)         moving[i] = _axes[i]->isMoving();
+        if (homed)          homed[i] = _axes[i]->isHomed();
+        if (endstopStates)  endstopStates[i] = _axes[i]->getEndstopState();
+    }
+}
+
+// ============================================
+// Timer — تایمر ۱ در مد CTC
+// ============================================
+void MotorController::startControlLoop() {
+    cli();
+    TCCR1A = 0;
+    TCCR1B = 0;
+    TCNT1  = 0;
+    OCR1A  = TIMER_OCR_VALUE;          // 99 → 20kHz با prescaler=8
+    TCCR1B |= (1 << WGM12);            // CTC mode
+    TCCR1B |= TIMER_OCR_BITS;          // prescaler = 8
+    TIMSK1 |= (1 << OCIE1A);
+    sei();
+
+    Serial.print(F(">> Step engine: "));
+    Serial.print((long)STEP_TICK_FREQ);
+    Serial.print(F(" Hz tick, OCR1A="));
+    Serial.print((int)TIMER_OCR_VALUE);
+    Serial.print(F(", pulse="));
+    Serial.print((int)STEP_PULSE_US);
+    Serial.println(F("us"));
+}
+
+void MotorController::stopControlLoop() {
+    TIMSK1 &= ~(1 << OCIE1A);
+}
