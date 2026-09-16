@@ -13,6 +13,45 @@ permissions:
   issues: write
 
 jobs:
+  build-win:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build Windows installers (.exe)
+        run: |
+          npm run dist:win 2>&1 | Tee-Object -FilePath build-win.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Report failure log
+        if: failure()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $log = "no log file"
+          if (Test-Path "build-win.log") { $log = (Get-Content "build-win.log" -Tail 120) -join "`n" }
+          Set-Content -Path ci.md -Value $log -Encoding utf8
+          gh issue create -R "$env:GITHUB_REPOSITORY" -t "AXIS-3 release win log - run $env:GITHUB_RUN_ID" -F ci.md | Out-Null
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-installers
+          path: desktop-app/dist/*.exe
+          retention-days: 30
+
   build-linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -44,10 +83,15 @@ jobs:
           retention-days: 30
 
   release:
-    needs: [build-linux]
+    needs: [build-win, build-linux]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: win-installers
+          path: out
+
       - uses: actions/download-artifact@v4
         with:
           name: linux-installers
@@ -59,9 +103,9 @@ jobs:
         run: |
           ls -la out
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="axis3-v1.0.0"; fi
-          NOTES="AXIS-3 Robot Control - Linux installers. Ubuntu/Debian: install the .deb (purge the old axis5 release first). Any distro: use the .AppImage."
+          NOTES="AXIS-3 Robot Control - installers. Windows: Setup/Portable exe - Ubuntu/Debian: .deb - Any Linux: .AppImage."
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$TAG" out/* -R "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" --title "AXIS-3 Robot Control $TAG (Linux)" --notes "$NOTES"
+            gh release create "$TAG" out/* -R "$GITHUB_REPOSITORY" --title "AXIS-3 Robot Control $TAG" --notes "$NOTES"
           fi
