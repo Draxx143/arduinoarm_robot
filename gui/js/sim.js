@@ -28,6 +28,7 @@ class SimFirmware {
     this.lastActivity = Date.now();
     this.grip = FW.GRIP.def;        /* v1.0.42: زاویه‌ی فعلی پنجه (درجه) */
     this.gripTarget = FW.GRIP.def;
+    this.gripVel = 0;               /* v1.0.43: سرعت فعلی پنجه (برای رمپ شتاب) */
     this.gripOn = true;
 
     this.slots = new Array(FW.MAX_POSITIONS).fill(null);
@@ -127,11 +128,31 @@ class SimFirmware {
       }
     }
 
-    /* v1.0.42: پنجه — حرکت خطی به‌سمت هدف با سرعت Config.h */
+    /* v1.0.43: پنجه — عین Gripper.cpp: سرعت جداگانه‌ی بستن (closeSpeed)
+       + رمپ شتاب ذوزنقه‌ای (accel). با پیش‌فرض‌ها همان حرکت خطی قبلی است. */
     if (this.gripOn && this.grip !== this.gripTarget) {
-      const gstep = FW.GRIP.speed * dt;
+      const G = FW.GRIP;
+      let vmax = G.speed;
+      if (G.closeSpeed > 0 && Math.abs(this.gripTarget - G.close) < Math.abs(this.grip - G.close)) vmax = G.closeSpeed;
       const gdiff = this.gripTarget - this.grip;
-      this.grip = (gstep >= Math.abs(gdiff)) ? this.gripTarget : this.grip + Math.sign(gdiff) * gstep;
+      const gdir = Math.sign(gdiff);
+      if (G.accel > 0) {
+        const vAllow = Math.sqrt(2 * G.accel * Math.abs(gdiff));
+        const want = gdir * Math.min(vmax, vAllow);
+        const maxDv = G.accel * dt;
+        this.gripVel += Math.max(-maxDv, Math.min(maxDv, want - this.gripVel));
+        this.grip += this.gripVel * dt;
+        if ((gdir > 0 && this.grip >= this.gripTarget) || (gdir < 0 && this.grip <= this.gripTarget)) {
+          this.grip = this.gripTarget;
+          this.gripVel = 0;
+        }
+      } else {
+        const gstep = vmax * dt;
+        this.grip = (gstep >= Math.abs(gdiff)) ? this.gripTarget : this.grip + gdir * gstep;
+        this.gripVel = (this.grip === this.gripTarget) ? 0 : gdir * vmax;
+      }
+    } else {
+      this.gripVel = 0;
     }
 
     /* هومینگ ترتیبی */

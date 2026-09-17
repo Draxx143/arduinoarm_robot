@@ -277,7 +277,7 @@ if "AXIS-5 Firmware v" in txt or "FW: v" in txt:
     print("      اپ را از ترمینال اجرا کن تا خطاهایش دیده شود:  axis5-robot-control")
 elif "System Status" in txt or ">> POS" in txt:
     print("  \033[32m✓ برد جواب می‌دهد\033[0m ولی نسخه را چاپ نکرد → فریم‌ورِ روی برد قدیمی است؛")
-    print("    firmware/RobotArm_Firmware/ را دوباره فلش کن (باید v1.0.42 باشد).")
+    print("    firmware/RobotArm_Firmware/ را دوباره فلش کن (باید v1.0.43 باشد).")
 elif len(txt.strip()) == 0:
     print("  \033[31m✗ پورت باز شد ولی برد هیچ چیزی نفرستاد.\033[0m")
     print("    به این ترتیب چک کن:")

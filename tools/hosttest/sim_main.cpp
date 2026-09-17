@@ -6,6 +6,10 @@
 //  تمرکز این فایل: اولویت هومینگ (J1 -> J5)، بک‌آف اجباری و تأیید
 //  آزاد شدن endstop، به‌علاوه‌ی صحت پروفایل سرعت/زمان‌بندی حرکت.
 // =====================================================================
+// اوررایدهای کالیبراسیون پنجه (فقط باینری sim) — پیش از هر هدر فریم‌ور.
+// (همان هدر با -include به کامپایل Gripper.cpp هم تزریق می‌شود؛ توضیح کامل
+// داخل خود grip_test_config.h است.)
+#include "grip_test_config.h"
 #include "Arduino.h"
 #include "MotorController.h"
 #include "Gripper.h"
@@ -652,60 +656,137 @@ int main() {
     header("تست پنجه: سرووی درجه‌ای روی پین ۱۹ (غیرمسدودکننده)");
     // ------------------------------------------------------------------
     {
+        // NOTE: این باینری با اوررایدهای کالیبراسیون بالای فایل کامپایل
+        // شده (INVERT/TRIM/DEADBAND/REFRESH/CLOSE_SPEED/ACCEL/IDLE/BOOT)
+        // تا همه‌ی دستگیره‌های تنظیم سرووی حلقه‌باز تست شوند.
         sim_micros = 0;
         Gripper gr;
         gr.begin();
         check(gr.isAttached(), "بعد از begin سروو متصل است");
         check(gr.getCurrentDegrees() == GRIP_DEFAULT_DEG, "شروع از GRIP_DEFAULT_DEG");
 
-        // نگاشت درجه→پالس (µs) — درایور تایمر ۵ همین را به ISR می‌دهد
-        check(Gripper::degreesToMicros(GRIP_MIN_DEG) == GRIP_MIN_US, "کران پایین درجه = GRIP_MIN_US");
-        check(Gripper::degreesToMicros(GRIP_MAX_DEG) == GRIP_MAX_US, "کران بالای درجه = GRIP_MAX_US");
+        // نگاشت درجه→پالس با INVERT=true: آینه‌ای شده
+        check(Gripper::degreesToMicros(GRIP_MIN_DEG) == GRIP_MAX_US, "معکوس: کران پایین درجه = GRIP_MAX_US");
+        check(Gripper::degreesToMicros(GRIP_MAX_DEG) == GRIP_MIN_US, "معکوس: کران بالای درجه = GRIP_MIN_US");
         check(Gripper::degreesToMicros(90.0f) == (GRIP_MIN_US + GRIP_MAX_US) / 2, "وسط بازه = وسط پالس (۱۵۰۰µs)");
-        check(Gripper::degreesToMicros(GRIP_MAX_DEG + 50.0f) == GRIP_MAX_US, "نگاشت هم به بازه کلمپ می‌شود");
+        check(Gripper::degreesToMicros(GRIP_MAX_DEG + 50.0f) == GRIP_MIN_US, "نگاشت معکوس هم به بازه کلمپ می‌شود");
 
-        // حرکت تدریجی و غیرمسدودکننده: بعد از ۱۰۰ms باید میانه‌ی راه باشد
-        gr.moveTo(GRIP_CLOSE_DEG);
-        check(gr.isMoving(), "بعد از moveTo وضعیت «در حال حرکت» است");
-        sim_micros += 100ULL * 1000ULL;
+        // تأخیر بوت: پالس ۱۵۰ms دیرتر شروع می‌شود
+        check(!gr.isPulseActive(), "بلافاصله بعد از begin هنوز پالسی نیست (BOOT_DELAY)");
         gr.update();
-        float mid = gr.getCurrentDegrees();
-        printf("   gripper: start=%.1f mid(100ms)=%.1f target=%.1f\n",
-               GRIP_DEFAULT_DEG, mid, GRIP_CLOSE_DEG);
-        check(mid > GRIP_DEFAULT_DEG && mid < GRIP_CLOSE_DEG,
-              "حرکت تدریجی است (نه جهش آنی به هدف)");
+        check(!gr.isPulseActive(), "در زمان صفر پالس هنوز شروع نشده");
+        sim_micros += 200ULL * 1000ULL;
+        gr.update();
+        check(gr.isPulseActive(), "بعد از BOOT_DELAY پالس شروع شد");
+        // پالس نقطه‌ی شروع: نگاشت ۲۰° (=۲۲۷۸µs) + تریم ۲۰ = ۲۲۹۸
+        printf("   gripper: pulse@20deg=%d (expect 2298 = map 2278 + trim 20)\n",
+               gr.getLastPulseUs());
+        check(gr.getLastPulseUs() == 2298, "تریم به پالس اضافه شد (۲۲۷۸+۲۰)");
+        // فریم ۱۰۰Hz: OCR5A باید ۱۹۹۹۹ باشد و وقفه‌ها مسلح
+        check(OCR5A == 19999, "فریم ۱۰۰Hz در OCR5A (۱۹۹۹۹ تیک)");
+        check((TIMSK5 & ((1 << OCIE5A) | (1 << OCIE5B))) != 0,
+              "وقفه‌های COMPA/COMPB تایمر ۵ مسلح‌اند");
 
-        // ادامه تا رسیدن
-        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
-        check(!gr.isMoving(), "پنجه به هدف رسید و ایستاد");
-        check(gr.getCurrentDegrees() == GRIP_CLOSE_DEG, "موقعیت نهایی دقیقاً همان هدف است");
+        // ددبند: حرکت ۰.۲ درجه‌ای (≈۲µs) پالس را عوض نمی‌کند، ولی حرکت می‌کند
+        gr.moveTo(GRIP_DEFAULT_DEG + 0.2f);
+        for (int i = 0; i < 10; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.getCurrentDegrees() == GRIP_DEFAULT_DEG + 0.2f, "حرکت ریز انجام شد");
+        check(gr.getLastPulseUs() == 2298, "ددبند: تغییر ۲µs‌ای پالس نفرستاد");
+        // حرکت درشت به ۳۰°: پالس تازه فرستاده می‌شود، در حد ددبندِ مقدار
+        // ایده‌آل ۲۱۸۷ (= نگاشت ۲۱۶۷ + تریم ۲۰)
+        gr.moveTo(30.0f);
+        for (int i = 0; i < 40; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.getCurrentDegrees() == 30.0f, "رسیدن به ۳۰ درجه");
+        {
+            int ideal30 = Gripper::degreesToMicros(30.0f) + GRIP_TRIM_US;
+            int pdiff = gr.getLastPulseUs() - ideal30;
+            if (pdiff < 0) pdiff = -pdiff;
+            printf("   gripper: pulse@30deg=%d ideal=%d\n", gr.getLastPulseUs(), ideal30);
+            check(gr.getLastPulseUs() != 2298, "پالس تازه بعد از عبور از ددبند فرستاده شد");
+            check(ideal30 == 2187, "مقدار ایده‌آل ۳۰° همان ۲۱۸۷ است (۲۱۶۷+۲۰)");
+            check(pdiff < GRIP_DEADBAND_US, "پالس نهایی در حد ددبندِ مقدار ایده‌آل است");
+        }
 
-        // کلمپ به بازه‌ی مجاز Config.h
+        // کلمپ هدف به بازه‌ی مجاز (فقط هدف؛ حرکتی لازم نیست)
         gr.moveTo(GRIP_MAX_DEG + 100.0f);
         check(gr.getTargetDegrees() == GRIP_MAX_DEG, "هدف بالای سقف به MAX کلمپ شد");
         gr.moveTo(GRIP_MIN_DEG - 100.0f);
         check(gr.getTargetDegrees() == GRIP_MIN_DEG, "هدف زیر کف به MIN کلمپ شد");
-        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
-        float parked = gr.getCurrentDegrees();
 
-        // estop: فریز درجا + نادیده گرفتن فرمان تازه
+        // estop: فریز درجا (هدف = همان‌جا) + نادیده گرفتن فرمان تازه
         gr.emergencyStop();
+        float parked = gr.getCurrentDegrees();
         gr.moveTo(GRIP_MAX_DEG);
         for (int i = 0; i < 50; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
         check(gr.getCurrentDegrees() == parked, "زیر estop پنجه تکان نخورد");
+        check(gr.getTargetDegrees() == parked, "زیر estop فرمان تازه نادیده گرفته شد");
         gr.clearEmergencyStop();
-        gr.moveTo(GRIP_OPEN_DEG);
-        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
-        check(gr.getCurrentDegrees() == GRIP_OPEN_DEG, "بعد از reset پنجه دوباره فرمان گرفت");
 
-        // detach: فرمان نادیده گرفته می‌شود (مثل محورِ disableشده)
+        // قطع پالس در بیکاری: اول توقف کامل، بعد ۱ ثانیه سکون
+        gr.stop();
+        for (int i = 0; i < 20; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(!gr.isPulseActive(), "بعد از ۱s بیکاری پالس قطع شد (IDLE_RELEASE)");
+        // بیدار شدن با فرمان بعدی
+        gr.moveTo(100.0f);
+        gr.update();
+        check(gr.isPulseActive(), "با فرمان تازه پالس برگشت");
+        for (int i = 0; i < 60; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.getCurrentDegrees() == 100.0f, "بعد از بیداری به هدف رسید");
+
+        // زیر estop پالس نگه داشته می‌شود (اگر چیزی گرفته، ول نکند)؛ اول
+        // مطمئن شو پالس روشن است (ممکن است ته حرکت قبلی آزاد شده باشد)
+        gr.moveTo(100.0f);
+        gr.update();
+        check(gr.isPulseActive(), "پیش از estop پالس روشن است");
+        gr.emergencyStop();
+        for (int i = 0; i < 20; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.isPulseActive(), "زیر estop پالس در بیکاری هم قطع نشد");
+        check(gr.getCurrentDegrees() == 100.0f, "زیر estop موقعیت ثابت ماند");
+        gr.clearEmergencyStop();
+
+        // detach/attach: مثل محورِ disableشده + احترام به BOOT_DELAY
         gr.detach();
         check(!gr.isAttached(), "بعد از detach سروو آزاد است");
+        check(!gr.isPulseActive(), "بعد از detach پالسی نیست");
         gr.moveTo(GRIP_MAX_DEG);
         check(gr.getTargetDegrees() == gr.getCurrentDegrees(),
               "وقتی سروو آزاد است فرمان تازه نادیده گرفته می‌شود");
         gr.attach();
         check(gr.isAttached(), "attach دوباره وصل شد");
+        check(!gr.isPulseActive(), "بعد از attach پالس تا BOOT_DELAY صبر می‌کند");
+        sim_micros += 200ULL * 1000ULL;
+        gr.update();
+        check(gr.isPulseActive(), "بعد از BOOT_DELAY پالس برگشت");
+    }
+
+    // ------------------------------------------------------------------
+    // رمپ شتاب + سرعت جداگانه‌ی بستن (نمونه‌ی مستقل، همان اوررایدها)
+    // ------------------------------------------------------------------
+    {
+        Gripper gc;
+        gc.begin();
+        sim_micros += 200ULL * 1000ULL;
+        gc.update();
+        // حرکت بلند به‌سمت «بسته»: سرعت پایا باید ≈ ۳۰ باشد (نه ۱۲۰)
+        gc.moveTo(GRIP_CLOSE_DEG);
+        for (int i = 0; i < 20; i++) { sim_micros += 50ULL * 1000ULL; gc.update(); }
+        float vClose = gc.getVelocityDegS();
+        printf("   gripper: vClose(1s)=%.1f (expect ~30), cur=%.1f\n",
+               vClose, gc.getCurrentDegrees());
+        check(vClose > 25.0f && vClose < 35.0f, "سرعت پایای بستن ≈ ۳۰ درجه/ثانیه");
+        check(gc.isMoving(), "هنوز در حال حرکت به‌سمت بسته است");
+        // ادامه تا رسیدن: دقیق، بدون رد شدن از هدف
+        for (int i = 0; i < 120; i++) { sim_micros += 50ULL * 1000ULL; gc.update(); }
+        check(!gc.isMoving(), "با رمپ شتاب به هدف رسید و ایستاد");
+        check(gc.getCurrentDegrees() == GRIP_CLOSE_DEG, "رسیدن دقیق به CLOSE، بدون رد شدن");
+        check(gc.getVelocityDegS() == 0.0f, "سرعت نهایی صفر است");
+        // برگشت به‌سمت «باز»: سرعت پایه ۱۲۰
+        gc.moveTo(GRIP_OPEN_DEG);
+        for (int i = 0; i < 12; i++) { sim_micros += 50ULL * 1000ULL; gc.update(); }
+        float vOpen = gc.getVelocityDegS();
+        if (vOpen < 0) vOpen = -vOpen;
+        printf("   gripper: vOpen(0.6s)=%.1f (expect ~120)\n", vOpen);
+        check(vOpen > 110.0f && vOpen < 130.0f, "سرعت پایای باز شدن ≈ ۱۲۰ درجه/ثانیه");
     }
 
     // ------------------------------------------------------------------

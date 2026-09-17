@@ -508,7 +508,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 | چه دیدی | یعنی | کار |
 |---|---|---|
-| `AXIS-5 Firmware v1.0.42` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
+| `AXIS-5 Firmware v1.0.43` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
 | هیچ بایتی نیامد | برد ساکت است | دکمه‌ی **RESET** روی برد را بزن؛ بعد LED چشمک‌زن، کابلِ **دیتا** و تغذیه‌ی خارجی را چک کن |
 | متنِ به‌هم‌ریخته | baud اشتباه | فریم‌ور روی ۱۱۵۲۰۰ است؛ اپ خودش برمی‌گرداند |
 | `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |

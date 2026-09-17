@@ -104,7 +104,7 @@ async function main() {
     /* دست‌دادنِ بوت: «برد» بنر را می‌فرستد — حتی پیش از بالا آمدنِ پل، چون
      * بایت‌ها در بافرِ pty می‌مانند — پس R: باید بی‌درنگ بعد از پالس بیاید،
      * نه بعد از مهلتِ ۵ ثانیه. */
-    holder.send("SEND:AXIS-5 Firmware v1.0.42");
+    holder.send("SEND:AXIS-5 Firmware v1.0.43");
     const tOpen = Date.now();
     const openP = pybridge.openBridge({
       portPath: slave, baud: 115200, timeoutMs: 8000,

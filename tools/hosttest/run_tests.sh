@@ -94,9 +94,14 @@ if [ $FAIL -eq 0 ]; then
     echo
     echo "===== [3/13] behavioural simulation (homing order + backoff + motion) ====="
     SIM_OBJS=""
-    for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager Gripper; do
+    for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager; do
         SIM_OBJS="$SIM_OBJS $OUT/${m}_cpp.o"
     done
+    # گریپرِ شبیه‌ساز با اوررایدهای grip_test_config.h کامپایل می‌شود تا همه‌ی
+    # دستگیره‌های GRIP_* تست شوند؛ باینری لینک همان Gripper_cpp.o پیش‌فرض را دارد.
+    printf "  %-24s " "compiling Gripper(sim)"
+    if g++ $CXXFLAGS $INC -include grip_test_config.h -c "$SKETCH/Gripper.cpp" -o "$OUT/Gripper_sim.o" 2> "$OUT/Gripper_sim.log"; then echo OK; else echo FAIL; cat "$OUT/Gripper_sim.log"; FAIL=1; fi
+    SIM_OBJS="$SIM_OBJS $OUT/Gripper_sim.o"
     printf "  %-24s " "compiling sim_main"
     if g++ $CXXFLAGS $INC -c "$HT/sim_main.cpp" -o "$OUT/sim_main.o" 2> "$OUT/sm.log"; then echo OK; else echo FAIL; FAIL=1; fi
 

@@ -141,6 +141,11 @@ def firmware_axes():
     return axes, cfg
 
 
+def boolean(v):
+    """تبدیل ماکروی بولی (true/false/1/0) به bool."""
+    return v.strip().lower() in ("true", "1", "yes", "on")
+
+
 def firmware_grip():
     """بلوک GRIP_* از Config.h (پنجه: سرووی درجه‌ای روی پین ۱۹)."""
     cfg = parse_defines(read(os.path.join(FW, "Config.h")))
@@ -152,6 +157,15 @@ def firmware_grip():
         "close": num(cfg["GRIP_CLOSE_DEG"]),
         "def": num(cfg["GRIP_DEFAULT_DEG"]),
         "speed": num(cfg["GRIP_SPEED_DEG_S"]),
+        # v1.0.43: دستگیره‌های دقت سرووی حلقه‌باز (بدون انکودر)
+        "invert": boolean(cfg["GRIP_INVERT"]),
+        "trim": num(cfg["GRIP_TRIM_US"]),
+        "deadband": num(cfg["GRIP_DEADBAND_US"]),
+        "closeSpeed": num(cfg["GRIP_CLOSE_SPEED_DEG_S"]),
+        "accel": num(cfg["GRIP_ACCEL_DEG_S2"]),
+        "refresh": num(cfg["GRIP_REFRESH_HZ"]),
+        "bootDelay": num(cfg["GRIP_BOOT_DELAY_MS"]),
+        "idleRelease": num(cfg["GRIP_IDLE_RELEASE_MS"]),
     }
 
 
@@ -264,8 +278,15 @@ def sync_file(path, axes, scalars, grip, write=True):
             src = pat.sub(lambda g: g.group(1) + str(scalars[key]), src, count=1)
 
     # --- پنجه (GRIP) ---
-    want_grip = ("GRIP: { pin: %s, min: %s, max: %s, open: %s, close: %s, def: %s, speed: %s }" %
-                 tuple(jsnum(grip[k]) for k in ("pin", "min", "max", "open", "close", "def", "speed")))
+    def _js(k):
+        v = grip[k]
+        return "true" if v is True else ("false" if v is False else jsnum(v))
+    want_grip = ("GRIP: { pin: %s, min: %s, max: %s, open: %s, close: %s, def: %s, speed: %s, "
+                 "invert: %s, trim: %s, deadband: %s, closeSpeed: %s, accel: %s, refresh: %s, "
+                 "bootDelay: %s, idleRelease: %s }" %
+                 tuple(_js(k) for k in ("pin", "min", "max", "open", "close", "def", "speed",
+                                        "invert", "trim", "deadband", "closeSpeed", "accel",
+                                        "refresh", "bootDelay", "idleRelease")))
     pat = re.compile(r"(^\s*GRIP:\s*\{)[^}]*\}", re.M)
     mm = pat.search(src)
     if mm:

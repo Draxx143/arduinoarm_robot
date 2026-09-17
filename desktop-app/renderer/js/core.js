@@ -13,7 +13,7 @@ const FW = {
 
   /* v1.0.38: حداقل نسخه‌ی فریم‌وری که همه‌ی فیکس‌ها (E-STOP لحظه‌ای، J2 نرم،
      هوم بعد از estop، عقب‌نشینی غیرمسدودساز، POS) روی برد هستند */
-  EXPECTED_FW: "1.0.42",
+  EXPECTED_FW: "1.0.43",
 
   /* true = نسخه‌ی گزارش‌شده‌ی برد >= EXPECTED_FW */
   versionOk(reported) {
@@ -105,7 +105,7 @@ const FW = {
   ],
 
   /* ---- generated GRIP from firmware Config.h by tools/sync_gui_config.py ---- */
-  GRIP: { pin: 19, min: 0, max: 180, open: 20, close: 160, def: 20, speed: 120 },
+  GRIP: { pin: 19, min: 0, max: 180, open: 20, close: 160, def: 20, speed: 120, invert: false, trim: 0, deadband: 2, closeSpeed: 0, accel: 0, refresh: 50, bootDelay: 0, idleRelease: 0 },
   /* ---- end generated GRIP ---- */
 
   /* Speed profiles from SpeedProfile.cpp */

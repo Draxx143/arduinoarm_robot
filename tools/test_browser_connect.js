@@ -103,11 +103,11 @@ function makeBoard(opt) {
   });
   const banner = "======================================\n" +
                  "5 DOF Robot Arm - TEST MODE (No ROS)\n" +
-                 "AXIS-5 Firmware v1.0.42\n" +
+                 "AXIS-5 Firmware v1.0.43\n" +
                  "======================================\n" +
                  "System initialized.\n" +
                  "======================================\n";
-  const statusBlock = "=== System Status ===\nState: Ready\nFW: v1.0.42\n" +
+  const statusBlock = "=== System Status ===\nState: Ready\nFW: v1.0.43\n" +
                       "Homed: J1[ok] J2[ok] J3[ok] J4[ok] J5[ok]\n======================\n" +
                       ">> POS 0.0,0.0,0.0,0.0,0.0\n";
   /* بایتِ بی‌معنی: همان چیزی که با سرعتِ غلط روی سیم است. هیچ نشانه‌ی
@@ -298,7 +298,7 @@ async function main() {
      g.board.state.writtenAt[g.board.state.writtenAt.length - 1] - tOpen > 2500,
      "سلامِ دوم **بعد از پنجره‌ی بوت‌لودر** رفت (نه پشتِ سرِ هم با اولی)",
      "آخرین status در " + ((g.board.state.writtenAt || []).slice(-1)[0] - tOpen) + "ms");
-  ok(/AXIS-5 Firmware v1\.0\.42/.test(consoleText(g.dom)), "بنرِ بوت در کنسول دیده شد");
+  ok(/AXIS-5 Firmware v1\.0\.43/.test(consoleText(g.dom)), "بنرِ بوت در کنسول دیده شد");
   g.dom.window.close();
 
   /* ---------- ۳) هندلرِ خراب نباید اتصال را کور کند ---------- */
@@ -311,7 +311,7 @@ async function main() {
     try { await S.serial.connect(115200); } catch (e) { /* هندلر خراب است */ }
   })()`);
   await sleep(300);
-  g.push("AXIS-5 Firmware v1.0.42\n");
+  g.push("AXIS-5 Firmware v1.0.43\n");
   await sleep(400);
   ok(w.eval("S.serial.rxCount") > 0,
      "حلقه‌ی خواندن پیش از onConnect شروع می‌شود → داده نمی‌سوزد",
