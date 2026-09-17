@@ -658,6 +658,12 @@ int main() {
         check(gr.isAttached(), "بعد از begin سروو متصل است");
         check(gr.getCurrentDegrees() == GRIP_DEFAULT_DEG, "شروع از GRIP_DEFAULT_DEG");
 
+        // نگاشت درجه→پالس (µs) — درایور تایمر ۵ همین را به ISR می‌دهد
+        check(Gripper::degreesToMicros(GRIP_MIN_DEG) == GRIP_MIN_US, "کران پایین درجه = GRIP_MIN_US");
+        check(Gripper::degreesToMicros(GRIP_MAX_DEG) == GRIP_MAX_US, "کران بالای درجه = GRIP_MAX_US");
+        check(Gripper::degreesToMicros(90.0f) == (GRIP_MIN_US + GRIP_MAX_US) / 2, "وسط بازه = وسط پالس (۱۵۰۰µs)");
+        check(Gripper::degreesToMicros(GRIP_MAX_DEG + 50.0f) == GRIP_MAX_US, "نگاشت هم به بازه کلمپ می‌شود");
+
         // حرکت تدریجی و غیرمسدودکننده: بعد از ۱۰۰ms باید میانه‌ی راه باشد
         gr.moveTo(GRIP_CLOSE_DEG);
         check(gr.isMoving(), "بعد از moveTo وضعیت «در حال حرکت» است");

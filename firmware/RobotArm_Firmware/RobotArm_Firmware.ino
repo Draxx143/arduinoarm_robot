@@ -32,7 +32,6 @@
 #include "Trajectory.h"
 #include "IK.h"
 #include "EnergyManager.h"
-#include <Servo.h>   // کتابخانه‌ی استاندارد سروو (بودنش در اسکچ باعث می‌شود Arduino IDE آن را لینک کند)
 #include "Gripper.h"
 
 // Global objects

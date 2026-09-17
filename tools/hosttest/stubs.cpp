@@ -23,6 +23,8 @@ void delayMicroseconds(unsigned int us) {
 // ---- رجیسترهای تایمر ----
 volatile uint8_t  TCCR1A = 0, TCCR1B = 0, TIMSK1 = 0, SREG = 0;
 volatile uint16_t OCR1A = 0, TCNT1 = 0;
+volatile uint8_t  TCCR5A = 0, TCCR5B = 0, TIMSK5 = 0, TIFR5 = 0;
+volatile uint16_t OCR5A = 0, OCR5B = 0, TCNT5 = 0;
 
 // ---- پورت‌ها ----
 volatile uint8_t g_port_out[SIM_NUM_PORTS] = {0};

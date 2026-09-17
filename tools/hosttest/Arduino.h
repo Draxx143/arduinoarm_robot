@@ -119,12 +119,24 @@ void sim_reset_pins();
 // =====================================================================
 extern volatile uint8_t  TCCR1A, TCCR1B, TIMSK1, SREG;
 extern volatile uint16_t OCR1A, TCNT1;
+// Timer5 — درایور پالس سرووی پنجه (Gripper.cpp). روی host فقط کامپایل مهم
+// است؛ ISRها مثل تایمر ۱ به تابع بدل تبدیل می‌شوند (ماکروی ISR پایین).
+extern volatile uint8_t  TCCR5A, TCCR5B, TIMSK5, TIFR5;
+extern volatile uint16_t OCR5A, OCR5B, TCNT5;
 #define WGM12   3
 #define CS10    0
 #define CS11    1
 #define CS12    2
 #define OCIE1A  1
+#define WGM52   3
+#define CS51    1
+#define OCIE5A  1
+#define OCIE5B  2
+#define OCF5A   1
+#define OCF5B   2
 #define TIMER1_COMPA_vect host_timer1_compa
+#define TIMER5_COMPA_vect host_timer5_compa
+#define TIMER5_COMPB_vect host_timer5_compb
 #define cli()  do {} while (0)
 #define sei()  do {} while (0)
 #define interrupts()   do {} while (0)
