@@ -27,7 +27,7 @@ const pickRealPorts = portnames.pickRealPorts;
 
 /* نسخه‌ی فریم‌وری که این اپ انتظار دارد — باید با FIRMWARE_VERSION در
  * firmware/RobotArm_Firmware/Config.h یکی باشد (تستِ مرحله‌ی ۵ چک می‌کند). */
-const EXPECTED_FW = "1.0.41";
+const EXPECTED_FW = "1.0.42";
 const openSerialPorts = new Map();
 let serialSeq = 0;
 

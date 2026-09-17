@@ -33,6 +33,7 @@ const S = {
   demo: { running: false, step: 0, total: FW.DEMO_MOVES.length },
   axes: FW.AXES.map(() => ({ steps: 0, deg: 0, homed: false, enabled: false, moving: false, endstop: "Open" })),
   targets: [0, 0, 0, 0, 0],
+  gripDeg: null,               /* v1.0.42: آخرین موقعیت پنجه از کانال GRIP */
   teachLocal: [],
   teachCountFw: null,
   timersFw: null,
@@ -262,7 +263,7 @@ function send(text, opts = {}) {
        بردار، و لحظه‌ای poll نکن تا پاسخِ خودش لای پاسخِ poll نپرد. */
     S._pollBlock = false;
     S.manualAt = Date.now();
-    if (/^pos\b/i.test(text.trim())) S._posManual = true;  /* همان یک خط POS را نشان بده */
+    if (/^pos\b/i.test(text.trim())) { S._posManual = true; S._posManualAt = Date.now(); }  /* همان یک خط POS (و GRIP چسبیده‌اش) را نشان بده */
   }
   if (S.mode === "serial") {
     S.serial.write(text).catch((e) => {
@@ -283,6 +284,7 @@ function rxLine(line, fromSim = false) {
   const trimmed = line.trim();
   if (BOARD_MARKERS.test(trimmed)) S._sawBoardText = true;
   const isPosSync = /^>>\s*POS\s/.test(trimmed);
+  const isGripSync = /^>>\s*GRIP\s/.test(trimmed);   /* v1.0.42: جفتِ POS */
 
   /* ---------- کنسول: فقط چیزی که خودِ کاربر خواسته ----------
      پرسش‌های خودکار (status با نرخِ انتخابی + pos سه بار در ثانیه) همیشه
@@ -350,8 +352,15 @@ function rxLine(line, fromSim = false) {
   } else if (isAutoEcho) {
     /* «> status» و «> pos» ی که poll فرستاده: بی‌صدا */
   } else if (isPosSync) {
-    /* خط POS هیچ‌وقت چاپ نمی‌شود — مگر یک «pos» دستیِ خودِ کاربر */
-    if (S._posManual) { S._posManual = false; addConsole("rx", line); }
+    /* خط POS هیچ‌وقت چاپ نمی‌شود — مگر یک «pos» دستیِ خودِ کاربر.
+       پرچم اینجا پاک نمی‌شود: خط GRIP بلافاصله بعدش می‌آید و مال همان
+       پاسخ است؛ هر دو با هم نشان داده می‌شوند. مهلت ۲ ثانیه‌ای هم هست تا
+       اگر فریم‌ور قدیمی GRIP نفرستاد، پرچم برای poll بعدی نماند. */
+    if (S._posManual && Date.now() - (S._posManualAt || 0) < 2000) addConsole("rx", line);
+  } else if (isGripSync) {
+    /* جفتِ POS: همان قانون سکوت، ولی اینجا پرچمِ «pos دستی» پاک می‌شود */
+    if (S._posManual && Date.now() - (S._posManualAt || 0) < 2000) addConsole("rx", line);
+    S._posManual = false;
   } else {
     addConsole("rx", line);
   }
@@ -444,6 +453,9 @@ function rxLine(line, fromSim = false) {
       break;
     case "pos":                       /* v1.0.36: همگام‌سازی اسلایدرها از سمت برد */
       applyJointPos(ev.deg);
+      break;
+    case "grip":                      /* v1.0.42: همگام‌سازی اسلایدر پنجه */
+      applyGripPos(ev.deg);
       break;
     case "fw":                        /* v1.0.38: گیت نسخهٔ فریم‌ور */
       S.fwVersion = ev.version;
@@ -772,8 +784,9 @@ function pollPos() {
   if (Date.now() - (S.manualAt || 0) < 900) return;
   /* drag-safe: وسط کار با اسلایدر/کادر عدد، عدد زیر دست کاربر نپرد */
   const ae = document.activeElement;
-  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
+  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|grip|ma|ik|fk|gt)/.test(ae.id)) return;
   if (S.jHeld && S.jHeld.some(Boolean)) return;
+  if (S.gripHeld) return;
   if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
   S._lastPosPollAt = Date.now();
   send(Cmd.pos(), { auto: true });
@@ -1077,6 +1090,78 @@ function sendJoint(i, v) {
     send(Cmd.move(i + 1, Math.round(v)));
   }
   viz.setTargets(S.targets);
+}
+
+
+/* ---------- v1.0.42: پنجه (سرووی درجه‌ای روی پین ۱۹) ---------- */
+function buildGripper() {
+  const G = FW.GRIP;
+  const slider = $("gripSlider"), num = $("gripNum");
+  if (!slider || !num) return;
+  if (S.gripDeg === null || S.gripDeg === undefined) S.gripDeg = G.def;
+  slider.min = G.min; slider.max = G.max;
+  num.min = G.min; num.max = G.max;
+  const rng = $("gripRange");
+  if (rng) rng.textContent = `${G.min}..${G.max}° · pin ${G.pin}`;
+  const sync = (v, fromSlider) => {
+    v = Math.max(G.min, Math.min(G.max, v));
+    slider.style.setProperty("--val", (((v - G.min) / (G.max - G.min)) * 100) + "%");
+    if (fromSlider) num.value = (+v).toFixed(1);
+    else slider.value = v;
+    S.lastJointInputAt = Date.now();
+    return v;
+  };
+  sync(S.gripDeg, false);
+  num.value = (+S.gripDeg).toFixed(1);
+  slider.addEventListener("pointerdown", () => { S.gripHeld = true; });
+  window.addEventListener("pointerup", () => { S.gripHeld = false; });
+  slider.addEventListener("pointercancel", () => { S.gripHeld = false; });
+  slider.addEventListener("blur", () => { S.gripHeld = false; });
+  slider.addEventListener("input", () => sync(+slider.value, true));
+  slider.addEventListener("change", () => {
+    const v = sync(+slider.value, true);
+    if ($("swLive").checked) sendGripLive(v);
+  });
+  num.addEventListener("change", () => {
+    const v = sync(+num.value || 0, false);
+    if ($("swLive").checked) sendGripLive(v);
+  });
+  $("gripGo").addEventListener("click", () => sendGrip(+num.value || 0));
+  $("gripOpen").addEventListener("click", () => { num.value = G.open; sync(G.open, false); sendGrip(G.open); });
+  $("gripClose").addEventListener("click", () => { num.value = G.close; sync(G.close, false); sendGrip(G.close); });
+}
+
+/* اسلایدر پنجه، موقعیت گزارش‌شده‌ی برد را دنبال می‌کند (کانال GRIP) */
+function applyGripPos(deg) {
+  const G = FW.GRIP;
+  S.gripDeg = Math.max(G.min, Math.min(G.max, deg));
+  if (S.gripHeld) return;
+  const slider = $("gripSlider");
+  if (!slider || document.activeElement === slider) return;
+  slider.value = S.gripDeg;
+  slider.style.setProperty("--val", (((S.gripDeg - G.min) / (G.max - G.min)) * 100) + "%");
+  const num = $("gripNum");
+  if (num && document.activeElement !== num) num.value = S.gripDeg.toFixed(1);
+}
+
+let _gripLiveT = null, _gripLiveLast = 0;
+function sendGripLive(v) {
+  _gripLiveLast = v;
+  if (_gripLiveT) return;
+  sendGrip(v);
+  _gripLiveT = setTimeout(() => {
+    _gripLiveT = null;
+    if (_gripLiveLast !== v) sendGrip(_gripLiveLast);
+  }, 160);
+}
+
+function sendGrip(v) {
+  const G = FW.GRIP;
+  if (v < G.min || v > G.max) {
+    toast(`محدوده پنجه: ${G.min}° تا ${G.max}°`, "err");
+    return;
+  }
+  send(Cmd.grip(v));
 }
 
 function rebuildJointsMode() {
@@ -1686,6 +1771,7 @@ function init() {
   buildAxisCards();
   gotoInit();
   buildJoints();
+  buildGripper();
   buildMoveAll();
   buildFkInputs();
   buildSlots();

@@ -26,6 +26,9 @@ class SimFirmware {
     this.sleeping = false;
     this.autoSleep = false;
     this.lastActivity = Date.now();
+    this.grip = FW.GRIP.def;        /* v1.0.42: زاویه‌ی فعلی پنجه (درجه) */
+    this.gripTarget = FW.GRIP.def;
+    this.gripOn = true;
 
     this.slots = new Array(FW.MAX_POSITIONS).fill(null);
     this.timers = [];
@@ -75,6 +78,14 @@ class SimFirmware {
   emitPosFromSteps(steps5) {
     const d = steps5.map((st, i) => (st / FW.AXES[i].stepsPerDeg).toFixed(1));
     this.emit(">> POS " + d.join(","));
+    this.emitGripCurrent();   /* v1.0.42: عین فریم‌ور — GRIP چسبیده به POS */
+  }
+  emitGripCurrent() { this.emit(">> GRIP " + this.grip.toFixed(1)); }
+  gripReady() {
+    if (this.state === "ESTOP") { this.emit("!! E-STOP active - send 'reset' or 'home' first."); return false; }
+    if (this.sleeping) { this.emit("!! Sleeping - send 'wake' before moving"); return false; }
+    if (!this.gripOn) { this.emit("!! Gripper is DISABLED - send 'enable' first"); return false; }
+    return true;
   }
   emitPosCurrent() { this.emitPosFromSteps(this.pos.map(Math.round)); }
   emitPosTargetSingle(axis, steps) {
@@ -114,6 +125,13 @@ class SimFirmware {
         this.pos[i] += step;
         this.vel[i] = v;
       }
+    }
+
+    /* v1.0.42: پنجه — حرکت خطی به‌سمت هدف با سرعت Config.h */
+    if (this.gripOn && this.grip !== this.gripTarget) {
+      const gstep = FW.GRIP.speed * dt;
+      const gdiff = this.gripTarget - this.grip;
+      this.grip = (gstep >= Math.abs(gdiff)) ? this.gripTarget : this.grip + Math.sign(gdiff) * gstep;
     }
 
     /* هومینگ ترتیبی */
@@ -378,8 +396,8 @@ class SimFirmware {
     if (lower === "pos") { this.emitPosCurrent(); return; }
 
     /* --- موتورها --- */
-    if (lower === "enable") { this.enabled = this.enabled.map(() => true); this.emit("All motors enabled"); return; }
-    if (lower === "disable") { this.enabled = this.enabled.map(() => false); this.emit("All motors disabled"); return; }
+    if (lower === "enable") { this.enabled = this.enabled.map(() => true); this.gripOn = true; this.emit("All motors enabled"); return; }
+    if (lower === "disable") { this.enabled = this.enabled.map(() => false); this.gripOn = false; this.emit("All motors disabled"); return; }
     if (lower.startsWith("enable ")) {
       const n = parseInt(cmd.slice(7), 10);
       if (n >= 1 && n <= 5) { this.enabled[n - 1] = true; this.emit(`Axis ${n} enabled`); }
@@ -414,6 +432,7 @@ class SimFirmware {
       this.demoRunning = false;
       this.playing = false;
       this.target = [...this.pos];
+      this.gripTarget = this.grip;
       this.enabled = this.enabled.map(() => false);
       this.emit(">> Stopped (send 'home' to re-reference before moving)");
       this.emitPosCurrent();
@@ -473,6 +492,38 @@ class SimFirmware {
         this.emit(`Moving axis ${n} to ${s} steps`);
         this.emitPosTargetSingle(n - 1, s);
       } else this.emit("Invalid axis");
+      return;
+    }
+
+    /* --- پنجه (سروو روی پین ۱۹) --- */
+    if (lower === "grip") {
+      this.emit(`Format: grip <degrees ${FW.GRIP.min.toFixed(1)}..${FW.GRIP.max.toFixed(1)}>  (open/close = presets)`);
+      return;
+    }
+    if (lower.startsWith("grip ")) {
+      const d = parseFloat(cmd.slice(5));
+      if (isNaN(d) || d < FW.GRIP.min || d > FW.GRIP.max) {
+        this.emit(`!! Gripper out of range (${FW.GRIP.min.toFixed(1)}° to ${FW.GRIP.max.toFixed(1)}°)`);
+        return;
+      }
+      if (!this.gripReady()) return;
+      this.gripTarget = d;
+      this.lastActivity = Date.now();
+      this.emit(`Moving gripper to ${d.toFixed(1)}°`);
+      return;
+    }
+    if (lower === "open") {
+      if (!this.gripReady()) return;
+      this.gripTarget = FW.GRIP.open;
+      this.lastActivity = Date.now();
+      this.emit(`>> Gripper opening (${FW.GRIP.open.toFixed(1)}°)`);
+      return;
+    }
+    if (lower === "close") {
+      if (!this.gripReady()) return;
+      this.gripTarget = FW.GRIP.close;
+      this.lastActivity = Date.now();
+      this.emit(`>> Gripper closing (${FW.GRIP.close.toFixed(1)}°)`);
       return;
     }
 
@@ -632,12 +683,14 @@ class SimFirmware {
     if (lower === "sleep") {
       this.sleeping = true;
       this.enabled = this.enabled.map(() => false);
+      this.gripOn = false;
       this.emit(">> Going to SLEEP");
       return;
     }
     if (lower === "wake") {
       this.sleeping = false;
       this.enabled = this.enabled.map(() => true);
+      this.gripOn = true;
       this.emit(">> Waking up");
       return;
     }
@@ -654,6 +707,7 @@ class SimFirmware {
     this.demoRunning = false;
     this.playing = false;
     this.target = [...this.pos];
+    this.gripTarget = this.grip;
     this.estopped = true;
     this.nudge = null;
     this.setState("ESTOP");
@@ -676,7 +730,8 @@ class SimFirmware {
     L.push("State: " + this._stateEn());
     if (this.demoRunning) L.push(`Demo: RUNNING (${this.demoStep + 1}/${FW.DEMO_MOVES.length})`);
     L.push("Profile: " + FW.PROFILES[this.profile].name);
-    L.push("FW: v" + FW.EXPECTED_FW);   /* v1.0.38: اپ از این خط، قدیمی‌بودن برد را می‌فهمد */
+    L.push("FW: v" + FW.EXPECTED_FW);
+    L.push(`Gripper: ${this.grip.toFixed(1)}° (target ${this.gripTarget.toFixed(1)}°), Attached=${this.gripOn ? "Y" : "N"}`);   /* v1.0.38: اپ از این خط، قدیمی‌بودن برد را می‌فهمد */
     if (this.sleeping) L.push("Status: SLEEPING");
     for (let i = 0; i < 5; i++) {
       const deg = this.pos[i] / FW.AXES[i].stepsPerDeg;

@@ -116,6 +116,22 @@
         </div>
 
         <div class="card">
+          <h3>✋ پنجه <span class="en">GRIPPER — SERVO ON PIN 19</span></h3>
+          <div class="grip-row">
+            <div class="jl"><b style="color:#facc15">پنجه <span class="tiny">GRIP</span></b>
+              <span id="gripRange">—</span></div>
+            <input type="range" id="gripSlider" min="0" max="180" step="0.5" value="20" style="--axc:#facc15">
+            <input type="number" id="gripNum" min="0" max="180" step="0.5" value="20">
+            <div style="display:flex;gap:4px">
+              <button class="btn small cyan" id="gripGo" title="ارسال حرکت">GO ➤</button>
+              <button class="btn small" id="gripOpen" title="باز (GRIP_OPEN_DEG)">باز</button>
+              <button class="btn small" id="gripClose" title="بسته (GRIP_CLOSE_DEG)">بسته</button>
+            </div>
+          </div>
+          <p class="tiny" style="margin-top:6px">زاویه به <b>درجه</b>؛ سرعت و کران‌ها در <code>Config.h</code> (بلوک <code>GRIP_*</code>) تنظیم می‌شود و با <code>tools/sync_gui_config.py</code> به اینجا می‌آید.</p>
+        </div>
+
+        <div class="card">
           <h3>📍 برو به مختصات <span class="en">GO TO XYZ</span></h3>
           <p class="muted" style="margin-bottom:8px">مختصات <b>نوک بازو</b> را میلی‌متر بده؛ زوایای پنج جوینت حل
             می‌شود، <b>اول</b> بررسی می‌شود که همه داخل محدوده‌ی مجاز باشند، بعد دستور
@@ -437,7 +453,7 @@
 
 <footer>
   کنترل‌پنل اختصاصی بازوی رباتیک ۵ محوره — ساخته‌شده برای فریم‌ور <span class="code">RobotArm_Firmware.ino</span>
- · کلید <kbd>Esc</kbd> توقف اضطراری · <kbd>Ctrl+K</kbd> کنسول · نسخه <b id="appVersion">1.0.41</b>
+ · کلید <kbd>Esc</kbd> توقف اضطراری · <kbd>Ctrl+K</kbd> کنسول · نسخه <b id="appVersion">1.0.42</b>
 </footer>
 
 <div id="toasts"></div>

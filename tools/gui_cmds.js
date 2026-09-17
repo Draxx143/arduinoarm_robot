@@ -34,6 +34,7 @@ const SAMPLES = {
   moveAll:     [[10, 20, 10, 0, 0]],
   deg:         [1, 45],
   move:        [1, 500],
+  grip:        [45],
   savePos:     [0],
   loadPos:     [0],
   clearPos:    [0],

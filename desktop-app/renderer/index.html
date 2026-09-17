@@ -84,6 +84,24 @@
         </div>
 
         <div class="card">
+          <h3>Gripper<span class="en">SERVO ON PIN 19</span></h3>
+          <div class="card-body">
+            <div class="grip-row">
+              <div class="jl"><b style="color:#facc15">Gripper <span class="tiny">GRIP</span></b>
+                <span id="gripRange">—</span></div>
+              <input type="range" id="gripSlider" min="0" max="180" step="0.5" value="20" style="--axc:#facc15">
+              <input type="number" id="gripNum" min="0" max="180" step="0.5" value="20">
+              <div style="display:flex;gap:4px">
+                <button class="btn small teal" id="gripGo" title="Send move">GO ➤</button>
+                <button class="btn small" id="gripOpen" title="Open (GRIP_OPEN_DEG)">Open</button>
+                <button class="btn small" id="gripClose" title="Close (GRIP_CLOSE_DEG)">Close</button>
+              </div>
+            </div>
+            <p class="tiny" style="margin-top:6px">Angle in <b>degrees</b>; speed and limits live in <code>Config.h</code> (<code>GRIP_*</code>), synced here by <code>tools/sync_gui_config.py</code>.</p>
+          </div>
+        </div>
+
+        <div class="card">
           <h3>Go to XYZ<span class="en">CARTESIAN TARGET</span></h3>
           <div class="card-body">
             <p class="muted" style="margin-bottom:8px">Give the <b>tool tip</b> position in millimetres. The five joint

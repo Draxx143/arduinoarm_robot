@@ -12,7 +12,7 @@ const FW = {
   BAUD: 115200,
 
   /* v1.0.38: حداقل نسخه‌ی فریم‌ور با همه‌ی فیکس‌ها */
-  EXPECTED_FW: "1.0.41",
+  EXPECTED_FW: "1.0.42",
 
   versionOk(reported) {
     if (!reported) return false;
@@ -102,6 +102,10 @@ const FW = {
       pins: { step: "36", dir: "34", enable: "30", endstop: "15" },
     },
   ],
+
+  /* ---- generated GRIP from firmware Config.h by tools/sync_gui_config.py ---- */
+  GRIP: { pin: 19, min: 0, max: 180, open: 20, close: 160, def: 20, speed: 120 },
+  /* ---- end generated GRIP ---- */
 
   /* پروفایل‌های سرعت از SpeedProfile.cpp */
   PROFILES: [
@@ -208,6 +212,8 @@ const Cmd = {
   moveAll: (deg5) => `moveall ${deg5.map((d) =>Fmt.num(d)).join(" ")}`,
   deg: (n, deg) => `deg ${n} ${Fmt.num(deg)}`,
   move: (n, steps) => `move ${n} ${steps}`,
+  /* پنجه: «grip <deg>» — درجه (سرووی RC روی پین ۱۹) */
+  grip: (deg) => `grip ${Fmt.num(deg)}`,
   savePos: (slot) => `savepos ${slot}`,
   loadPos: (slot) => `loadpos ${slot}`,
   listPos: () => "listpos",
@@ -275,6 +281,7 @@ const Parse = {
   RX_FW: /^FW:\s*v?(\d+\.\d+\.\d+)/,                       /* v1.0.38: خط status */
   RX_FW_BANNER: /Firmware v(\d+\.\d+\.\d+)/,               /* v1.0.38: بنر بوت */
   RX_POS: /^>>\s*POS\s+(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)$/,
+  RX_GRIP: /^>>\s*GRIP\s+(-?[\d.]+)$/,   /* v1.0.42: موقعیت پنجه، چسبیده به POS */
   RX_IK: /^>>\s*IK solution:\s*(.+)$/,
   RX_FK: /^>>\s*FK result:\s*X=(-?[\d.]+)\s*,\s*Y=(-?[\d.]+)\s*,\s*Z=(-?[\d.]+)/,
   RX_READY: /^>>\s*System ready!/,
@@ -335,6 +342,9 @@ const Parse = {
     if ((m = t.match(this.RX_POS))) {
       return { type: "pos", deg: [+m[1], +m[2], +m[3], +m[4], +m[5]] }
     }
+    if ((m = t.match(this.RX_GRIP))) {
+      return { type: "grip", deg: +m[1] }
+    }
     if ((m = t.match(this.RX_FW))) return { type: "fw", version: m[1] }
     if ((m = t.match(this.RX_FW_BANNER))) return { type: "fw", version: m[1] };
     if ((m = t.match(this.RX_IK))) {
@@ -385,6 +395,9 @@ const COMMAND_REF = [
   { cmd: "moveall", args: "<d1>..<d5>", desc: "حرکت همزمان هر ۵ محور با زاویه (درجه)", cat: "حرکت", chip: false },
   { cmd: "deg", args: "<axis> <deg>", desc: "حرکت یک محور با زاویه درجه", cat: "حرکت", chip: false },
   { cmd: "move", args: "<axis> <steps>", desc: "حرکت یک محور با تعداد استپ", cat: "حرکت", chip: false },
+  { cmd: "grip", args: "<deg>", desc: "حرکت پنجه به زاویه‌ی درجه (سروو روی پین ۱۹)", cat: "پنجه", chip: false },
+  { cmd: "open", args: "", desc: "باز کردن پنجه (GRIP_OPEN_DEG)", cat: "پنجه", chip: true },
+  { cmd: "close", args: "", desc: "بستن پنجه (GRIP_CLOSE_DEG)", cat: "پنجه", chip: true },
   { cmd: "savepos", args: "<slot>", desc: "ذخیره موقعیت فعلی در اسلات (0-9)", cat: "حافظه", chip: false },
   { cmd: "loadpos", args: "<slot>", desc: "فراخوانی و حرکت به موقعیت ذخیره‌شده", cat: "حافظه", chip: false },
   { cmd: "listpos", args: "", desc: "لیست همه موقعیت‌های ذخیره‌شده", cat: "حافظه", chip: true },

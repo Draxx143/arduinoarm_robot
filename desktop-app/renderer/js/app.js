@@ -33,6 +33,7 @@ const S = {
   demo: { running: false, step: 0, total: FW.DEMO_MOVES.length },
   axes: FW.AXES.map(() => ({ steps: 0, deg: 0, homed: false, enabled: false, moving: false, endstop: "Open" })),
   targets: [0, 0, 0, 0, 0],
+  gripDeg: null,               /* v1.0.42: آخرین موقعیت پنجه از کانال GRIP */
   teachLocal: [],
   teachCountFw: null,
   timersFw: null,
@@ -635,7 +636,7 @@ function send(text, opts = {}) {
        interleaved with (or swallowed by) a poll response */
     S._pollBlock = false;
     S.manualAt = Date.now();
-    if (/^pos\b/i.test(text.trim())) S._posManual = true;  /* show that one POS line */
+    if (/^pos\b/i.test(text.trim())) { S._posManual = true; S._posManualAt = Date.now(); }  /* show that one POS line (plus its GRIP twin) */
   }
   if (text === "status") S._statusFromPoll = auto; /* suppress the reply block only for polls */
   if (auto) {
@@ -665,6 +666,7 @@ function rxLine(line) {
   /* ">> POS ..." is the slider-sync channel: it arrives several times a
      second, so it is parsed but never printed (the console would drown). */
   const isPosSync = /^>>\s*POS\s/.test(t);
+  const isGripSync = /^>>\s*GRIP\s/.test(t);   /* v1.0.42: جفتِ POS */
   if (/^>>\s*ALL JOINTS HOMED/i.test(t)) zeroHomedSliders();
   /* firmware complaints ("!! ...") must be impossible to miss */
   if (/^!!/.test(t)) {
@@ -725,8 +727,15 @@ function rxLine(line) {
   } else if (isAutoEcho) {
     /* "> status" / "> pos" from our own poll: silent */
   } else if (isPosSync) {
-    /* POS is never printed — except for one the user asked for by typing "pos" */
-    if (S._posManual) { S._posManual = false; addConsole("rx", line); }
+    /* POS is never printed — except for one the user asked for by typing "pos".
+       The flag is NOT cleared here: the GRIP line arrives right after it and
+       belongs to the same reply, so both are shown together. The 2s window
+       keeps the flag from leaking into a later poll on old firmware. */
+    if (S._posManual && Date.now() - (S._posManualAt || 0) < 2000) addConsole("rx", line);
+  } else if (isGripSync) {
+    /* the POS twin: same silence rule, but this is where the manual flag dies */
+    if (S._posManual && Date.now() - (S._posManualAt || 0) < 2000) addConsole("rx", line);
+    S._posManual = false;
   } else {
     addConsole("rx", line);
   }
@@ -847,6 +856,9 @@ function rxLine(line) {
       break;
     case "pos":                       /* v1.0.36: board-driven slider sync */
       applyJointPos(ev.deg);
+      break;
+    case "grip":                      /* v1.0.42: gripper slider sync */
+      applyGripPos(ev.deg);
       break;
     case "fw":                        /* v1.0.38: firmware version gate */
       S.fwVersion = ev.version;
@@ -1284,8 +1296,9 @@ function pollPos() {
   if (Date.now() - (S.manualAt || 0) < 900) return;
   /* drag-safe: never yank a value out from under the user's cursor */
   const ae = document.activeElement;
-  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|ma|ik|fk|gt)/.test(ae.id)) return;
+  if (ae && typeof ae.id === "string" && /^(jSlider|jNum|grip|ma|ik|fk|gt)/.test(ae.id)) return;
   if (S.jHeld && S.jHeld.some(Boolean)) return;
+  if (S.gripHeld) return;
   if (Date.now() - (S.lastJointInputAt || 0) < 900) return;
   S._lastPosPollAt = Date.now();
   send(Cmd.pos(), { auto: true });
@@ -1571,6 +1584,78 @@ function sendJoint(i, v) {
   } else {
     send(Cmd.move(i + 1, Math.round(v)));
   }
+}
+
+
+/* ---------- v1.0.42: gripper (degree servo on pin 19) ---------- */
+function buildGripper() {
+  const G = FW.GRIP;
+  const slider = $("gripSlider"), num = $("gripNum");
+  if (!slider || !num) return;
+  if (S.gripDeg === null || S.gripDeg === undefined) S.gripDeg = G.def;
+  slider.min = G.min; slider.max = G.max;
+  num.min = G.min; num.max = G.max;
+  const rng = $("gripRange");
+  if (rng) rng.textContent = `${G.min}..${G.max}° · pin ${G.pin}`;
+  const sync = (v, fromSlider) => {
+    v = Math.max(G.min, Math.min(G.max, v));
+    slider.style.setProperty("--val", (((v - G.min) / (G.max - G.min)) * 100) + "%");
+    if (fromSlider) num.value = (+v).toFixed(1);
+    else slider.value = v;
+    S.lastJointInputAt = Date.now();
+    return v;
+  };
+  sync(S.gripDeg, false);
+  num.value = (+S.gripDeg).toFixed(1);
+  slider.addEventListener("pointerdown", () => { S.gripHeld = true; });
+  window.addEventListener("pointerup", () => { S.gripHeld = false; });
+  slider.addEventListener("pointercancel", () => { S.gripHeld = false; });
+  slider.addEventListener("blur", () => { S.gripHeld = false; });
+  slider.addEventListener("input", () => sync(+slider.value, true));
+  slider.addEventListener("change", () => {
+    const v = sync(+slider.value, true);
+    if ($("swLive").checked) sendGripLive(v);
+  });
+  num.addEventListener("change", () => {
+    const v = sync(+num.value || 0, false);
+    if ($("swLive").checked) sendGripLive(v);
+  });
+  $("gripGo").addEventListener("click", () => sendGrip(+num.value || 0));
+  $("gripOpen").addEventListener("click", () => { num.value = G.open; sync(G.open, false); sendGrip(G.open); });
+  $("gripClose").addEventListener("click", () => { num.value = G.close; sync(G.close, false); sendGrip(G.close); });
+}
+
+/* the gripper slider follows the position the board reports (GRIP channel) */
+function applyGripPos(deg) {
+  const G = FW.GRIP;
+  S.gripDeg = Math.max(G.min, Math.min(G.max, deg));
+  if (S.gripHeld) return;
+  const slider = $("gripSlider");
+  if (!slider || document.activeElement === slider) return;
+  slider.value = S.gripDeg;
+  slider.style.setProperty("--val", (((S.gripDeg - G.min) / (G.max - G.min)) * 100) + "%");
+  const num = $("gripNum");
+  if (num && document.activeElement !== num) num.value = S.gripDeg.toFixed(1);
+}
+
+let _gripLiveT = null, _gripLiveLast = 0;
+function sendGripLive(v) {
+  _gripLiveLast = v;
+  if (_gripLiveT) return;
+  sendGrip(v);
+  _gripLiveT = setTimeout(() => {
+    _gripLiveT = null;
+    if (_gripLiveLast !== v) sendGrip(_gripLiveLast);
+  }, 160);
+}
+
+function sendGrip(v) {
+  const G = FW.GRIP;
+  if (v < G.min || v > G.max) {
+    toast(`Gripper range: ${G.min}° to ${G.max}°`, "err");
+    return;
+  }
+  send(Cmd.grip(v));
 }
 
 /* ---------- moveall ---------- */
@@ -1957,6 +2042,8 @@ function buildChips() {
     { cmd: "demo", cls: "" },
     { cmd: "stopdemo", cls: "" },
     { cmd: "stop", cls: "" },
+    { cmd: "open", cls: "" },
+    { cmd: "close", cls: "" },
     { cmd: "teach", cls: "" },
     { cmd: "teach step", cls: "" },
     { cmd: "teach stop", cls: "" },
@@ -2392,6 +2479,7 @@ function init() {
   buildAxisCards();
   gotoInit();
   buildJoints();
+  buildGripper();
   buildMoveAll();
   buildFkInputs();
   buildSlots();

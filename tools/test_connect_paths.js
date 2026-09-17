@@ -101,7 +101,7 @@ function makeBoard() {
     },
     reply() {
       /* پاسخِ واقعیِ فریم‌ور: بلوکِ status + خطِ POS (همان قالبِ Config.h) */
-      const block = "=== System Status ===\nState: Ready\nFW: v1.0.41\n" +
+      const block = "=== System Status ===\nState: Ready\nFW: v1.0.42\n" +
         "Homed: J1[ok] J2[ok] J3[ok] J4[ok] J5[ok]\n======================\n" +
         ">> POS 0.0,0.0,0.0,0.0,0\n";
       if (this.onData) {
@@ -263,7 +263,7 @@ async function main() {
   ok(w.eval("S.serial.rxCount") > 0, "RX > 0 — داده‌ی برد به رندر رسید",
      "rxCount=" + w.eval("S.serial.rxCount"));
   ok(board.written.some((t) => /status/.test(t)), "اپ دستورِ status را فرستاد");
-  ok(/1\.0\.41/.test(consoleText(dom)) || w.eval("S.serial.rxCount") > 0,
+  ok(/1\.0\.42/.test(consoleText(dom)) || w.eval("S.serial.rxCount") > 0,
      "پاسخِ برد (نسخه‌ی فریم‌ور) در اپ دیده شد");
   ok(w.eval("typeof autoPickPort") === "function", "autoPickPort وجود دارد (انتخابِ خودکارِ پورت)");
 

@@ -94,7 +94,7 @@ if [ $FAIL -eq 0 ]; then
     echo
     echo "===== [3/13] behavioural simulation (homing order + backoff + motion) ====="
     SIM_OBJS=""
-    for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager; do
+    for m in Axis MotorController SpeedProfile TimerManager Trajectory IK Logger Macro PositionStore TeachMode EnergyManager Gripper; do
         SIM_OBJS="$SIM_OBJS $OUT/${m}_cpp.o"
     done
     printf "  %-24s " "compiling sim_main"

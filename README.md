@@ -152,6 +152,8 @@ homeorder <j1> <j2> <j3> <j4> <j5>
 abort                        abort homing / motion
 move <axis> <steps>          absolute move in steps
 deg <axis> <degrees>         absolute move in degrees
+grip <degrees> / open / close
+                            gripper: RC servo on pin 19 (degrees)
 moveall <d1> <d2> <d3> <d4> <d5>
 traj line <d1..d5> <ms>      all axes arrive together in <ms>
 demo / stopdemo
@@ -378,6 +380,26 @@ Teach، تایمر، ماکرو)، اسلایدرها دنبالش می‌رون
 درجه جلو می‌رود و **همان‌جا صفر می‌شود** (پس endstop در ۹۰− درجه است و
 دامنه‌ی مچ قرینه). در GUI هم کنار J5 نوشته شده «صفر ‎+90° از endstop».
 
+### پنجه (گریپر — سروو روی پین ۱۹)
+
+سیگنالِ یک سرووی استاندارد RC (SG90/MG996 و مشابه) به پین ۱۹ وصل است و
+پنجه با **درجه** فرمان می‌گیرد: `grip <deg>` می‌چرخاندش، `open`/`close`
+می‌بردش به دو زاویه‌ی ازپیش‌تنظیم‌شده. در تب Motion هر دو GUI یک اسلایدر
+پنجه هست (با دکمه‌های GO/باز/بسته) که مثل اسلایدر جوینت‌ها، موقعیت واقعی
+برد را دنبال می‌کند — برد بعد از هر خط `>> POS` یک خط `>> GRIP <deg>` هم
+می‌فرستد و همان poll موجود هر دو را می‌گیرد.
+
+همه‌ی تنظیم‌ها در `Config.h` (بلوک `GRIP_*`) است: کران‌های `MIN/MAX_DEG`،
+زاویه‌های `OPEN/CLOSE/DEFAULT_DEG`، سرعت `SPEED_DEG_S` و کالیبره‌ی پالس
+`MIN/MAX_US`. بعد از هر تغییر:
+
+```bash
+python3 tools/sync_gui_config.py   # انتقال عددها به هر دو GUI
+```
+
+⚠ تغذیه: برق سروو را از منبع جدا بده (۵ تا ۶ ولت، GND مشترک با Mega).
+کشیدن جریان سروو از پین 5V خودِ Mega برد را ریست می‌کند.
+
 ### اگر عددی در GUI با فریم‌ور فرق داشت
 
 ```bash
@@ -486,7 +508,7 @@ bash tools/diagnose-linux.sh /dev/ttyUSB0 9600   # اگر baud اشتباه با
 
 | چه دیدی | یعنی | کار |
 |---|---|---|
-| `AXIS-5 Firmware v1.0.41` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
+| `AXIS-5 Firmware v1.0.42` + بلوکِ status | پورت، مجوز و فریم‌ور سالم‌اند | مشکل از اپ است؛ اپ را از ترمینال اجرا کن: `axis5-robot-control` |
 | هیچ بایتی نیامد | برد ساکت است | دکمه‌ی **RESET** روی برد را بزن؛ بعد LED چشمک‌زن، کابلِ **دیتا** و تغذیه‌ی خارجی را چک کن |
 | متنِ به‌هم‌ریخته | baud اشتباه | فریم‌ور روی ۱۱۵۲۰۰ است؛ اپ خودش برمی‌گرداند |
 | `Permission denied` | گروهِ dialout | `sudo usermod -aG dialout $USER` + **logout/login** |

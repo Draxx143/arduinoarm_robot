@@ -9,6 +9,7 @@
  *   status / speeds          -> وضعیت و جدول سرعت‌ها
  *   enable / disable         -> موتورها (تک‌محور یا همه)
  *   move / deg / moveall     -> حرکت
+ *   grip <deg> / open / close -> پنجه (سروو روی پین ۱۹)
  *   speed <percent>          -> ضریب سرعت کل دستگاه (مثلاً speed 150)
  *   profile slow|normal|fast -> پروفایل سرعت (حالا واقعاً اعمال می‌شه)
  *   maxspeed / accel / homespeed <axis> <value>  -> تنظیم زنده
@@ -31,6 +32,8 @@
 #include "Trajectory.h"
 #include "IK.h"
 #include "EnergyManager.h"
+#include <Servo.h>   // کتابخانه‌ی استاندارد سروو (بودنش در اسکچ باعث می‌شود Arduino IDE آن را لینک کند)
+#include "Gripper.h"
 
 // Global objects
 MotorController* motorController;
@@ -42,6 +45,7 @@ SpeedProfileManager speedProfile;
 Trajectory trajectory;
 IK kinematics;
 EnergyManager energyManager;
+Gripper gripper;
 
 #define STATUS_LED_PIN 13
 
@@ -139,11 +143,15 @@ void setup() {
 
     positionStore.begin();
 
+    // پنجه: اتصال سروو و رفتن به زاویه‌ی پیش‌فرض Config.h
+    gripper.begin();
+
     Serial.println(F("Basic Commands:"));
     Serial.println(F("  home, home <1-5>     - Smart homing"));
     Serial.println(F("  status, speeds       - Show status"));
     Serial.println(F("  enable/disable       - Motor control"));
     Serial.println(F("  move/deg/moveall     - Movement"));
+    Serial.println(F("  grip <deg>/open/close - Gripper servo (pin 19)"));
     Serial.println(F("  demo                 - Demo loop"));
     Serial.println(F("Speed Commands:"));
     Serial.println(F("  speed <percent>      - Global speed scale (e.g. speed 150)"));
@@ -178,6 +186,7 @@ void loop() {
     teachMode.update();
     updateTrajectory();
     updateEnergyManager();
+    gripper.update();
 }
 
 void updateEnergyManager() {
@@ -302,6 +311,7 @@ void handleSerialCommands() {
         }
         else if (command == F("enable")) {
             motorController->enableAllMotors();
+            gripper.attach();
             Serial.println(F("All motors enabled"));
         }
         else if (command.startsWith(F("enable "))) {
@@ -311,6 +321,7 @@ void handleSerialCommands() {
         }
         else if (command == F("disable")) {
             motorController->disableAllMotors();
+            gripper.detach();
             Serial.println(F("All motors disabled"));
         }
         else if (command.startsWith(F("disable "))) {
@@ -320,12 +331,14 @@ void handleSerialCommands() {
         }
         else if (command == F("estop")) {
             motorController->emergencyStop();
+            gripper.emergencyStop();
             systemState = STATE_ESTOP;
             demoRunning = false;
             Serial.println(F("EMERGENCY STOP!"));
         }
         else if (command == F("reset")) {
             motorController->clearEmergencyStop();
+            gripper.clearEmergencyStop();
             systemState = STATE_READY;
             Serial.println(F("Emergency stop cleared"));
         }
@@ -340,6 +353,7 @@ void handleSerialCommands() {
             demoRunning = false;
             trajectory.stop();
             for (int i = 0; i < NUM_AXES; i++) motorController->getAxis(i)->stop();
+            gripper.stop();
             Serial.println(F(">> Stopped (motors still enabled)"));
         }
         else if (command.startsWith(F("moveall "))) {
@@ -356,6 +370,29 @@ void handleSerialCommands() {
         else if (command.startsWith(F("move "))) {
             demoRunning = false;
             handleMoveCommand(command);
+        }
+        // ==================== Gripper ====================
+        else if (command == F("grip")) {
+            Serial.print(F("Format: grip <degrees "));
+            Serial.print(GRIP_MIN_DEG, 1);
+            Serial.print(F(".."));
+            Serial.print(GRIP_MAX_DEG, 1);
+            Serial.println(F(">  (open/close = presets)"));
+        }
+        else if (command.startsWith(F("grip "))) {
+            handleGripCommand(command);
+        }
+        else if (command == F("open")) {
+            gripper.open();
+            Serial.print(F(">> Gripper opening ("));
+            Serial.print(GRIP_OPEN_DEG, 1);
+            Serial.println(F("°)"));
+        }
+        else if (command == F("close")) {
+            gripper.close();
+            Serial.print(F(">> Gripper closing ("));
+            Serial.print(GRIP_CLOSE_DEG, 1);
+            Serial.println(F("°)"));
         }
         // ==================== Speed / Profile ====================
         else if (command.startsWith(F("speed "))) {
@@ -510,8 +547,8 @@ void handleSerialCommands() {
             handleFKCommand(command);
         }
         // ==================== Energy Manager ====================
-        else if (command == F("sleep"))         { energyManager.sleep(); }
-        else if (command == F("wake"))          { energyManager.wake(); }
+        else if (command == F("sleep"))         { energyManager.sleep(); gripper.detach(); }
+        else if (command == F("wake"))          { energyManager.wake(); gripper.attach(); }
         else if (command == F("autosleep on"))  { energyManager.enableAutoSleep(); }
         else if (command == F("autosleep off")) { energyManager.disableAutoSleep(); }
         else if (command == F("help"))          { printSpeeds(); printUsage(); }
@@ -596,6 +633,7 @@ void printUsage() {
     Serial.println(F("=== Commands ==="));
     Serial.println(F("  home / home <1-5> / abort / homeorder <j1..j5>"));
     Serial.println(F("  move <ax> <steps> / deg <ax> <deg> / moveall <d1..d5>"));
+    Serial.println(F("  grip <deg> / open / close"));
     Serial.println(F("  traj line <d1..d5> <ms> / traj stop"));
     Serial.println(F("  speed <pct> / profile slow|normal|fast / speeds"));
     Serial.println(F("  maxspeed|accel|homespeed <ax> <value>"));
@@ -666,6 +704,13 @@ void printStatus() {
     }
     Serial.println();
 
+    Serial.print(F("Gripper: "));
+    Serial.print(gripper.getCurrentDegrees(), 1);
+    Serial.print(F("° (target "));
+    Serial.print(gripper.getTargetDegrees(), 1);
+    Serial.print(F("°), Attached="));
+    Serial.println(gripper.isAttached() ? F("Y") : F("N"));
+
     if (motorController->emergencyStopActive()) {
         Serial.println(F("!! EMERGENCY STOP ACTIVE - send 'reset'"));
     }
@@ -719,6 +764,9 @@ void printPos() {
         Serial.print(degrees, 1);
     }
     Serial.println();
+    // موقعیت پنجه، چسبیده به POS تا همان poll موجودِ GUI آن را هم بگیرد
+    Serial.print(F(">> GRIP "));
+    Serial.println(gripper.getCurrentDegrees(), 1);
 }
 
 void handleMoveCommand(String command) {
@@ -812,6 +860,24 @@ void handleHomingOrderCommand(String command) {
         return;
     }
     motorController->setHomingOrder(order, NUM_AXES);
+}
+
+void handleGripCommand(String command) {
+    float degrees = command.substring(5).toFloat();
+
+    if (degrees < GRIP_MIN_DEG || degrees > GRIP_MAX_DEG) {
+        Serial.print(F("!! Gripper out of range ("));
+        Serial.print(GRIP_MIN_DEG, 1);
+        Serial.print(F("° to "));
+        Serial.print(GRIP_MAX_DEG, 1);
+        Serial.println(F("°)"));
+        return;
+    }
+
+    gripper.moveTo(degrees);
+    Serial.print(F("Moving gripper to "));
+    Serial.print(degrees, 1);
+    Serial.println(F("°"));
 }
 
 void handleMoveAllCommand(String command) {

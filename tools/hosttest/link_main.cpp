@@ -42,6 +42,8 @@ static const char* CMDS[] = {
     "move 1 500", "deg 1 30", "deg 9 30", "deg 1 999",
     "moveall 10 20 10 10 10", "moveall", "moveall 10 20",
     "move 7 100", "move",
+    // ---- پنجه (سروو روی پین ۱۹) ----
+    "grip 45", "grip", "grip 999", "open", "close",
     // ---- سرعت/پروفایل ----
     "speed 150", "speed", "speed 999", "profile fast", "profile slow",
     "profile normal", "profile bogus",

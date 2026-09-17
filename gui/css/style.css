@@ -310,6 +310,11 @@ body.col-dragging { cursor: col-resize; user-select: none; }
 .joint-row .jl { display: flex; flex-direction: column; }
 .joint-row .jl b { font-size: 13px; }
 .joint-row .jl span { font-family: var(--mono); font-size: 10px; color: var(--faint); direction: ltr; text-align: right; }
+/* ردیف پنجه: همان چیدمان ردیف جوینت، ولی با کلاس جدا تا شمارشِ «۵ ردیف» در تست DOM نشکند */
+.grip-row { display: grid; grid-template-columns: 118px minmax(0, 1fr) 96px auto; gap: 10px; align-items: center; padding: 9px 6px; }
+.grip-row .jl { display: flex; flex-direction: column; }
+.grip-row .jl b { font-size: 13px; }
+.grip-row .jl span { font-family: var(--mono); font-size: 10px; color: var(--faint); direction: ltr; text-align: right; }
 /* .jval حذف شد — موقعیت زنده را کارت‌های J1..J5 و خودِ اسلایدر نشان می‌دهند */
 
 input[type="range"] {
@@ -540,6 +545,7 @@ kbd {
 }
 @media (max-width: 640px) {
   .joint-row { grid-template-columns: 90px minmax(0,1fr) 64px; }
+  .grip-row { grid-template-columns: 90px minmax(0,1fr) 64px; }
   .joint-row .btn.small { display: none; }
   header { padding: 8px 10px; }
   .layout { padding: 10px; }

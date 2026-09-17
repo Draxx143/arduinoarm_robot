@@ -141,6 +141,20 @@ def firmware_axes():
     return axes, cfg
 
 
+def firmware_grip():
+    """بلوک GRIP_* از Config.h (پنجه: سرووی درجه‌ای روی پین ۱۹)."""
+    cfg = parse_defines(read(os.path.join(FW, "Config.h")))
+    return {
+        "pin": num(cfg["GRIP_PIN"]),
+        "min": num(cfg["GRIP_MIN_DEG"]),
+        "max": num(cfg["GRIP_MAX_DEG"]),
+        "open": num(cfg["GRIP_OPEN_DEG"]),
+        "close": num(cfg["GRIP_CLOSE_DEG"]),
+        "def": num(cfg["GRIP_DEFAULT_DEG"]),
+        "speed": num(cfg["GRIP_SPEED_DEG_S"]),
+    }
+
+
 def firmware_scalars():
     cfg = parse_defines(read(os.path.join(FW, "Config.h")))
     pstore = read(os.path.join(FW, "PositionStore.h"))
@@ -225,7 +239,7 @@ def render_axes_js(axes, humans, indent="  "):
     return "\n".join(parts)
 
 
-def sync_file(path, axes, scalars, write=True):
+def sync_file(path, axes, scalars, grip, write=True):
     src = read(path)
     orig = src
     changes = []
@@ -248,6 +262,21 @@ def sync_file(path, axes, scalars, write=True):
         if mm and int(mm.group(2)) != scalars[key]:
             changes.append(f"{key}: {mm.group(2)} → {scalars[key]}")
             src = pat.sub(lambda g: g.group(1) + str(scalars[key]), src, count=1)
+
+    # --- پنجه (GRIP) ---
+    want_grip = ("GRIP: { pin: %s, min: %s, max: %s, open: %s, close: %s, def: %s, speed: %s }" %
+                 tuple(jsnum(grip[k]) for k in ("pin", "min", "max", "open", "close", "def", "speed")))
+    pat = re.compile(r"(^\s*GRIP:\s*\{)[^}]*\}", re.M)
+    mm = pat.search(src)
+    if mm:
+        have = src[mm.start():mm.end()].strip().rstrip(",")
+        if have != want_grip:
+            changes.append(f"GRIP: {have} \u2192 {want_grip}")
+            indent = re.match(r"^\s*", src[mm.start():mm.end()]).group(0)
+            src = src[:mm.start()] + indent + want_grip + src[mm.end():]
+    else:
+        print(f"!! بلوک GRIP در {path} پیدا نشد")
+        return None
 
     # --- ترتیب هومینگ ---
     order_js = "[" + ", ".join(str(x) for x in scalars["HOMING_ORDER"]) + "]"
@@ -274,11 +303,14 @@ def main():
     check = "--check" in sys.argv
     axes, _ = firmware_axes()
     scalars = firmware_scalars()
+    grip = firmware_grip()
 
     print("مقادیر واقعی فریم‌ور:")
     print(f"  ترتیب هومینگ : {' -> '.join('J' + str(i + 1) for i in scalars['HOMING_ORDER'])}")
     print(f"  MAX_POSITIONS={scalars['MAX_POSITIONS']}  MAX_TEACH_STEPS={scalars['MAX_TEACH_STEPS']}"
           f"  MAX_SPEED_LIMIT={scalars['MAX_SPEED_LIMIT']}")
+    print(f"  پنجه: پین {grip['pin']}  بازه‌ی {grip['min']}..{grip['max']}°  "
+          f"باز={grip['open']}° بسته={grip['close']}°  پیش‌فرض={grip['def']}°  سرعت={grip['speed']}°/s")
     for ax in axes:
         print(f"  J{ax['joint']} ({ax['id']}): {ax['min']}..{ax['max']}°  "
               f"soft {ax['softMin']}..{ax['softMax']}  max {ax['maxSpeed']}  "
@@ -290,7 +322,7 @@ def main():
             print(f"\n!! فایل GUI پیدا نشد: {path}")
             drift = True
             continue
-        changes = sync_file(path, axes, scalars, write=not check)
+        changes = sync_file(path, axes, scalars, grip, write=not check)
         rel = os.path.relpath(path, ROOT)
         if changes is None:
             drift = True

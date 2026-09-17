@@ -8,6 +8,7 @@
 // =====================================================================
 #include "Arduino.h"
 #include "MotorController.h"
+#include "Gripper.h"
 #include "SpeedProfile.h"
 #include "IK.h"
 #include <math.h>
@@ -645,6 +646,60 @@ int main() {
             check(fabsf(fx - 230.0f) < 1.0f && fabsf(fy) < 1.0f && fabsf(fz - 60.0f) < 1.0f,
                   "FK همان مختصات هدف را برمی‌گرداند (L3/نوک حساب می‌شود)");
         }
+    }
+
+    // ------------------------------------------------------------------
+    header("تست پنجه: سرووی درجه‌ای روی پین ۱۹ (غیرمسدودکننده)");
+    // ------------------------------------------------------------------
+    {
+        sim_micros = 0;
+        Gripper gr;
+        gr.begin();
+        check(gr.isAttached(), "بعد از begin سروو متصل است");
+        check(gr.getCurrentDegrees() == GRIP_DEFAULT_DEG, "شروع از GRIP_DEFAULT_DEG");
+
+        // حرکت تدریجی و غیرمسدودکننده: بعد از ۱۰۰ms باید میانه‌ی راه باشد
+        gr.moveTo(GRIP_CLOSE_DEG);
+        check(gr.isMoving(), "بعد از moveTo وضعیت «در حال حرکت» است");
+        sim_micros += 100ULL * 1000ULL;
+        gr.update();
+        float mid = gr.getCurrentDegrees();
+        printf("   gripper: start=%.1f mid(100ms)=%.1f target=%.1f\n",
+               GRIP_DEFAULT_DEG, mid, GRIP_CLOSE_DEG);
+        check(mid > GRIP_DEFAULT_DEG && mid < GRIP_CLOSE_DEG,
+              "حرکت تدریجی است (نه جهش آنی به هدف)");
+
+        // ادامه تا رسیدن
+        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(!gr.isMoving(), "پنجه به هدف رسید و ایستاد");
+        check(gr.getCurrentDegrees() == GRIP_CLOSE_DEG, "موقعیت نهایی دقیقاً همان هدف است");
+
+        // کلمپ به بازه‌ی مجاز Config.h
+        gr.moveTo(GRIP_MAX_DEG + 100.0f);
+        check(gr.getTargetDegrees() == GRIP_MAX_DEG, "هدف بالای سقف به MAX کلمپ شد");
+        gr.moveTo(GRIP_MIN_DEG - 100.0f);
+        check(gr.getTargetDegrees() == GRIP_MIN_DEG, "هدف زیر کف به MIN کلمپ شد");
+        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        float parked = gr.getCurrentDegrees();
+
+        // estop: فریز درجا + نادیده گرفتن فرمان تازه
+        gr.emergencyStop();
+        gr.moveTo(GRIP_MAX_DEG);
+        for (int i = 0; i < 50; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.getCurrentDegrees() == parked, "زیر estop پنجه تکان نخورد");
+        gr.clearEmergencyStop();
+        gr.moveTo(GRIP_OPEN_DEG);
+        for (int i = 0; i < 200; i++) { sim_micros += 50ULL * 1000ULL; gr.update(); }
+        check(gr.getCurrentDegrees() == GRIP_OPEN_DEG, "بعد از reset پنجه دوباره فرمان گرفت");
+
+        // detach: فرمان نادیده گرفته می‌شود (مثل محورِ disableشده)
+        gr.detach();
+        check(!gr.isAttached(), "بعد از detach سروو آزاد است");
+        gr.moveTo(GRIP_MAX_DEG);
+        check(gr.getTargetDegrees() == gr.getCurrentDegrees(),
+              "وقتی سروو آزاد است فرمان تازه نادیده گرفته می‌شود");
+        gr.attach();
+        check(gr.isAttached(), "attach دوباره وصل شد");
     }
 
     // ------------------------------------------------------------------

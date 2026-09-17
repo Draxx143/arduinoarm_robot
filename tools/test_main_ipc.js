@@ -121,7 +121,7 @@ function startBoard() {
   });
 }
 
-const BANNER = "======================================\n5 DOF Robot Arm - TEST MODE (No ROS)\nAXIS-5 Firmware v1.0.41\n======================================\n";
+const BANNER = "======================================\n5 DOF Robot Arm - TEST MODE (No ROS)\nAXIS-5 Firmware v1.0.42\n======================================\n";
 
 async function main() {
   console.log("=== تستِ سرتاسریِ پروسه‌ی اصلی (main.js + pybridge + serial_bridge.py) ===");
@@ -163,7 +163,7 @@ async function main() {
   ok(dataMsgs.length > 0, "پیامِ serialport:data به webContents.send رسید",
      dataMsgs.length + " پیام؛ کانال‌ها: " + [...new Set(sent.map((m) => m.channel))].join(","));
   const decoded = dataMsgs.map((m) => Buffer.from(String(m.payload), "base64").toString("utf8")).join("");
-  ok(/AXIS-5 Firmware v1\.0\.41/.test(decoded), "بنرِ برد سالم رمزگشایی شد و به renderer رسید",
+  ok(/AXIS-5 Firmware v1\.0\.42/.test(decoded), "بنرِ برد سالم رمزگشایی شد و به renderer رسید",
      JSON.stringify(decoded.slice(0, 90)));
   ok(decoded.split("\n").filter((l) => /====/.test(l)).length >= 2,
      "چند خط پشتِ سرِ هم سالم رسید (تکه‌تکه‌شدنِ بایت‌ها مشکلی نمی‌سازد)",
@@ -217,7 +217,7 @@ async function main() {
   /* بنر از پیش در بافرِ pty است (بایت‌ها تا باز شدنِ پورت می‌مانند) تا
    * دست‌دادنِ بوت بی‌درنگ حل شود و این سناریو فقط مهلتِ داخلیِ pgrep را
    * بسنجد، نه مهلتِ ۵ ثانیه‌ی بنر را. */
-  board2.send("AXIS-5 Firmware v1.0.41");
+  board2.send("AXIS-5 Firmware v1.0.42");
   const t0 = Date.now();
   const openP2 = handlers.get("serialport:open")({}, board2.slave, 115200);
   setTimeout(() => board2.send("System initialized."), 3000);
@@ -232,7 +232,7 @@ async function main() {
   ok(notices.some((t) => /starting the serial bridge/i.test(t)),
      "breadcrumbِ «شروعِ پل» هم رسید — پس اگر جایی گیر کند، آخرین پیام همان است",
      JSON.stringify(notices));
-  board2.send("AXIS-5 Firmware v1.0.41");
+  board2.send("AXIS-5 Firmware v1.0.42");
   await sleep(600);
   ok(sent.some((m) => m.channel === "serialport:data"),
      "RX هم در همان وضعیت جریان دارد");

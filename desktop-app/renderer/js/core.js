@@ -13,7 +13,7 @@ const FW = {
 
   /* v1.0.38: حداقل نسخه‌ی فریم‌وری که همه‌ی فیکس‌ها (E-STOP لحظه‌ای، J2 نرم،
      هوم بعد از estop، عقب‌نشینی غیرمسدودساز، POS) روی برد هستند */
-  EXPECTED_FW: "1.0.41",
+  EXPECTED_FW: "1.0.42",
 
   /* true = نسخه‌ی گزارش‌شده‌ی برد >= EXPECTED_FW */
   versionOk(reported) {
@@ -103,6 +103,10 @@ const FW = {
       pins: { step: "36", dir: "34", enable: "30", endstop: "15" },
     },
   ],
+
+  /* ---- generated GRIP from firmware Config.h by tools/sync_gui_config.py ---- */
+  GRIP: { pin: 19, min: 0, max: 180, open: 20, close: 160, def: 20, speed: 120 },
+  /* ---- end generated GRIP ---- */
 
   /* Speed profiles from SpeedProfile.cpp */
   PROFILES: [
@@ -202,6 +206,8 @@ const Cmd = {
   moveAll: (deg5) => `moveall ${deg5.map((d) => Fmt.num(d)).join(" ")}`,
   deg: (n, deg) => `deg ${n} ${Fmt.num(deg)}`,
   move: (n, steps) => `move ${n} ${steps}`,
+  /* gripper: "grip <deg>" in degrees (RC servo on pin 19) */
+  grip: (deg) => `grip ${Fmt.num(deg)}`,
   savePos: (slot) => `savepos ${slot}`,
   loadPos: (slot) => `loadpos ${slot}`,
   listPos: () => "listpos",
@@ -271,6 +277,7 @@ const Parse = {
   RX_FW_BANNER: /Firmware v(\d+\.\d+\.\d+)/,               /* v1.0.38: بنر بوت */
   /* v1.0.36: کانال همگام‌سازی اسلایدرها — بعد از هر دستور حرکتی/هوم و اتمام حرکت */
   RX_POS: /^>>\s*POS\s+(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)$/,
+  RX_GRIP: /^>>\s*GRIP\s+(-?[\d.]+)$/,   /* v1.0.42: gripper pos, glued to POS */
   RX_ESTOP_CLEARED: /^>>\s*E-STOP cleared by homing request/,
   RX_IK: /^>>\s*IK solution:\s*(.+)$/,
   RX_FK: /^>>\s*FK result:\s*X=(-?[\d.]+)\s*,\s*Y=(-?[\d.]+)\s*,\s*Z=(-?[\d.]+)/,
@@ -331,6 +338,9 @@ const Parse = {
     if ((m = t.match(this.RX_POS))) {
       return { type: "pos", deg: [+m[1], +m[2], +m[3], +m[4], +m[5]] };
     }
+    if ((m = t.match(this.RX_GRIP))) {
+      return { type: "grip", deg: +m[1] };
+    }
     if ((m = t.match(this.RX_FW))) return { type: "fw", version: m[1] };
     if ((m = t.match(this.RX_FW_BANNER))) return { type: "fw", version: m[1] };
     if ((m = t.match(this.RX_IK))) {
@@ -382,6 +392,9 @@ const COMMAND_REF = [
   { cmd: "moveall", args: "<d1>..<d5>", desc: "Move all 5 axes simultaneously (degrees)", cat: "Motion" },
   { cmd: "deg", args: "<axis> <deg>", desc: "Move one axis to an angle", cat: "Motion" },
   { cmd: "move", args: "<axis> <steps>", desc: "Move one axis by step count", cat: "Motion" },
+  { cmd: "grip", args: "<deg>", desc: "Move the gripper to an angle in degrees (RC servo on pin 19)", cat: "Gripper" },
+  { cmd: "open", args: "", desc: "Open the gripper (GRIP_OPEN_DEG)", cat: "Gripper" },
+  { cmd: "close", args: "", desc: "Close the gripper (GRIP_CLOSE_DEG)", cat: "Gripper" },
   { cmd: "savepos", args: "<slot>", desc: "Save current pose to slot 0-9", cat: "Memory" },
   { cmd: "loadpos", args: "<slot>", desc: "Recall and move to a saved pose", cat: "Memory" },
   { cmd: "listpos", args: "", desc: "List all saved positions", cat: "Memory" },
